@@ -4,27 +4,28 @@
 //! Приём:     пакет → джиттер-буфер участника → декодер Opus → микшер → [кольцевой буфер] → динамики
 //!
 //! Обе половины работают в своих потоках и общаются с аудиоколбэками
-//! только через lock-free кольцевые буферы.
+//! только через lock-free кольцевые буферы. Аудиоколбэк после каждой порции
+//! звука будит свой поток (`Wakeup`), поэтому кадр кодируется сразу, как только
+//! набрался, а микшер доливает звук сразу, как только карта его забрала.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use ringbuf::traits::{Consumer, Observer, Producer};
 use ringbuf::{HeapCons, HeapProd};
 use vwf_proto::{FRAME_MS, FRAME_SAMPLES, PeerId, SAMPLE_RATE};
 
-use crate::jitter::{JitterBuffer, Pop};
+use crate::audio::Wakeup;
+use crate::jitter::{Delay, JitterBuffer, Pop};
 use crate::resample::Resampler;
 
-/// Как часто рабочие потоки проверяют кольцевые буферы.
-const POLL_INTERVAL: Duration = Duration::from_millis(5);
-/// Сколько звука держать готовым в буфере воспроизведения. Меньше — меньше
-/// задержка, но выше риск «дыр», если поток микшера не успеет проснуться.
-const PLAYBACK_LEAD_MS: u32 = 40;
+/// Рабочие потоки просыпаются по сигналу из аудиоколбэка; этот таймаут —
+/// только страховка на случай, если сигнал не придёт (например, устройство отвалилось).
+const WAKE_TIMEOUT: Duration = Duration::from_millis(20);
 /// Максимальный размер Opus-пакета (с запасом; реальные — 60–150 байт).
 const MAX_PACKET: usize = 1275;
 
@@ -94,9 +95,13 @@ pub struct Transmitter {
 
 impl Transmitter {
     /// Запускает поток кодирования. `send(seq, opus)` вызывается для каждого
-    /// готового пакета; `seq` растёт на 1 с каждым отправленным кадром.
+    /// готового пакета. `seq` — номер 20-мс кадра: он растёт с каждым кадром
+    /// с микрофона, даже если кадр не отправлен (тишина, mute). Так получатель
+    /// по номеру знает, когда кадр был записан, и может измерять джиттер.
+    /// `wakeup` — тот же, что передан в `audio::start_capture`.
     pub fn spawn(
         mut capture: HeapCons<f32>,
+        wakeup: Arc<Wakeup>,
         settings: TxSettings,
         mut send: impl FnMut(u32, &[u8]) + Send + 'static,
     ) -> anyhow::Result<Self> {
@@ -115,13 +120,19 @@ impl Transmitter {
             let mut vad = Vad { threshold_db: settings.vad_threshold_db, hangover_left: 0 };
             let mut frame = [0f32; FRAME_SAMPLES];
             let mut packet = [0u8; MAX_PACKET];
-            let mut seq = 0u32;
+            let mut next_seq = 0u32;
+            wakeup.register();
+            // Пока запускались вывод и микшер, микрофон уже что-то записал.
+            // Это старый звук: отправлять его — значит начать разговор с задержкой.
+            capture.clear();
             while !thread_state.stop.load(Ordering::Relaxed) {
                 if capture.occupied_len() < FRAME_SAMPLES {
-                    thread::sleep(POLL_INTERVAL);
+                    wakeup.wait(WAKE_TIMEOUT);
                     continue;
                 }
                 capture.pop_slice(&mut frame);
+                let seq = next_seq;
+                next_seq = next_seq.wrapping_add(1);
 
                 let level = level_db(&frame);
                 thread_state.level_db_bits.store(level.to_bits(), Ordering::Relaxed);
@@ -132,10 +143,7 @@ impl Transmitter {
                 }
 
                 match encoder.encode_float(&frame, &mut packet) {
-                    Ok(len) => {
-                        send(seq, &packet[..len]);
-                        seq = seq.wrapping_add(1);
-                    }
+                    Ok(len) => send(seq, &packet[..len]),
                     Err(e) => eprintln!("ошибка кодирования Opus: {e}"),
                 }
             }
@@ -176,8 +184,8 @@ impl Speaker {
     /// Резкий переход между тишиной и звуком слышен как щелчок, поэтому начало
     /// фразы плавно нарастает, а в конце фразы декодер «договаривает» один кадр
     /// (PLC), который плавно затухает до нуля.
-    fn next_frame(&mut self, out: &mut [f32; FRAME_SAMPLES]) -> bool {
-        let result = match self.jitter.pop() {
+    fn next_frame(&mut self, out: &mut [f32; FRAME_SAMPLES], now: Instant) -> bool {
+        let result = match self.jitter.pop(now) {
             Pop::Idle => {
                 if !std::mem::take(&mut self.active) {
                     return false;
@@ -213,27 +221,28 @@ impl Speaker {
 /// Принимает пакеты от всех собеседников и сводит их в один поток.
 pub struct Mixer {
     speakers: Mutex<HashMap<PeerId, Speaker>>,
-    jitter_frames: usize,
+    delay: Delay,
 }
 
 impl Mixer {
-    /// `jitter_ms` — целевая глубина джиттер-буфера.
-    pub fn new(jitter_ms: u32) -> Self {
-        Self {
-            speakers: Mutex::new(HashMap::new()),
-            jitter_frames: jitter_ms.div_ceil(FRAME_MS).max(1) as usize,
-        }
+    /// `delay` — как джиттер-буферы выбирают задержку.
+    pub fn new(delay: Delay) -> Self {
+        Self { speakers: Mutex::new(HashMap::new()), delay }
     }
 
     /// Кладёт пришедший голосовой пакет в джиттер-буфер отправителя.
     pub fn push_packet(&self, from: PeerId, seq: u32, opus: &[u8]) {
+        self.push_packet_at(from, seq, opus, Instant::now());
+    }
+
+    fn push_packet_at(&self, from: PeerId, seq: u32, opus: &[u8], now: Instant) {
         let mut speakers = self.speakers.lock().unwrap();
         let speaker = match speakers.entry(from) {
             std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
             std::collections::hash_map::Entry::Vacant(e) => {
                 match opus::Decoder::new(SAMPLE_RATE, opus::Channels::Mono) {
                     Ok(decoder) => e.insert(Speaker {
-                        jitter: JitterBuffer::new(self.jitter_frames),
+                        jitter: JitterBuffer::new(self.delay, now),
                         decoder,
                         volume: 1.0,
                         active: false,
@@ -245,7 +254,7 @@ impl Mixer {
                 }
             }
         };
-        speaker.jitter.push(seq, opus.to_vec());
+        speaker.jitter.push(seq, opus.to_vec(), now);
     }
 
     /// Собеседник ушёл — забываем его состояние.
@@ -260,13 +269,23 @@ impl Mixer {
         }
     }
 
+    /// Текущая задержка джиттер-буфера каждого собеседника, мс.
+    pub fn delays_ms(&self) -> Vec<(PeerId, f64)> {
+        let speakers = self.speakers.lock().unwrap();
+        speakers.iter().map(|(id, s)| (*id, s.jitter.delay_ms())).collect()
+    }
+
     /// Сводит по одному кадру от каждого собеседника.
     pub fn mix_frame(&self, out: &mut [f32; FRAME_SAMPLES]) {
+        self.mix_frame_at(out, Instant::now());
+    }
+
+    fn mix_frame_at(&self, out: &mut [f32; FRAME_SAMPLES], now: Instant) {
         out.fill(0.0);
         let mut voice = [0f32; FRAME_SAMPLES];
         let mut speakers = self.speakers.lock().unwrap();
         for speaker in speakers.values_mut() {
-            if speaker.next_frame(&mut voice) {
+            if speaker.next_frame(&mut voice, now) {
                 for (o, v) in out.iter_mut().zip(voice.iter()) {
                     *o += v * speaker.volume;
                 }
@@ -283,18 +302,26 @@ impl Mixer {
     /// Темп задаёт сама звуковая карта: новый кадр микшируется, только когда
     /// она «съела» достаточно звука. Поэтому часы микшера никогда не расходятся
     /// с часами карты, а расхождение с часами собеседника гасит джиттер-буфер.
+    ///
+    /// `lead_ms` — сколько звука держать готовым для карты. Меньше — меньше
+    /// задержка, но если поток микшера не успеет проснуться, будет щелчок
+    /// (его покажет счётчик сбоев вывода). `wakeup` — тот же, что передан
+    /// в `audio::start_playback`.
     pub fn spawn_output(
         self: &Arc<Self>,
         mut playback: HeapProd<f32>,
         device_rate: u32,
+        wakeup: Arc<Wakeup>,
+        lead_ms: u32,
     ) -> anyhow::Result<MixerOutput> {
         let mixer = self.clone();
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = stop.clone();
-        let lead = (device_rate * PLAYBACK_LEAD_MS / 1000) as usize;
+        let lead = (device_rate * lead_ms / 1000) as usize;
         let thread = thread::Builder::new().name("vwf-mixer".into()).spawn(move || {
             let mut resampler = Resampler::new(SAMPLE_RATE, device_rate);
             let mut frame = [0f32; FRAME_SAMPLES];
+            wakeup.register();
             while !thread_stop.load(Ordering::Relaxed) {
                 while playback.occupied_len() < lead {
                     mixer.mix_frame(&mut frame);
@@ -304,7 +331,7 @@ impl Mixer {
                         });
                     }
                 }
-                thread::sleep(POLL_INTERVAL);
+                wakeup.wait(WAKE_TIMEOUT);
             }
         })?;
         Ok(MixerOutput { stop, thread: Some(thread) })
@@ -364,30 +391,32 @@ mod tests {
         encoder.set_packet_loss_perc(10).unwrap();
 
         // Пакеты приходят по одному на каждый 20-мс кадр воспроизведения,
-        // как в реальной жизни; пакет 10 теряется.
-        let mixer = Mixer::new(60);
+        // как в реальной жизни (время виртуальное); пакет 10 теряется.
+        let mixer = Mixer::new(Delay::Fixed(40.0));
+        let start = Instant::now();
+        let at = |frame: u32| start + Duration::from_millis(frame as u64 * FRAME_MS as u64);
         let mut out = [0f32; FRAME_SAMPLES];
         for seq in 0..30u32 {
             let packet = encoder
                 .encode_vec_float(&sine_frame(seq as usize * FRAME_SAMPLES), MAX_PACKET)
                 .unwrap();
             if seq != 10 {
-                mixer.push_packet(1, seq, &packet);
+                mixer.push_packet_at(1, seq, &packet, at(seq));
             }
-            mixer.mix_frame(&mut out);
+            mixer.mix_frame_at(&mut out, at(seq));
             let level = level_db(&out);
             match seq {
-                // Джиттер-буфер копит 3 кадра — первые два раза играет тишина.
+                // Задержка 40 мс — первые два кадра играет тишина.
                 0 | 1 => assert_eq!(level, -120.0, "кадр {seq}"),
                 _ => assert!(level > -20.0, "кадр {seq}: {level} dBFS"),
             }
         }
         // Буфер доигрывает остаток и затухающий кадр, потом снова тишина.
-        for _ in 0..3 {
-            mixer.mix_frame(&mut out);
+        for frame in 30..33 {
+            mixer.mix_frame_at(&mut out, at(frame));
             assert!(level_db(&out) > -40.0);
         }
-        mixer.mix_frame(&mut out);
+        mixer.mix_frame_at(&mut out, at(33));
         assert!(out.iter().all(|s| *s == 0.0), "после конца речи — тишина");
     }
 }

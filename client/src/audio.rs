@@ -6,8 +6,9 @@
 //! в lock-free кольцевые буферы, а кодирование и микширование происходят
 //! в обычных потоках (см. `pipeline`).
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
+use std::thread::Thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail};
@@ -18,6 +19,34 @@ use ringbuf::{HeapCons, HeapProd, HeapRb};
 use vwf_proto::SAMPLE_RATE;
 
 use crate::resample::Resampler;
+
+/// Сигнал «в кольцевом буфере что-то изменилось» от аудиоколбэка рабочему потоку.
+///
+/// Вместо того чтобы проверять буфер по таймеру (и терять в среднем половину
+/// периода опроса), поток спит, пока колбэк его не разбудит. Будить поток
+/// из аудиоколбэка безопасно: `unpark` не блокируется и не выделяет память.
+#[derive(Default)]
+pub struct Wakeup {
+    thread: OnceLock<Thread>,
+}
+
+impl Wakeup {
+    /// Вызывается один раз из потока, который будет ждать сигналов.
+    pub fn register(&self) {
+        let _ = self.thread.set(std::thread::current());
+    }
+
+    pub fn wake(&self) {
+        if let Some(thread) = self.thread.get() {
+            thread.unpark();
+        }
+    }
+
+    /// Ждёт сигнала, но не дольше `timeout`.
+    pub fn wait(&self, timeout: Duration) {
+        std::thread::park_timeout(timeout);
+    }
+}
 
 /// Печатает все устройства ввода и вывода.
 pub fn list_devices() -> anyhow::Result<()> {
@@ -122,7 +151,11 @@ pub struct Capture {
 
 /// Начинает захват. Возвращает поток и потребителя кольцевого буфера,
 /// в котором появляются моно-сэмплы f32 на частоте 48 кГц.
-pub fn start_capture(name: Option<&str>) -> anyhow::Result<(Capture, HeapCons<f32>)> {
+/// После каждой порции звука колбэк будит `wakeup`.
+pub fn start_capture(
+    name: Option<&str>,
+    wakeup: Arc<Wakeup>,
+) -> anyhow::Result<(Capture, HeapCons<f32>)> {
     let device = find_device(true, name)?;
     let supported = pick_config(&device, true)?;
     #[allow(unused_mut)]
@@ -140,12 +173,22 @@ pub fn start_capture(name: Option<&str>) -> anyhow::Result<(Capture, HeapCons<f3
     let (producer, consumer) = HeapRb::<f32>::new(SAMPLE_RATE as usize).split();
 
     let stream = match supported.sample_format() {
-        SampleFormat::F32 => build_input::<f32>(&device, config, producer, &glitches),
-        SampleFormat::I16 => build_input::<i16>(&device, config, producer, &glitches),
-        SampleFormat::I32 => build_input::<i32>(&device, config, producer, &glitches),
-        SampleFormat::U16 => build_input::<u16>(&device, config, producer, &glitches),
-        SampleFormat::U8 => build_input::<u8>(&device, config, producer, &glitches),
-        SampleFormat::F64 => build_input::<f64>(&device, config, producer, &glitches),
+        SampleFormat::F32 => {
+            build_input::<f32>(&device, config, producer, &glitches, wakeup.clone())
+        }
+        SampleFormat::I16 => {
+            build_input::<i16>(&device, config, producer, &glitches, wakeup.clone())
+        }
+        SampleFormat::I32 => {
+            build_input::<i32>(&device, config, producer, &glitches, wakeup.clone())
+        }
+        SampleFormat::U16 => {
+            build_input::<u16>(&device, config, producer, &glitches, wakeup.clone())
+        }
+        SampleFormat::U8 => build_input::<u8>(&device, config, producer, &glitches, wakeup.clone()),
+        SampleFormat::F64 => {
+            build_input::<f64>(&device, config, producer, &glitches, wakeup.clone())
+        }
         other => bail!("формат сэмплов микрофона {other} не поддерживается"),
     }?;
     stream.play()?;
@@ -157,6 +200,7 @@ fn build_input<T>(
     config: StreamConfig,
     mut producer: HeapProd<f32>,
     glitches: &Arc<AtomicU64>,
+    wakeup: Arc<Wakeup>,
 ) -> anyhow::Result<cpal::Stream>
 where
     T: SizedSample,
@@ -176,6 +220,7 @@ where
                     let _ = producer.try_push(s);
                 });
             }
+            wakeup.wake();
         },
         stream_error_handler("микрофон", glitches.clone()),
         None,
@@ -195,7 +240,11 @@ pub struct Playback {
 /// Начинает воспроизведение. Возвращает поток и производителя кольцевого буфера:
 /// в него надо класть моно-сэмплы f32 на частоте **устройства** (`config.sample_rate`).
 /// Если данных не хватает, играет тишина.
-pub fn start_playback(name: Option<&str>) -> anyhow::Result<(Playback, HeapProd<f32>)> {
+/// После каждой порции звука колбэк будит `wakeup`, чтобы микшер долил новую.
+pub fn start_playback(
+    name: Option<&str>,
+    wakeup: Arc<Wakeup>,
+) -> anyhow::Result<(Playback, HeapProd<f32>)> {
     let device = find_device(false, name)?;
     let supported = pick_config(&device, false)?;
     let config = supported.config();
@@ -203,12 +252,24 @@ pub fn start_playback(name: Option<&str>) -> anyhow::Result<(Playback, HeapProd<
     let glitches = Arc::new(AtomicU64::new(0));
 
     let stream = match supported.sample_format() {
-        SampleFormat::F32 => build_output::<f32>(&device, config, consumer, &glitches),
-        SampleFormat::I16 => build_output::<i16>(&device, config, consumer, &glitches),
-        SampleFormat::I32 => build_output::<i32>(&device, config, consumer, &glitches),
-        SampleFormat::U16 => build_output::<u16>(&device, config, consumer, &glitches),
-        SampleFormat::U8 => build_output::<u8>(&device, config, consumer, &glitches),
-        SampleFormat::F64 => build_output::<f64>(&device, config, consumer, &glitches),
+        SampleFormat::F32 => {
+            build_output::<f32>(&device, config, consumer, &glitches, wakeup.clone())
+        }
+        SampleFormat::I16 => {
+            build_output::<i16>(&device, config, consumer, &glitches, wakeup.clone())
+        }
+        SampleFormat::I32 => {
+            build_output::<i32>(&device, config, consumer, &glitches, wakeup.clone())
+        }
+        SampleFormat::U16 => {
+            build_output::<u16>(&device, config, consumer, &glitches, wakeup.clone())
+        }
+        SampleFormat::U8 => {
+            build_output::<u8>(&device, config, consumer, &glitches, wakeup.clone())
+        }
+        SampleFormat::F64 => {
+            build_output::<f64>(&device, config, consumer, &glitches, wakeup.clone())
+        }
         other => bail!("формат сэмплов устройства вывода {other} не поддерживается"),
     }?;
     stream.play()?;
@@ -223,6 +284,7 @@ fn build_output<T>(
     config: StreamConfig,
     mut consumer: HeapCons<f32>,
     glitches: &Arc<AtomicU64>,
+    wakeup: Arc<Wakeup>,
 ) -> anyhow::Result<cpal::Stream>
 where
     T: SizedSample + FromSample<f32>,
@@ -254,6 +316,7 @@ where
             if starved && primed {
                 underruns.fetch_add(1, Ordering::Relaxed);
             }
+            wakeup.wake();
         },
         stream_error_handler("вывод", glitches.clone()),
         None,
