@@ -96,10 +96,12 @@ impl Server {
         &self.fingerprint
     }
 
-    /// Принимает подключения, пока endpoint не закроют.
+    /// Принимает подключения, пока endpoint не закроют
+    /// (`server.endpoint().close(...)` — так сервер и останавливают).
     pub async fn run(self) {
         let room = Arc::new(Mutex::new(Room::default()));
 
+        let mut discovery_task = None;
         if let Some(socket) = self.discovery {
             match tokio::net::UdpSocket::from_std(socket) {
                 Ok(socket) => {
@@ -111,7 +113,8 @@ impl Server {
                         protocol: PROTOCOL_VERSION,
                         users: 0,
                     };
-                    tokio::spawn(answer_discovery(socket, room.clone(), announcement));
+                    discovery_task =
+                        Some(tokio::spawn(answer_discovery(socket, room.clone(), announcement)));
                 }
                 Err(e) => warn!("поиск в локальной сети отключён: {e}"),
             }
@@ -126,6 +129,12 @@ impl Server {
                     warn!("{remote}: {e:#}");
                 }
             });
+        }
+        // Сервер остановили: перестаём отвечать на поиск и дожидаемся, пока
+        // задача завершится и закроет сокет, — тогда порт сразу свободен.
+        if let Some(task) = discovery_task {
+            task.abort();
+            let _ = task.await;
         }
     }
 

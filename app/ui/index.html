@@ -49,6 +49,13 @@
 
         <button type="submit" id="connect-btn" class="primary">Подключиться</button>
         <p id="connect-error" class="error" hidden></p>
+
+        <div class="divider"><span>или</span></div>
+        <button type="button" id="host-btn">Создать комнату на этом компьютере</button>
+        <p class="subtle small-text">
+          Сервер запустится прямо в программе, и друзья подключатся к вам.
+          Адрес сервера вводить не нужно.
+        </p>
       </form>
     </main>
 
@@ -61,6 +68,16 @@
         </div>
         <button id="leave-btn" class="danger small">Отключиться</button>
       </header>
+
+      <section id="host-card" class="card host-card" hidden>
+        <div class="host-title">Вы — сервер этой комнаты</div>
+        <p class="subtle small-text">
+          Друзья из вашей локальной сети увидят комнату в списке сами.
+          Остальным (например, через Tailscale) скажите адрес:
+        </p>
+        <ul id="host-addresses" class="host-addresses"></ul>
+        <p class="subtle small-text">Закроете комнату или программу — все отключатся.</p>
+      </section>
 
       <ul id="peers" class="peers"></ul>
 

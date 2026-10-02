@@ -18,6 +18,10 @@ pub const PROTOCOL_VERSION: u32 = 2;
 /// ALPN-идентификатор для TLS-рукопожатия QUIC.
 pub const ALPN: &[u8] = b"vwf/1";
 
+/// Причина закрытия соединений, когда сервер останавливают. Клиенты показывают
+/// её пользователю, поэтому по-русски.
+pub const SERVER_STOPPED_REASON: &str = "сервер остановлен";
+
 /// Порт сервера по умолчанию (UDP).
 pub const DEFAULT_PORT: u16 = 47777;
 

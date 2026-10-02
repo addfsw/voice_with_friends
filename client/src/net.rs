@@ -35,6 +35,17 @@ pub struct Closer {
 }
 
 impl Closer {
+    /// Почему соединение закрылось, если оно уже закрыто.
+    pub fn close_reason(&self) -> Option<String> {
+        Some(match self.conn.close_reason()? {
+            quinn::ConnectionError::ApplicationClosed(close) => {
+                String::from_utf8_lossy(&close.reason).into_owned()
+            }
+            quinn::ConnectionError::TimedOut => "сервер перестал отвечать".to_string(),
+            other => other.to_string(),
+        })
+    }
+
     pub async fn close(&self) {
         self.conn.close(0u32.into(), b"bye");
         // Даём серверу узнать о закрытии, но не ждём вечно.

@@ -26,6 +26,8 @@ const store = {
 };
 
 const call = {
+  // Сведения о своём сервере, если комнату создали мы.
+  hosting: null,
   myId: null,
   myName: "",
   peers: new Map(), // id -> имя
@@ -164,16 +166,21 @@ $("lan-refresh").addEventListener("click", () => {
   refreshLan();
 });
 
+// Читает и запоминает поля формы.
+function formValues() {
+  const values = {
+    server: $("server").value.trim(),
+    name: $("name").value.trim(),
+    input: $("input").value,
+    output: $("output").value,
+  };
+  for (const [key, value] of Object.entries(values)) store.set(key, value);
+  return values;
+}
+
 $("connect-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const server = $("server").value.trim();
-  const name = $("name").value.trim();
-  const input = $("input").value;
-  const output = $("output").value;
-  store.set("server", server);
-  store.set("name", name);
-  store.set("input", input);
-  store.set("output", output);
+  const { server, name, input, output } = formValues();
 
   const button = $("connect-btn");
   const error = $("connect-error");
@@ -192,6 +199,36 @@ $("connect-form").addEventListener("submit", async (event) => {
   }
 });
 
+// «Создать комнату»: запускаем сервер внутри программы и подключаемся к нему сами.
+$("host-btn").addEventListener("click", async () => {
+  if (!$("name").value.trim()) {
+    $("name").reportValidity();
+    return;
+  }
+  const { name, input, output } = formValues();
+  const button = $("host-btn");
+  const error = $("connect-error");
+  button.disabled = true;
+  button.textContent = "Запуск сервера…";
+  error.hidden = true;
+  let hosted = null;
+  try {
+    hosted = await invoke("start_server", { name: `${name} — комната` });
+    const joined = await invoke("connect", {
+      args: { server: hosted.localAddress, name, input, output },
+    });
+    call.hosting = hosted.info;
+    enterRoom("Ваш сервер", name, joined);
+  } catch (e) {
+    if (hosted) await invoke("stop_server").catch(() => {});
+    error.textContent = String(e);
+    error.hidden = false;
+  } finally {
+    button.disabled = false;
+    button.textContent = "Создать комнату на этом компьютере";
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Комната
 // ---------------------------------------------------------------------------
@@ -201,6 +238,8 @@ function enterRoom(server, name, joined) {
   call.myName = name;
   call.peers = new Map(joined.peers.map((p) => [p.id, p.name]));
   $("server-label").textContent = server;
+  renderHostCard();
+  disarmLeave();
   renderPeers();
   for (const [id, peerName] of call.peers) applySavedVolume(id, peerName);
   showView("room");
@@ -210,6 +249,7 @@ function enterRoom(server, name, joined) {
 }
 
 function leaveRoom(reason) {
+  call.hosting = null;
   clearInterval(call.statusTimer);
   call.statusTimer = null;
   call.peers.clear();
@@ -218,13 +258,78 @@ function leaveRoom(reason) {
   if (reason) toast(reason);
 }
 
+// Хосту закрытие комнаты отключает всех, поэтому просим нажать дважды.
+let leaveArmTimer = null;
+
+function disarmLeave() {
+  clearTimeout(leaveArmTimer);
+  const button = $("leave-btn");
+  button.classList.remove("armed");
+  button.textContent = call.hosting ? "Закрыть комнату" : "Отключиться";
+}
+
 $("leave-btn").addEventListener("click", async () => {
+  const button = $("leave-btn");
+  if (call.hosting && !button.classList.contains("armed")) {
+    button.classList.add("armed");
+    button.textContent = "Все отключатся. Ещё раз?";
+    leaveArmTimer = setTimeout(disarmLeave, 4000);
+    return;
+  }
+  const wasHosting = Boolean(call.hosting);
   try {
     await invoke("disconnect");
+    if (wasHosting) await invoke("stop_server");
   } finally {
     leaveRoom();
   }
 });
+
+function renderHostCard() {
+  const card = $("host-card");
+  card.hidden = !call.hosting;
+  if (!call.hosting) return;
+  const list = $("host-addresses");
+  list.innerHTML = "";
+  for (const { interface: iface, address } of call.hosting.addresses) {
+    const li = document.createElement("li");
+    const name = document.createElement("span");
+    name.className = "host-iface";
+    name.textContent = iface;
+    name.title = iface;
+    const addr = document.createElement("span");
+    addr.className = "host-address";
+    addr.textContent = address;
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "link";
+    copy.textContent = "копировать";
+    copy.addEventListener("click", () => copyText(address));
+    li.append(name, addr, copy);
+    list.append(li);
+  }
+  if (call.hosting.addresses.length === 0) {
+    const li = document.createElement("li");
+    li.className = "subtle small-text";
+    li.textContent = "Компьютер не подключён к сети.";
+    list.append(li);
+  }
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    // Запасной путь для движков, где Clipboard API недоступен.
+    const area = document.createElement("textarea");
+    area.value = text;
+    document.body.append(area);
+    area.select();
+    document.execCommand("copy");
+    area.remove();
+  }
+  toast(`Скопировано: ${text}`);
+}
 
 function renderPeers() {
   const list = $("peers");
@@ -324,6 +429,7 @@ listen("peer-left", ({ payload }) => {
 
 listen("call-ended", async ({ payload }) => {
   await invoke("disconnect").catch(() => {});
+  if (call.hosting) await invoke("stop_server").catch(() => {});
   leaveRoom(`Звонок завершён: ${payload.reason}`);
 });
 

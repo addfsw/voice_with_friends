@@ -293,6 +293,71 @@ button.link:hover {
   white-space: nowrap;
 }
 
+/* «Создать комнату» */
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-subtle);
+  font-size: 12px;
+}
+
+.divider::before,
+.divider::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--border);
+}
+
+.host-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-color: var(--accent);
+}
+
+.host-title {
+  font-weight: 600;
+}
+
+.host-addresses {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.host-addresses li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.host-iface {
+  color: var(--text-subtle);
+  font-size: 12px;
+  width: 90px;
+  flex: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.host-address {
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 13px;
+  user-select: text;
+  flex: 1;
+}
+
+button.armed {
+  background: var(--danger-hover);
+}
+
 /* Галочка */
 
 .check {

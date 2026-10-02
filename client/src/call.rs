@@ -125,6 +125,7 @@ impl Call {
             let mixer = audio.mixer.clone();
             let peers = peers.clone();
             let hanging_up = hanging_up.clone();
+            let closer = closer.clone();
             tokio::spawn(async move {
                 let reason = loop {
                     match session.next_event().await {
@@ -142,6 +143,9 @@ impl Call {
                         Err(e) => break format!("соединение потеряно: {e:#}"),
                     }
                 };
+                // Если сервер сам назвал причину (например, «сервер остановлен»),
+                // она понятнее технического текста ошибки.
+                let reason = closer.close_reason().unwrap_or(reason);
                 if !hanging_up.load(Ordering::Relaxed) {
                     on_event(CallEvent::Ended(reason));
                 }

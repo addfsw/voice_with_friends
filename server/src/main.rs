@@ -68,7 +68,7 @@ async fn main() -> anyhow::Result<()> {
         _ = server.run() => {}
         _ = tokio::signal::ctrl_c() => {
             info!("останавливаюсь...");
-            endpoint.close(0u32.into(), b"server shutdown");
+            endpoint.close(0u32.into(), vwf_proto::SERVER_STOPPED_REASON.as_bytes());
         }
     }
     endpoint.wait_idle().await;

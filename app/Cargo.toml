@@ -17,7 +17,9 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 vwf-client.workspace = true
 vwf-proto.workspace = true
+vwf-server.workspace = true
 anyhow.workspace = true
+quinn.workspace = true
 serde.workspace = true
 tokio.workspace = true
 # custom-protocol: интерфейс встраивается в exe, и программа работает

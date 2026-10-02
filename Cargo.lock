@@ -4825,6 +4825,7 @@ name = "vwf-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "quinn",
  "serde",
  "tauri",
  "tauri-build",
@@ -4832,6 +4833,7 @@ dependencies = [
  "tokio",
  "vwf-client",
  "vwf-proto",
+ "vwf-server",
 ]
 
 [[package]]

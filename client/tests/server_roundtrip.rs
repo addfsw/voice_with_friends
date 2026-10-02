@@ -102,3 +102,39 @@ async fn server_is_found_by_discovery() {
         }]
     );
 }
+
+#[tokio::test]
+async fn stopped_server_releases_its_ports() {
+    let config = |bind: &str, discovery: &str| vwf_server::Config {
+        bind: bind.parse().unwrap(),
+        echo: false,
+        data_dir: None,
+        name: "Временный".into(),
+        discovery: Some(discovery.parse().unwrap()),
+    };
+    let server = vwf_server::Server::bind(config("127.0.0.1:0", "127.0.0.1:0")).unwrap();
+    let addr = server.local_addr().unwrap();
+    let discovery = server.discovery_addr().unwrap();
+    let endpoint = server.endpoint().clone();
+    let run = tokio::spawn(server.run());
+
+    endpoint.close(0u32.into(), b"stop");
+    timeout(T, run).await.unwrap().unwrap();
+    endpoint.wait_idle().await;
+    drop(endpoint);
+
+    // Порты освобождаются: тот же сервер можно запустить снова (как после
+    // «Остановить сервер» в приложении). Сокет QUIC закрывает фоновая задача
+    // quinn, поэтому даём ей немного времени.
+    let started = std::time::Instant::now();
+    let again = loop {
+        match vwf_server::Server::bind(config(&addr.to_string(), &discovery.to_string())) {
+            Ok(server) => break server,
+            Err(_) if started.elapsed() < Duration::from_secs(2) => {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            Err(e) => panic!("порт не освободился: {e:#}"),
+        }
+    };
+    assert_eq!(again.discovery_addr(), Some(discovery));
+}

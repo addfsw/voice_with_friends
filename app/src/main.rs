@@ -7,6 +7,8 @@
 // В release-сборке не показываем консольное окно рядом с приложением.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod host;
+
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -19,6 +21,8 @@ use vwf_client::pipeline::{TxMode, TxState};
 use vwf_client::{audio, discovery};
 use vwf_proto::{PeerId, PeerInfo};
 
+use crate::host::{HostInfo, HostedServer};
+
 struct AppState {
     /// Настройки передачи и индикаторы микрофона. Живут всё время работы
     /// программы, поэтому mute, режим и порог не сбрасываются между звонками.
@@ -27,6 +31,8 @@ struct AppState {
     deafened: AtomicBool,
     /// Клавиша рации в формате `Ctrl+Alt+KeyV`, `F8` и т.п.
     ptt_key: Mutex<Option<String>>,
+    /// Сервер, запущенный кнопкой «Создать комнату».
+    host: tokio::sync::Mutex<Option<HostedServer>>,
 }
 
 /// Ошибки отдаём в интерфейс строкой — он покажет её пользователю.
@@ -147,6 +153,44 @@ async fn connect(
 async fn disconnect(state: State<'_, AppState>) -> CmdResult<()> {
     if let Some(call) = state.call.lock().await.take() {
         call.hang_up().await;
+    }
+    Ok(())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Hosted {
+    info: HostInfo,
+    /// Куда подключаться самому хосту.
+    local_address: String,
+}
+
+/// Запускает сервер на этом компьютере (если ещё не запущен).
+#[tauri::command]
+async fn start_server(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    name: String,
+) -> CmdResult<Hosted> {
+    let mut host = state.host.lock().await;
+    if host.is_none() {
+        // Сертификат сервера храним в папке данных приложения
+        // (на Windows это %APPDATA%\io.github.addfsw.voicewithfriends).
+        let data_dir = app.path().app_data_dir().map_err(err)?;
+        let name = name.trim();
+        let name =
+            if name.is_empty() { vwf_server::default_server_name() } else { name.to_string() };
+        *host = Some(HostedServer::start(name, data_dir).await.map_err(|e| format!("{e:#}"))?);
+    }
+    let server = host.as_ref().expect("только что запустили");
+    Ok(Hosted { info: server.info.clone(), local_address: server.local_address() })
+}
+
+/// Останавливает свой сервер; все участники отключаются.
+#[tauri::command]
+async fn stop_server(state: State<'_, AppState>) -> CmdResult<()> {
+    if let Some(server) = state.host.lock().await.take() {
+        server.stop().await;
     }
     Ok(())
 }
@@ -296,6 +340,7 @@ fn main() {
             call: tokio::sync::Mutex::new(None),
             deafened: AtomicBool::new(false),
             ptt_key: Mutex::new(None),
+            host: tokio::sync::Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             list_devices,
@@ -309,15 +354,20 @@ fn main() {
             discover_servers,
             set_mode,
             set_ptt_key,
+            start_server,
+            stop_server,
             status,
         ])
         .on_window_event(|window, event| {
-            // Закрыли окно — аккуратно кладём трубку, чтобы остальные сразу
-            // увидели, что мы ушли, а не ждали таймаута.
+            // Закрыли окно — аккуратно кладём трубку и останавливаем свой сервер,
+            // чтобы остальные сразу увидели, что мы ушли, а не ждали таймаута.
             if let tauri::WindowEvent::CloseRequested { .. } = event {
                 let state = window.app_handle().state::<AppState>();
                 if let Some(call) = tauri::async_runtime::block_on(state.call.lock()).take() {
                     tauri::async_runtime::block_on(call.hang_up());
+                }
+                if let Some(server) = tauri::async_runtime::block_on(state.host.lock()).take() {
+                    tauri::async_runtime::block_on(server.stop());
                 }
             }
         })
