@@ -258,6 +258,15 @@ async fn start_server(
     Ok(Hosted { info: server.info.clone(), local_address: server.local_address() })
 }
 
+/// Только для своей комнаты: эхо — каждый слышит сам себя (проверка связи).
+#[tauri::command]
+async fn set_echo(state: State<'_, AppState>, enabled: bool) -> CmdResult<()> {
+    if let Some(server) = state.host.lock().await.as_ref() {
+        server.set_echo(enabled);
+    }
+    Ok(())
+}
+
 /// Останавливает свой сервер; все участники отключаются.
 #[tauri::command]
 async fn stop_server(state: State<'_, AppState>) -> CmdResult<()> {
@@ -403,9 +412,6 @@ struct Status {
     deafened: bool,
     /// Кто из собеседников сейчас говорит.
     speaking: Vec<PeerId>,
-    /// Сбои звука с начала звонка (потерянные кусочки).
-    mic_glitches: u64,
-    output_glitches: u64,
 }
 
 /// Интерфейс опрашивает это ~10 раз в секунду для индикаторов.
@@ -420,10 +426,6 @@ async fn status(state: State<'_, AppState>) -> CmdResult<Status> {
         muted: tx.muted(),
         deafened: state.deafened.load(Ordering::Relaxed),
         speaking: call.as_ref().map(|c| c.mixer().speaking()).unwrap_or_default(),
-        mic_glitches: call.as_ref().map_or(0, |c| c.audio.capture.glitches.load(Ordering::Relaxed)),
-        output_glitches: call
-            .as_ref()
-            .map_or(0, |c| c.audio.playback.glitches.load(Ordering::Relaxed)),
     })
 }
 
@@ -459,6 +461,7 @@ fn main() {
             set_ptt_key,
             start_server,
             stop_server,
+            set_echo,
             set_server_mute,
             kick,
             status,

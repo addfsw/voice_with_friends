@@ -360,6 +360,7 @@ function renderHostCard() {
   if (!call.hosting) return;
   card.open = store.get("hostCardOpen", false);
   $("host-code").textContent = call.hosting.code;
+  $("echo").checked = false; // новая комната всегда без эха
   const list = $("host-addresses");
   list.innerHTML = "";
   for (const { interface: iface, address } of call.hosting.addresses) {
@@ -659,15 +660,6 @@ async function refreshStatus() {
     const active = li.classList.contains("me") ? status.transmitting : speaking.has(id);
     li.classList.toggle("speaking", active);
   }
-
-
-  const glitches = $("glitches");
-  if (status.micGlitches || status.outputGlitches) {
-    glitches.textContent = `Сбои звука: микрофон ${status.micGlitches}, вывод ${status.outputGlitches}`;
-    glitches.hidden = false;
-  } else {
-    glitches.hidden = true;
-  }
 }
 
 
@@ -676,6 +668,10 @@ async function refreshStatus() {
 // ---------------------------------------------------------------------------
 
 $("host-card").addEventListener("toggle", () => store.set("hostCardOpen", $("host-card").open));
+
+$("echo").addEventListener("change", () => {
+  invoke("set_echo", { enabled: $("echo").checked });
+});
 
 $("mode").addEventListener("change", async () => {
   const mode = $("mode").value;

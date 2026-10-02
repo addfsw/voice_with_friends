@@ -5,6 +5,8 @@
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::bail;
@@ -38,6 +40,7 @@ pub struct HostedServer {
     /// заглушать и выгонять. Каждый запуск комнаты — новый.
     admin_token: String,
     fingerprint: String,
+    echo: Arc<AtomicBool>,
     pub info: HostInfo,
 }
 
@@ -77,6 +80,7 @@ impl HostedServer {
         let fingerprint = server.fingerprint().to_string();
         let code = vwf_proto::short_fingerprint(&fingerprint);
         let endpoint = server.endpoint().clone();
+        let echo = server.echo_switch();
         let task = tauri::async_runtime::spawn(server.run());
         let addresses = vwf_server::reachable_addresses(port)
             .into_iter()
@@ -94,6 +98,7 @@ impl HostedServer {
             task,
             admin_token,
             fingerprint,
+            echo,
             info: HostInfo { name, port, addresses, code },
         })
     }
@@ -103,6 +108,11 @@ impl HostedServer {
     pub fn own(&self, server: &str) -> Option<(String, String)> {
         (server == self.local_address())
             .then(|| (self.admin_token.clone(), self.fingerprint.clone()))
+    }
+
+    /// Эхо: сервер возвращает каждому его собственный голос.
+    pub fn set_echo(&self, enabled: bool) {
+        self.echo.store(enabled, Ordering::Relaxed);
     }
 
     /// Адрес, по которому к серверу подключается сам хост.

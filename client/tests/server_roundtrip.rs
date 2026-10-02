@@ -61,6 +61,34 @@ async fn voice_is_forwarded_to_others_only() {
 }
 
 #[tokio::test]
+async fn echo_can_be_switched_while_running() {
+    let server = vwf_server::Server::bind(vwf_server::Config {
+        bind: "127.0.0.1:0".parse().unwrap(),
+        echo: false,
+        data_dir: None,
+        name: "Тестовый".into(),
+        discovery: None,
+        admin_token: None,
+    })
+    .unwrap();
+    let addr = server.local_addr().unwrap().to_string();
+    let echo = server.echo_switch();
+    tokio::spawn(server.run());
+
+    let solo = vwf_client::net::connect(&addr, "Соло").await.unwrap();
+    let rx = solo.voice_receiver();
+    solo.voice_sender().send(0, b"off");
+    assert!(timeout(Duration::from_millis(300), rx.recv()).await.is_err());
+
+    echo.store(true, std::sync::atomic::Ordering::Relaxed);
+    for seq in 1..6 {
+        solo.voice_sender().send(seq, b"on");
+    }
+    let (_, _, opus) = timeout(T, rx.recv()).await.unwrap().unwrap();
+    assert_eq!(&opus[..], b"on");
+}
+
+#[tokio::test]
 async fn echo_mode_returns_own_voice() {
     let addr = start_server(true).await.to_string();
     let solo = vwf_client::net::connect(&addr, "Соло").await.unwrap();

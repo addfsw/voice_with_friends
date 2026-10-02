@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -40,7 +41,8 @@ pub struct Config {
 pub struct Server {
     endpoint: quinn::Endpoint,
     fingerprint: String,
-    echo: bool,
+    /// Режим эха можно переключать и на работающем сервере (см. `echo_switch`).
+    echo: Arc<AtomicBool>,
     name: String,
     discovery: Option<std::net::UdpSocket>,
     admin_token: Option<String>,
@@ -84,7 +86,7 @@ impl Server {
         Ok(Self {
             endpoint,
             fingerprint,
-            echo: config.echo,
+            echo: Arc::new(AtomicBool::new(config.echo)),
             name: config.name,
             discovery,
             admin_token: config.admin_token.filter(|t| !t.is_empty()),
@@ -147,6 +149,11 @@ impl Server {
             task.abort();
             let _ = task.await;
         }
+    }
+
+    /// Переключатель режима эха; действует и после запуска `run`.
+    pub fn echo_switch(&self) -> Arc<AtomicBool> {
+        self.echo.clone()
     }
 
     pub fn endpoint(&self) -> &quinn::Endpoint {
@@ -220,7 +227,7 @@ struct Room {
 }
 
 struct RoomSettings {
-    echo: bool,
+    echo: Arc<AtomicBool>,
     admin_token: Option<String>,
 }
 
@@ -364,9 +371,10 @@ async fn handle_connection(
             if room.peers.get(&id).is_none_or(|p| p.info.server_muted) {
                 continue;
             }
+            let echo = settings.echo.load(Ordering::Relaxed);
             room.peers
                 .iter()
-                .filter(|(pid, _)| settings.echo || **pid != id)
+                .filter(|(pid, _)| echo || **pid != id)
                 .map(|(_, p)| p.conn.clone())
                 .collect()
         };
