@@ -6,6 +6,8 @@
 //! в lock-free кольцевые буферы, а кодирование и микширование происходят
 //! в обычных потоках (см. `pipeline`).
 
+use std::time::{Duration, Instant};
+
 use anyhow::{Context, bail};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, FromSample, SampleFormat, SizedSample, StreamConfig};
@@ -83,8 +85,34 @@ fn pick_config(device: &Device, input: bool) -> anyhow::Result<cpal::SupportedSt
         .unwrap_or(default))
 }
 
-fn on_stream_error(err: cpal::Error) {
-    eprintln!("ошибка аудиопотока: {err}");
+/// Обработчик ошибок аудиопотока.
+///
+/// Отдельно обрабатывается xrun: система не успела передать нам данные с микрофона
+/// (или забрать данные для вывода), и кусочек звука потерялся. Это не авария:
+/// поток продолжает работать, а на слух это в худшем случае короткий щелчок.
+/// Первую секунду после запуска xrun'ы не показываем: WASAPI часто выдаёт их,
+/// пока аудиодвижок Windows раскручивается. Дальше сообщаем не чаще раза в 5 секунд,
+/// чтобы не засорять консоль.
+fn stream_error_handler(label: &'static str) -> impl FnMut(cpal::Error) + Send + 'static {
+    let started = Instant::now();
+    let mut xruns = 0u64;
+    let mut last_report: Option<Instant> = None;
+    move |err| {
+        if err.kind() != cpal::ErrorKind::Xrun {
+            eprintln!("{label}: ошибка аудиопотока: {err}");
+            return;
+        }
+        if started.elapsed() < Duration::from_secs(1) {
+            return;
+        }
+        xruns += 1;
+        if last_report.is_none_or(|t| t.elapsed() >= Duration::from_secs(5)) {
+            eprintln!(
+                "{label}: потерян кусочек звука, система не успела его передать (всего {xruns})"
+            );
+            last_report = Some(Instant::now());
+        }
+    }
 }
 
 /// Запущенный захват с микрофона. Пока значение живо — микрофон пишет.
@@ -140,7 +168,7 @@ where
                 });
             }
         },
-        on_stream_error,
+        stream_error_handler("микрофон"),
         None,
     )?;
     Ok(stream)
@@ -193,7 +221,7 @@ where
                 frame.fill(sample);
             }
         },
-        on_stream_error,
+        stream_error_handler("вывод"),
         None,
     )?;
     Ok(stream)
