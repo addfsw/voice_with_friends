@@ -12,6 +12,7 @@ async fn start_server(echo: bool) -> std::net::SocketAddr {
         data_dir: None,
         name: "Тестовый".into(),
         discovery: None,
+        admin_token: None,
     })
     .unwrap();
     let addr = server.local_addr().unwrap();
@@ -33,7 +34,7 @@ async fn voice_is_forwarded_to_others_only() {
     assert_eq!(bob.peers[0].name, "Алиса");
 
     match timeout(T, alice.next_event()).await.unwrap().unwrap() {
-        Some(ServerMsg::PeerJoined(p)) => assert_eq!((p.id, p.name.as_str()), (bob.my_id, "Боб")),
+        Some(ServerMsg::PeerJoined(p)) => assert_eq!((p.id, p.name.as_str()), (bob.me.id, "Боб")),
         other => panic!("ожидали PeerJoined, получили {other:?}"),
     }
 
@@ -44,14 +45,14 @@ async fn voice_is_forwarded_to_others_only() {
         alice.voice_sender().send(seq, b"opus-frame");
     }
     let (from, seq, opus) = timeout(T, bob_rx.recv()).await.unwrap().unwrap();
-    assert_eq!(from, alice.my_id);
+    assert_eq!(from, alice.me.id);
     assert!(seq < 5);
     assert_eq!(&opus[..], b"opus-frame");
 
     // Без режима эха отправитель сам себя не слышит.
     assert!(timeout(Duration::from_millis(300), alice_rx.recv()).await.is_err());
 
-    let bob_id = bob.my_id;
+    let bob_id = bob.me.id;
     bob.close().await;
     match timeout(T, alice.next_event()).await.unwrap().unwrap() {
         Some(ServerMsg::PeerLeft { id }) => assert_eq!(id, bob_id),
@@ -68,7 +69,7 @@ async fn echo_mode_returns_own_voice() {
         solo.voice_sender().send(seq, b"hello");
     }
     let (from, _, opus) = timeout(T, rx.recv()).await.unwrap().unwrap();
-    assert_eq!(from, solo.my_id);
+    assert_eq!(from, solo.me.id);
     assert_eq!(&opus[..], b"hello");
 }
 
@@ -80,6 +81,7 @@ async fn server_is_found_by_discovery() {
         data_dir: None,
         name: "Комната Пети".into(),
         discovery: Some("127.0.0.1:0".parse().unwrap()),
+        admin_token: None,
     })
     .unwrap();
     let addr = server.local_addr().unwrap();
@@ -111,6 +113,7 @@ async fn stopped_server_releases_its_ports() {
         data_dir: None,
         name: "Временный".into(),
         discovery: Some(discovery.parse().unwrap()),
+        admin_token: None,
     };
     let server = vwf_server::Server::bind(config("127.0.0.1:0", "127.0.0.1:0")).unwrap();
     let addr = server.local_addr().unwrap();
@@ -137,4 +140,92 @@ async fn stopped_server_releases_its_ports() {
         }
     };
     assert_eq!(again.discovery_addr(), Some(discovery));
+}
+
+/// Ждёт от сервера событие, подходящее под `matches`, пропуская остальные.
+async fn expect_event(
+    session: &mut vwf_client::net::Session,
+    mut matches: impl FnMut(&ServerMsg) -> bool,
+) -> ServerMsg {
+    timeout(T, async {
+        loop {
+            let event = session.next_event().await.unwrap().expect("соединение закрыто");
+            if matches(&event) {
+                return event;
+            }
+        }
+    })
+    .await
+    .expect("не дождались события")
+}
+
+#[tokio::test]
+async fn host_can_mute_and_kick_but_guest_cannot() {
+    use vwf_proto::ClientMsg;
+
+    let server = vwf_server::Server::bind(vwf_server::Config {
+        bind: "127.0.0.1:0".parse().unwrap(),
+        echo: false,
+        data_dir: None,
+        name: "Комната".into(),
+        discovery: None,
+        admin_token: Some("секрет".into()),
+    })
+    .unwrap();
+    let addr = server.local_addr().unwrap().to_string();
+    tokio::spawn(server.run());
+
+    let mut host =
+        vwf_client::net::connect_with_token(&addr, "Хост", Some("секрет")).await.unwrap();
+    assert!(host.me.admin);
+    let mut guest =
+        vwf_client::net::connect_with_token(&addr, "Гость", Some("неверный")).await.unwrap();
+    assert!(!guest.me.admin);
+    assert!(guest.peers[0].admin, "гость видит, кто хост");
+    let guest_id = guest.me.id;
+    expect_event(&mut host, |e| matches!(e, ServerMsg::PeerJoined(_))).await;
+
+    // Статус гостя видят все.
+    guest.control().send(ClientMsg::SetStatus { muted: true, deafened: false });
+    match expect_event(&mut host, |e| matches!(e, ServerMsg::PeerUpdated(_))).await {
+        ServerMsg::PeerUpdated(p) => assert!(p.id == guest_id && p.muted && !p.deafened),
+        _ => unreachable!(),
+    }
+
+    // Гость не может выгнать хоста: команда игнорируется.
+    guest.control().send(ClientMsg::Kick { id: host.me.id });
+
+    // Хост заглушает гостя: тот узнаёт об этом, а его голос не доходит.
+    host.control().send(ClientMsg::SetServerMute { id: guest_id, muted: true });
+    match expect_event(&mut guest, |e| matches!(e, ServerMsg::PeerUpdated(p) if p.server_muted))
+        .await
+    {
+        ServerMsg::PeerUpdated(p) => assert_eq!(p.id, guest_id),
+        _ => unreachable!(),
+    }
+    let host_rx = host.voice_receiver();
+    for seq in 0..5 {
+        guest.voice_sender().send(seq, b"muted");
+    }
+    assert!(timeout(Duration::from_millis(300), host_rx.recv()).await.is_err());
+
+    // Голос возвращён — пакеты снова доходят.
+    host.control().send(ClientMsg::SetServerMute { id: guest_id, muted: false });
+    expect_event(&mut guest, |e| matches!(e, ServerMsg::PeerUpdated(p) if !p.server_muted)).await;
+    for seq in 5..10 {
+        guest.voice_sender().send(seq, b"back");
+    }
+    let (from, _, opus) = timeout(T, host_rx.recv()).await.unwrap().unwrap();
+    assert_eq!((from, &opus[..]), (guest_id, &b"back"[..]));
+
+    // Хост выгоняет гостя.
+    host.control().send(ClientMsg::Kick { id: guest_id });
+    let closer = guest.closer();
+    let ended = timeout(T, async { while let Ok(Some(_)) = guest.next_event().await {} }).await;
+    assert!(ended.is_ok(), "гостя не отключили");
+    assert_eq!(closer.close_reason().as_deref(), Some(vwf_proto::KICKED_REASON));
+    match expect_event(&mut host, |e| matches!(e, ServerMsg::PeerLeft { .. })).await {
+        ServerMsg::PeerLeft { id } => assert_eq!(id, guest_id),
+        _ => unreachable!(),
+    }
 }

@@ -45,6 +45,9 @@ enum Command {
         /// Ваше имя, которое увидят остальные.
         #[arg(long, short)]
         name: String,
+        /// Секрет хоста, если сервер запущен с `--admin-token`.
+        #[arg(long)]
+        admin_token: Option<String>,
         #[command(flatten)]
         audio: AudioArgs,
     },
@@ -117,7 +120,9 @@ async fn main() -> anyhow::Result<()> {
         Command::Loopback { audio, sim_loss, sim_jitter_ms } => {
             loopback(audio, sim_loss, sim_jitter_ms).await
         }
-        Command::Connect { server, name, audio } => connect(&server, &name, audio).await,
+        Command::Connect { server, name, admin_token, audio } => {
+            connect(&server, &name, admin_token.as_deref(), audio).await
+        }
     }
 }
 
@@ -169,18 +174,28 @@ async fn loopback(args: AudioArgs, sim_loss: f32, sim_jitter_ms: u32) -> anyhow:
     Ok(())
 }
 
-async fn connect(server: &str, name: &str, args: AudioArgs) -> anyhow::Result<()> {
+async fn connect(
+    server: &str,
+    name: &str,
+    admin_token: Option<&str>,
+    args: AudioArgs,
+) -> anyhow::Result<()> {
     println!("Подключаюсь к {server}...");
     let (events_tx, mut events) = tokio_mpsc::unbounded_channel();
-    let call = Call::start(server, name, &args.settings(), args.tx_state(), move |event| {
-        let _ = events_tx.send(event);
-    })
-    .await?;
+    let call =
+        Call::start(server, name, admin_token, &args.settings(), args.tx_state(), move |event| {
+            let _ = events_tx.send(event);
+        })
+        .await?;
     println!("Подключено.");
+    if call.me().admin {
+        println!("Вы хост этой комнаты.");
+    }
     print_devices(&call.audio);
 
     let mut names: HashMap<PeerId, String> =
         call.peers().into_iter().map(|p| (p.id, p.name)).collect();
+    let mut server_muted = false;
     if names.is_empty() {
         println!("В комнате пока никого нет.");
     } else {
@@ -204,12 +219,26 @@ async fn connect(server: &str, name: &str, args: AudioArgs) -> anyhow::Result<()
                     let name = names.remove(&id).unwrap_or_else(|| format!("#{id}"));
                     println!("← {name} отключился");
                 }
+                CallEvent::PeerUpdated(peer) if peer.id == call.my_id => {
+                    if peer.server_muted != server_muted {
+                        server_muted = peer.server_muted;
+                        println!("{}", if server_muted {
+                            "Хост заглушил вас: остальные вас не слышат."
+                        } else {
+                            "Хост вернул вам голос."
+                        });
+                    }
+                }
+                CallEvent::PeerUpdated(_) => {}
                 CallEvent::Ended(reason) => {
                     println!("Звонок завершён: {reason}.");
                     break;
                 }
             },
-            Some(cmd) = commands.recv() => handle_command(&cmd, &call.audio, &names),
+            Some(cmd) = commands.recv() => {
+                handle_command(&cmd, &call.audio, &names);
+                call.sync_status();
+            }
             _ = tokio::signal::ctrl_c() => break,
         }
     }

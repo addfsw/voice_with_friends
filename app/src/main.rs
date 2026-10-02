@@ -77,18 +77,29 @@ struct ConnectArgs {
 struct Peer {
     id: PeerId,
     name: String,
+    admin: bool,
+    muted: bool,
+    deafened: bool,
+    server_muted: bool,
 }
 
 impl From<PeerInfo> for Peer {
     fn from(p: PeerInfo) -> Self {
-        Self { id: p.id, name: p.name }
+        Self {
+            id: p.id,
+            name: p.name,
+            admin: p.admin,
+            muted: p.muted,
+            deafened: p.deafened,
+            server_muted: p.server_muted,
+        }
     }
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Joined {
-    my_id: PeerId,
+    me: Peer,
     peers: Vec<Peer>,
     input_device: String,
     output_device: String,
@@ -121,16 +132,26 @@ async fn connect(
         output: non_empty(args.output),
         ..AudioSettings::default()
     };
+    let server = args.server.trim();
+    // К своему серверу подключаемся с секретом хоста.
+    let admin_token = state
+        .host
+        .lock()
+        .await
+        .as_ref()
+        .and_then(|h| h.admin_token_for(server).map(str::to_string));
     let events = app.clone();
     let call = Call::start(
-        args.server.trim(),
+        server,
         args.name.trim(),
+        admin_token.as_deref(),
         &settings,
         state.tx.clone(),
         move |event| {
             let _ = match event {
                 CallEvent::PeerJoined(p) => events.emit("peer-joined", Peer::from(p)),
                 CallEvent::PeerLeft(id) => events.emit("peer-left", PeerLeft { id }),
+                CallEvent::PeerUpdated(p) => events.emit("peer-updated", Peer::from(p)),
                 CallEvent::Ended(reason) => events.emit("call-ended", CallEnded { reason }),
             };
         },
@@ -138,9 +159,16 @@ async fn connect(
     .await
     .map_err(|e| format!("{e:#}"))?;
     call.mixer().set_deafened(state.deafened.load(Ordering::Relaxed));
+    call.sync_status();
 
+    // Сервер ещё не получил наш статус, поэтому mute/deafen берём свои.
+    let me = Peer {
+        muted: state.tx.muted(),
+        deafened: state.deafened.load(Ordering::Relaxed),
+        ..Peer::from(call.me())
+    };
     let joined = Joined {
-        my_id: call.my_id,
+        me,
         peers: call.peers().into_iter().map(Peer::from).collect(),
         input_device: call.audio.capture.device_name.clone(),
         output_device: call.audio.playback.device_name.clone(),
@@ -196,8 +224,12 @@ async fn stop_server(state: State<'_, AppState>) -> CmdResult<()> {
 }
 
 #[tauri::command]
-fn set_muted(state: State<'_, AppState>, muted: bool) {
+async fn set_muted(state: State<'_, AppState>, muted: bool) -> CmdResult<()> {
     state.tx.set_muted(muted);
+    if let Some(call) = state.call.lock().await.as_ref() {
+        call.sync_status();
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -205,6 +237,25 @@ async fn set_deafened(state: State<'_, AppState>, deafened: bool) -> CmdResult<(
     state.deafened.store(deafened, Ordering::Relaxed);
     if let Some(call) = state.call.lock().await.as_ref() {
         call.mixer().set_deafened(deafened);
+        call.sync_status();
+    }
+    Ok(())
+}
+
+/// Только хост: заглушить участника для всех или вернуть ему голос.
+#[tauri::command]
+async fn set_server_mute(state: State<'_, AppState>, id: PeerId, muted: bool) -> CmdResult<()> {
+    if let Some(call) = state.call.lock().await.as_ref() {
+        call.set_server_mute(id, muted);
+    }
+    Ok(())
+}
+
+/// Только хост: отключить участника от комнаты.
+#[tauri::command]
+async fn kick(state: State<'_, AppState>, id: PeerId) -> CmdResult<()> {
+    if let Some(call) = state.call.lock().await.as_ref() {
+        call.kick(id);
     }
     Ok(())
 }
@@ -356,6 +407,8 @@ fn main() {
             set_ptt_key,
             start_server,
             stop_server,
+            set_server_mute,
+            kick,
             status,
         ])
         .on_window_event(|window, event| {

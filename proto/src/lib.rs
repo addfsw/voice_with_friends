@@ -13,7 +13,8 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 /// Версия протокола. Сервер отказывает клиентам с другой версией.
 /// 2 — `seq` голосовых пакетов растёт и в тишине (см. ниже).
-pub const PROTOCOL_VERSION: u32 = 2;
+/// 3 — статус участников (микрофон/звук) и права хоста.
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// ALPN-идентификатор для TLS-рукопожатия QUIC.
 pub const ALPN: &[u8] = b"vwf/1";
@@ -21,6 +22,9 @@ pub const ALPN: &[u8] = b"vwf/1";
 /// Причина закрытия соединений, когда сервер останавливают. Клиенты показывают
 /// её пользователю, поэтому по-русски.
 pub const SERVER_STOPPED_REASON: &str = "сервер остановлен";
+
+/// Причина закрытия соединения у участника, которого выгнал хост.
+pub const KICKED_REASON: &str = "хост отключил вас от комнаты";
 
 /// Порт сервера по умолчанию (UDP).
 pub const DEFAULT_PORT: u16 = 47777;
@@ -46,6 +50,27 @@ pub type PeerId = u32;
 pub struct PeerInfo {
     pub id: PeerId,
     pub name: String,
+    /// Хост комнаты: может заглушать и выгонять других.
+    pub admin: bool,
+    /// Сам выключил микрофон.
+    pub muted: bool,
+    /// Сам выключил звук.
+    pub deafened: bool,
+    /// Хост заглушил его для всех: сервер не пересылает его голос.
+    pub server_muted: bool,
+}
+
+impl PeerInfo {
+    pub fn new(id: PeerId, name: impl Into<String>) -> Self {
+        Self {
+            id,
+            name: name.into(),
+            admin: false,
+            muted: false,
+            deafened: false,
+            server_muted: false,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -94,22 +119,31 @@ pub fn decode_announcement(data: &[u8]) -> Option<Announcement> {
 /// Сообщения клиент → сервер.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ClientMsg {
-    /// Первое сообщение после подключения.
-    Hello { protocol: u32, name: String },
+    /// Первое сообщение после подключения. `admin_token` даёт права хоста,
+    /// если совпадает с токеном, заданным серверу при запуске.
+    Hello { protocol: u32, name: String, admin_token: Option<String> },
+    /// Мы выключили или включили микрофон/звук — пусть остальные видят.
+    SetStatus { muted: bool, deafened: bool },
+    /// Только хост: заглушить участника для всех или вернуть ему голос.
+    SetServerMute { id: PeerId, muted: bool },
+    /// Только хост: отключить участника от комнаты.
+    Kick { id: PeerId },
 }
 
 /// Сообщения сервер → клиент.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ServerMsg {
-    /// Ответ на `Hello`: id клиента и список тех, кто уже в комнате.
+    /// Ответ на `Hello`: сведения о нас самих и список тех, кто уже в комнате.
     Welcome {
-        your_id: PeerId,
+        you: PeerInfo,
         peers: Vec<PeerInfo>,
     },
     PeerJoined(PeerInfo),
     PeerLeft {
         id: PeerId,
     },
+    /// У участника (возможно, у нас самих) изменился статус.
+    PeerUpdated(PeerInfo),
     /// Сервер отказал в подключении (после этого соединение закрывается).
     Rejected {
         reason: String,
@@ -215,8 +249,8 @@ mod tests {
     #[tokio::test]
     async fn control_roundtrip() {
         let msg = ServerMsg::Welcome {
-            your_id: 3,
-            peers: vec![PeerInfo { id: 1, name: "Алиса".into() }],
+            you: PeerInfo::new(3, "Боб"),
+            peers: vec![PeerInfo { admin: true, ..PeerInfo::new(1, "Алиса") }],
         };
         let mut buf = Vec::new();
         write_msg(&mut buf, &msg).await.unwrap();

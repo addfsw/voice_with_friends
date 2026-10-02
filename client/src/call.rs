@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use vwf_proto::{PeerId, PeerInfo, ServerMsg};
+use vwf_proto::{ClientMsg, PeerId, PeerInfo, ServerMsg};
 
 use crate::audio::{self, Wakeup};
 use crate::jitter::Delay;
@@ -78,15 +78,24 @@ impl AudioEngine {
 pub enum CallEvent {
     PeerJoined(PeerInfo),
     PeerLeft(PeerId),
+    /// Изменился статус участника или наш собственный (`id` совпадает с `Call::me`).
+    PeerUpdated(PeerInfo),
     /// Соединение закрылось не по нашей инициативе.
     Ended(String),
+}
+
+/// Состояние комнаты, которое обновляет задача управляющего канала.
+struct Room {
+    me: PeerInfo,
+    peers: HashMap<PeerId, PeerInfo>,
 }
 
 /// Активный звонок.
 pub struct Call {
     pub my_id: PeerId,
     pub audio: AudioEngine,
-    peers: Arc<Mutex<HashMap<PeerId, String>>>,
+    room: Arc<Mutex<Room>>,
+    control: net::Control,
     closer: net::Closer,
     hanging_up: Arc<AtomicBool>,
     tasks: Vec<tokio::task::JoinHandle<()>>,
@@ -94,18 +103,21 @@ pub struct Call {
 
 impl Call {
     /// Подключается к серверу и запускает звук. События комнаты передаются в `on_event`.
+    /// `admin_token` — секрет хоста, если мы им являемся.
     pub async fn start(
         server: &str,
         name: &str,
+        admin_token: Option<&str>,
         settings: &AudioSettings,
         tx_state: Arc<TxState>,
         on_event: impl Fn(CallEvent) + Send + Sync + 'static,
     ) -> anyhow::Result<Self> {
-        let mut session = net::connect(server, name).await?;
-        let my_id = session.my_id;
-        let peers: HashMap<PeerId, String> =
-            session.peers.iter().map(|p| (p.id, p.name.clone())).collect();
-        let peers = Arc::new(Mutex::new(peers));
+        let mut session = net::connect_with_token(server, name, admin_token).await?;
+        let my_id = session.me.id;
+        let room = Arc::new(Mutex::new(Room {
+            me: session.me.clone(),
+            peers: session.peers.iter().map(|p| (p.id, p.clone())).collect(),
+        }));
 
         let sender = session.voice_sender();
         let audio =
@@ -119,24 +131,36 @@ impl Call {
             }
         });
 
+        let control = session.control();
         let closer = session.closer();
         let hanging_up = Arc::new(AtomicBool::new(false));
         let control_task = {
             let mixer = audio.mixer.clone();
-            let peers = peers.clone();
+            let room = room.clone();
             let hanging_up = hanging_up.clone();
             let closer = closer.clone();
             tokio::spawn(async move {
                 let reason = loop {
                     match session.next_event().await {
                         Ok(Some(ServerMsg::PeerJoined(peer))) => {
-                            peers.lock().unwrap().insert(peer.id, peer.name.clone());
+                            room.lock().unwrap().peers.insert(peer.id, peer.clone());
                             on_event(CallEvent::PeerJoined(peer));
                         }
                         Ok(Some(ServerMsg::PeerLeft { id })) => {
-                            peers.lock().unwrap().remove(&id);
+                            room.lock().unwrap().peers.remove(&id);
                             mixer.remove_speaker(id);
                             on_event(CallEvent::PeerLeft(id));
+                        }
+                        Ok(Some(ServerMsg::PeerUpdated(peer))) => {
+                            {
+                                let mut room = room.lock().unwrap();
+                                if peer.id == my_id {
+                                    room.me = peer.clone();
+                                } else {
+                                    room.peers.insert(peer.id, peer.clone());
+                                }
+                            }
+                            on_event(CallEvent::PeerUpdated(peer));
                         }
                         Ok(Some(_)) => {}
                         Ok(None) => break "сервер закрыл соединение".to_string(),
@@ -152,24 +176,52 @@ impl Call {
             })
         };
 
-        Ok(Self { my_id, audio, peers, closer, hanging_up, tasks: vec![voice_task, control_task] })
+        let call = Self {
+            my_id,
+            audio,
+            room,
+            control,
+            closer,
+            hanging_up,
+            tasks: vec![voice_task, control_task],
+        };
+        call.sync_status();
+        Ok(call)
+    }
+
+    /// Мы сами, как нас видит сервер.
+    pub fn me(&self) -> PeerInfo {
+        self.room.lock().unwrap().me.clone()
     }
 
     /// Кто сейчас в комнате (кроме нас).
     pub fn peers(&self) -> Vec<PeerInfo> {
-        let mut peers: Vec<PeerInfo> = self
-            .peers
-            .lock()
-            .unwrap()
-            .iter()
-            .map(|(id, name)| PeerInfo { id: *id, name: name.clone() })
-            .collect();
+        let mut peers: Vec<PeerInfo> = self.room.lock().unwrap().peers.values().cloned().collect();
         peers.sort_by_key(|p| p.id);
         peers
     }
 
     pub fn mixer(&self) -> &Arc<Mixer> {
         &self.audio.mixer
+    }
+
+    /// Сообщает остальным, выключены ли у нас микрофон и звук.
+    /// Вызывать после каждого их переключения.
+    pub fn sync_status(&self) {
+        self.control.send(ClientMsg::SetStatus {
+            muted: self.audio.tx_state.muted(),
+            deafened: self.audio.mixer.deafened(),
+        });
+    }
+
+    /// Только для хоста: заглушить участника для всех (или вернуть ему голос).
+    pub fn set_server_mute(&self, id: PeerId, muted: bool) {
+        self.control.send(ClientMsg::SetServerMute { id, muted });
+    }
+
+    /// Только для хоста: отключить участника от комнаты.
+    pub fn kick(&self, id: PeerId) {
+        self.control.send(ClientMsg::Kick { id });
     }
 
     /// Завершает звонок.

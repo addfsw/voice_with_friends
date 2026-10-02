@@ -311,15 +311,23 @@ button.link:hover {
 }
 
 .host-card {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px 14px;
+  padding: 8px 12px;
   border-color: var(--accent);
 }
 
-.host-title {
+.host-card summary {
+  cursor: pointer;
   font-weight: 600;
+}
+
+.host-card summary .subtle {
+  font-weight: 400;
+}
+
+.host-card[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .host-addresses {
@@ -480,6 +488,101 @@ button.armed {
   font-variant-numeric: tabular-nums;
 }
 
+/* Значки и кнопки в строке участника */
+
+.icon {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+  flex: none;
+}
+
+.icon-cross {
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+}
+
+.peer-side {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 6px;
+  color: var(--text-subtle);
+}
+
+.icon-btn.off {
+  color: var(--danger);
+}
+
+/* Меню хоста */
+
+.menu-wrap {
+  position: relative;
+}
+
+.menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  min-width: 180px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+}
+
+.menu button {
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  padding: 7px 10px;
+  white-space: nowrap;
+}
+
+.menu button:hover {
+  background: var(--surface-2);
+  filter: none;
+}
+
+.menu .danger-item {
+  color: var(--danger);
+}
+
+.menu .danger-item.armed {
+  background: var(--danger);
+  color: #fff;
+}
+
+.status-icon {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  color: var(--danger);
+}
+
+.crown {
+  width: 16px;
+  height: 16px;
+  color: #faa61a;
+  vertical-align: -2px;
+  margin-right: 4px;
+}
+
 .badge {
   font-size: 12px;
   color: var(--text-subtle);
@@ -535,15 +638,6 @@ button.armed {
   font-variant-numeric: tabular-nums;
 }
 
-.buttons {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-.buttons button {
-  white-space: nowrap;
-}
 
 .toast {
   position: fixed;

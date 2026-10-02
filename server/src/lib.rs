@@ -33,6 +33,9 @@ pub struct Config {
     pub name: String,
     /// Где отвечать на поиск серверов (обычно `0.0.0.0:47778`); `None` — не отвечать.
     pub discovery: Option<SocketAddr>,
+    /// Секрет, предъявив который при подключении, участник получает права хоста
+    /// (заглушать и выгонять других). `None` — хоста нет.
+    pub admin_token: Option<String>,
 }
 
 pub struct Server {
@@ -41,6 +44,7 @@ pub struct Server {
     echo: bool,
     name: String,
     discovery: Option<std::net::UdpSocket>,
+    admin_token: Option<String>,
 }
 
 impl Server {
@@ -78,7 +82,14 @@ impl Server {
             }
         });
 
-        Ok(Self { endpoint, fingerprint, echo: config.echo, name: config.name, discovery })
+        Ok(Self {
+            endpoint,
+            fingerprint,
+            echo: config.echo,
+            name: config.name,
+            discovery,
+            admin_token: config.admin_token.filter(|t| !t.is_empty()),
+        })
     }
 
     /// Адрес, на котором сервер отвечает на поиск (если отвечает).
@@ -120,12 +131,13 @@ impl Server {
             }
         }
 
+        let settings = Arc::new(RoomSettings { echo: self.echo, admin_token: self.admin_token });
         while let Some(incoming) = self.endpoint.accept().await {
             let room = room.clone();
-            let echo = self.echo;
+            let settings = settings.clone();
             tokio::spawn(async move {
                 let remote = incoming.remote_address();
-                if let Err(e) = handle_connection(incoming, room, echo).await {
+                if let Err(e) = handle_connection(incoming, room, settings).await {
                     warn!("{remote}: {e:#}");
                 }
             });
@@ -208,8 +220,13 @@ struct Room {
     peers: HashMap<PeerId, Peer>,
 }
 
+struct RoomSettings {
+    echo: bool,
+    admin_token: Option<String>,
+}
+
 struct Peer {
-    name: String,
+    info: PeerInfo,
     conn: quinn::Connection,
     /// Очередь управляющих сообщений этому участнику (пишет отдельная задача).
     control: mpsc::UnboundedSender<ServerMsg>,
@@ -223,12 +240,49 @@ impl Room {
             }
         }
     }
+
+    /// Меняет статус участника и сообщает об этом всем, включая его самого.
+    fn update(&mut self, id: PeerId, change: impl FnOnce(&mut PeerInfo)) {
+        let Some(peer) = self.peers.get_mut(&id) else { return };
+        let before = peer.info.clone();
+        change(&mut peer.info);
+        if peer.info != before {
+            let msg = ServerMsg::PeerUpdated(peer.info.clone());
+            for peer in self.peers.values() {
+                let _ = peer.control.send(msg.clone());
+            }
+        }
+    }
+
+    /// Выполняет управляющую команду участника `from`.
+    fn handle_command(&mut self, from: PeerId, msg: ClientMsg) {
+        let from_admin = self.peers.get(&from).is_some_and(|p| p.info.admin);
+        match msg {
+            ClientMsg::Hello { .. } => {}
+            ClientMsg::SetStatus { muted, deafened } => self.update(from, |p| {
+                p.muted = muted;
+                p.deafened = deafened;
+            }),
+            ClientMsg::SetServerMute { id, muted } if from_admin => {
+                self.update(id, |p| p.server_muted = muted);
+            }
+            ClientMsg::Kick { id } if from_admin && id != from => {
+                if let Some(peer) = self.peers.get(&id) {
+                    info!("хост выгнал {} (id {id})", peer.info.name);
+                    // Остальное (удаление из комнаты, PeerLeft) сделает
+                    // обработчик соединения этого участника, когда оно закроется.
+                    peer.conn.close(1u32.into(), vwf_proto::KICKED_REASON.as_bytes());
+                }
+            }
+            other => warn!("id {from}: нет прав на {other:?}"),
+        }
+    }
 }
 
 async fn handle_connection(
     incoming: quinn::Incoming,
     room: Arc<Mutex<Room>>,
-    echo: bool,
+    settings: Arc<RoomSettings>,
 ) -> anyhow::Result<()> {
     let conn = incoming.await?;
     let remote = conn.remote_address();
@@ -241,7 +295,7 @@ async fn handle_connection(
     })
     .await
     .context("клиент не представился вовремя")??;
-    let Some(ClientMsg::Hello { protocol, name }) = hello else {
+    let Some(ClientMsg::Hello { protocol, name, admin_token }) = hello else {
         anyhow::bail!("клиент закрыл поток, не представившись");
     };
 
@@ -256,22 +310,25 @@ async fn handle_connection(
         anyhow::bail!(reason);
     }
     let name = sanitize_name(&name);
+    let admin = settings.admin_token.is_some() && admin_token == settings.admin_token;
 
     let (control_tx, mut control_rx) = mpsc::unbounded_channel();
     let id = {
         let mut room = room.lock().unwrap();
         let id = room.next_id;
         room.next_id += 1;
-        let peers =
-            room.peers.iter().map(|(id, p)| PeerInfo { id: *id, name: p.name.clone() }).collect();
+        let info = PeerInfo { admin, ..PeerInfo::new(id, name.clone()) };
+        let mut peers: Vec<PeerInfo> = room.peers.values().map(|p| p.info.clone()).collect();
+        peers.sort_by_key(|p| p.id);
         // Welcome кладём в очередь до того, как участник попадёт в комнату, —
         // так он гарантированно получит его раньше любых PeerJoined/PeerLeft.
-        let _ = control_tx.send(ServerMsg::Welcome { your_id: id, peers });
-        room.broadcast(id, &ServerMsg::PeerJoined(PeerInfo { id, name: name.clone() }));
-        room.peers.insert(id, Peer { name: name.clone(), conn: conn.clone(), control: control_tx });
+        let _ = control_tx.send(ServerMsg::Welcome { you: info.clone(), peers });
+        room.broadcast(id, &ServerMsg::PeerJoined(info.clone()));
+        room.peers.insert(id, Peer { info, conn: conn.clone(), control: control_tx });
         id
     };
-    info!("+ {name} (id {id}, {remote})");
+    let role = if admin { ", хост" } else { "" };
+    info!("+ {name} (id {id}, {remote}{role})");
 
     // Писатель управляющих сообщений.
     tokio::spawn(async move {
@@ -282,12 +339,13 @@ async fn handle_connection(
         }
     });
 
-    // Читатель управляющих сообщений: пока клиенту нечего сказать после Hello,
-    // но если он закрыл поток — значит, уходит.
+    // Читатель управляющих сообщений. Если клиент закрыл поток — значит, уходит.
     let reader_conn = conn.clone();
+    let reader_room = room.clone();
     tokio::spawn(async move {
-        // Повторный Hello и прочее пока игнорируем.
-        while let Ok(Some(_)) = vwf_proto::read_msg::<_, ClientMsg>(&mut recv).await {}
+        while let Ok(Some(msg)) = vwf_proto::read_msg::<_, ClientMsg>(&mut recv).await {
+            reader_room.lock().unwrap().handle_command(id, msg);
+        }
         reader_conn.close(0u32.into(), b"bye");
     });
 
@@ -303,9 +361,13 @@ async fn handle_connection(
         let packet = Bytes::from(vwf_proto::encode_server_voice(id, &data));
         let targets: Vec<quinn::Connection> = {
             let room = room.lock().unwrap();
+            // Заглушённого хостом не пересылаем никому.
+            if room.peers.get(&id).is_none_or(|p| p.info.server_muted) {
+                continue;
+            }
             room.peers
                 .iter()
-                .filter(|(pid, _)| echo || **pid != id)
+                .filter(|(pid, _)| settings.echo || **pid != id)
                 .map(|(_, p)| p.conn.clone())
                 .collect()
         };

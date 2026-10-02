@@ -20,11 +20,25 @@ pub struct Session {
     endpoint: quinn::Endpoint,
     conn: quinn::Connection,
     control_recv: quinn::RecvStream,
-    // Держим поток открытым: если его закрыть, сервер решит, что мы ушли.
-    _control_send: quinn::SendStream,
-    pub my_id: PeerId,
+    control: Control,
+    /// Мы сами, как нас видит сервер (id, права хоста...).
+    pub me: PeerInfo,
     /// Кто уже был в комнате в момент подключения.
     pub peers: Vec<PeerInfo>,
+}
+
+/// Отправка управляющих сообщений серверу. Дешёво клонируется.
+///
+/// Сообщения пишет в поток отдельная задача. Когда все `Control` удалены,
+/// она закрывает поток, и сервер понимает, что мы ушли.
+#[derive(Clone)]
+pub struct Control(tokio::sync::mpsc::UnboundedSender<ClientMsg>);
+
+impl Control {
+    pub fn send(&self, msg: ClientMsg) {
+        // Ошибка означает, что соединение уже закрыто, — это заметит основной цикл.
+        let _ = self.0.send(msg);
+    }
 }
 
 /// Позволяет закрыть соединение, когда сама `Session` уже отдана другой задаче.
@@ -100,6 +114,15 @@ async fn resolve(server: &str) -> anyhow::Result<SocketAddr> {
 }
 
 pub async fn connect(server: &str, name: &str) -> anyhow::Result<Session> {
+    connect_with_token(server, name, None).await
+}
+
+/// Подключение с секретом хоста (см. `vwf_server::Config::admin_token`).
+pub async fn connect_with_token(
+    server: &str,
+    name: &str,
+    admin_token: Option<&str>,
+) -> anyhow::Result<Session> {
     let addr = resolve(server).await?;
     let bind: SocketAddr =
         if addr.is_ipv6() { "[::]:0".parse().unwrap() } else { "0.0.0.0:0".parse().unwrap() };
@@ -122,7 +145,11 @@ pub async fn connect(server: &str, name: &str) -> anyhow::Result<Session> {
     let (mut send, mut recv) = conn.open_bi().await?;
     vwf_proto::write_msg(
         &mut send,
-        &ClientMsg::Hello { protocol: PROTOCOL_VERSION, name: name.to_string() },
+        &ClientMsg::Hello {
+            protocol: PROTOCOL_VERSION,
+            name: name.to_string(),
+            admin_token: admin_token.map(str::to_string),
+        },
     )
     .await?;
 
@@ -130,14 +157,25 @@ pub async fn connect(server: &str, name: &str) -> anyhow::Result<Session> {
         .await
         .context("сервер не ответил на приветствие")??;
     match reply {
-        Some(ServerMsg::Welcome { your_id, peers }) => Ok(Session {
-            endpoint,
-            conn,
-            control_recv: recv,
-            _control_send: send,
-            my_id: your_id,
-            peers,
-        }),
+        Some(ServerMsg::Welcome { you, peers }) => {
+            let (control_tx, mut control_rx) = tokio::sync::mpsc::unbounded_channel();
+            tokio::spawn(async move {
+                while let Some(msg) = control_rx.recv().await {
+                    if vwf_proto::write_msg(&mut send, &msg).await.is_err() {
+                        break;
+                    }
+                }
+                let _ = send.finish();
+            });
+            Ok(Session {
+                endpoint,
+                conn,
+                control_recv: recv,
+                control: Control(control_tx),
+                me: you,
+                peers,
+            })
+        }
         Some(ServerMsg::Rejected { reason }) => bail!("сервер отказал: {reason}"),
         Some(other) => bail!("неожиданный ответ сервера: {other:?}"),
         None => bail!("сервер закрыл соединение"),
@@ -151,6 +189,10 @@ impl Session {
 
     pub fn voice_receiver(&self) -> VoiceReceiver {
         VoiceReceiver(self.conn.clone())
+    }
+
+    pub fn control(&self) -> Control {
+        self.control.clone()
     }
 
     pub fn closer(&self) -> Closer {

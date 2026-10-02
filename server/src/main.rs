@@ -27,6 +27,11 @@ struct Args {
     /// Не отвечать на поиск серверов в локальной сети.
     #[arg(long)]
     no_discovery: bool,
+
+    /// Секрет для прав хоста. Кто подключится с ним (`vwf-client connect ...
+    /// --admin-token ...`), сможет заглушать и выгонять участников.
+    #[arg(long)]
+    admin_token: Option<String>,
 }
 
 #[tokio::main]
@@ -45,6 +50,7 @@ async fn main() -> anyhow::Result<()> {
         name: args.name.unwrap_or_else(vwf_server::default_server_name),
         discovery: (!args.no_discovery)
             .then(|| SocketAddr::from(([0, 0, 0, 0], vwf_proto::DISCOVERY_PORT))),
+        admin_token: args.admin_token,
     })?;
     let addr = server.local_addr()?;
     info!("сервер слушает UDP {addr}");

@@ -32,18 +32,23 @@ pub struct HostInfo {
 pub struct HostedServer {
     endpoint: quinn::Endpoint,
     task: JoinHandle<()>,
+    /// Секрет хоста: с ним наше собственное подключение получает права
+    /// заглушать и выгонять. Каждый запуск комнаты — новый.
+    admin_token: String,
     pub info: HostInfo,
 }
 
 impl HostedServer {
     /// `data_dir` — где хранить сертификат сервера, чтобы он не менялся между запусками.
     pub async fn start(name: String, data_dir: PathBuf) -> anyhow::Result<Self> {
+        let admin_token = random_token();
         let config = || vwf_server::Config {
             bind: SocketAddr::from(([0, 0, 0, 0], DEFAULT_PORT)),
             echo: false,
             data_dir: Some(data_dir.clone()),
             name: name.clone(),
             discovery: Some(SocketAddr::from(([0, 0, 0, 0], DISCOVERY_PORT))),
+            admin_token: Some(admin_token.clone()),
         };
 
         // Если комнату только что закрыли, порт освобождается не мгновенно
@@ -79,7 +84,12 @@ impl HostedServer {
                 },
             })
             .collect();
-        Ok(Self { endpoint, task, info: HostInfo { name, port, addresses } })
+        Ok(Self { endpoint, task, admin_token, info: HostInfo { name, port, addresses } })
+    }
+
+    /// Секрет хоста, если `server` — это адрес нашего собственного сервера.
+    pub fn admin_token_for(&self, server: &str) -> Option<&str> {
+        (server == self.local_address()).then_some(self.admin_token.as_str())
     }
 
     /// Адрес, по которому к серверу подключается сам хост.
@@ -94,6 +104,22 @@ impl HostedServer {
         drop(self.endpoint);
         let _ = self.task.await;
     }
+}
+
+/// 128 случайных бит в шестнадцатеричном виде. Источник случайности — тот же,
+/// что у `HashMap` в стандартной библиотеке (ключи из ОС при старте процесса).
+fn random_token() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    let part = || {
+        let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+        hasher.write_u128(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos()),
+        );
+        hasher.finish()
+    };
+    format!("{:016x}{:016x}", part(), part())
 }
 
 fn is_addr_in_use(e: &anyhow::Error) -> bool {

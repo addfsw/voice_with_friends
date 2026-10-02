@@ -28,11 +28,41 @@ const store = {
 const call = {
   // Сведения о своём сервере, если комнату создали мы.
   hosting: null,
-  myId: null,
-  myName: "",
-  peers: new Map(), // id -> имя
+  me: null, // мы сами: { id, name, admin, muted, deafened, serverMuted }
+  peers: new Map(), // id -> такие же сведения о собеседнике
   statusTimer: null,
 };
+
+// ---------------------------------------------------------------------------
+// Иконки (SVG 24×24, цвет — currentColor)
+// ---------------------------------------------------------------------------
+
+const ICON_PATHS = {
+  mic: "M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z",
+  headphones:
+    "M12 3a9 9 0 0 0-9 9v7a2 2 0 0 0 2 2h3v-8H5v-1a7 7 0 0 1 14 0v1h-3v8h3a2 2 0 0 0 2-2v-7a9 9 0 0 0-9-9Z",
+  crown: "M5 16 3 5l5.5 5L12 4l3.5 6L21 5l-2 11H5Zm14 3a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-1h14v1Z",
+  more: "M12 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm0 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm0 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z",
+};
+
+// Иконка; `crossed` — перечёркнутая (выключено).
+function icon(name, crossed = false) {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("class", "icon");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS(ns, "path");
+  path.setAttribute("d", ICON_PATHS[name]);
+  svg.append(path);
+  if (crossed) {
+    const line = document.createElementNS(ns, "line");
+    for (const [k, v] of Object.entries({ x1: 3, y1: 3, x2: 21, y2: 21 })) line.setAttribute(k, v);
+    line.setAttribute("class", "icon-cross");
+    svg.append(line);
+  }
+  return svg;
+}
 
 // ---------------------------------------------------------------------------
 // Общее
@@ -234,14 +264,13 @@ $("host-btn").addEventListener("click", async () => {
 // ---------------------------------------------------------------------------
 
 function enterRoom(server, name, joined) {
-  call.myId = joined.myId;
-  call.myName = name;
-  call.peers = new Map(joined.peers.map((p) => [p.id, p.name]));
+  call.me = joined.me;
+  call.peers = new Map(joined.peers.map((p) => [p.id, p]));
   $("server-label").textContent = server;
   renderHostCard();
   disarmLeave();
   renderPeers();
-  for (const [id, peerName] of call.peers) applySavedVolume(id, peerName);
+  for (const [id, peer] of call.peers) applySavedVolume(id, peer.name);
   showView("room");
   stopLanSearch();
   clearInterval(call.statusTimer);
@@ -289,6 +318,7 @@ function renderHostCard() {
   const card = $("host-card");
   card.hidden = !call.hosting;
   if (!call.hosting) return;
+  card.open = store.get("hostCardOpen", false);
   const list = $("host-addresses");
   list.innerHTML = "";
   for (const { interface: iface, address } of call.hosting.addresses) {
@@ -334,9 +364,9 @@ async function copyText(text) {
 function renderPeers() {
   const list = $("peers");
   list.innerHTML = "";
-  list.append(peerItem(call.myId, call.myName, true));
-  for (const [id, name] of [...call.peers].sort((a, b) => a[0] - b[0])) {
-    list.append(peerItem(id, name, false));
+  list.append(peerItem(call.me, true));
+  for (const peer of [...call.peers.values()].sort((a, b) => a.id - b.id)) {
+    list.append(peerItem(peer, false));
   }
   if (call.peers.size === 0) {
     const empty = document.createElement("li");
@@ -346,39 +376,154 @@ function renderPeers() {
   }
 }
 
-function peerItem(id, name, isMe) {
+function peerItem(peer, isMe) {
   const li = document.createElement("li");
   li.className = "peer";
-  li.dataset.id = id;
+  li.dataset.id = peer.id;
+  if (isMe) li.classList.add("me");
 
   const avatar = document.createElement("div");
   avatar.className = "avatar";
-  avatar.style.background = avatarColor(name);
-  avatar.textContent = initial(name);
+  avatar.style.background = avatarColor(peer.name);
+  avatar.textContent = initial(peer.name);
 
   const main = document.createElement("div");
   main.className = "peer-main";
   const title = document.createElement("div");
   title.className = "peer-name";
-  title.textContent = name;
-  main.append(title);
-
+  if (peer.admin) {
+    const crown = icon("crown");
+    crown.classList.add("crown");
+    crown.append(Object.assign(document.createElementNS("http://www.w3.org/2000/svg", "title"), {
+      textContent: "Хост комнаты",
+    }));
+    title.append(crown);
+  }
+  title.append(document.createTextNode(peer.name));
   if (isMe) {
-    li.classList.add("me");
     const you = document.createElement("span");
     you.className = "you";
     you.textContent = " (вы)";
     title.append(you);
+  }
+  main.append(title);
+
+  // Что с человеком: заглушён хостом, сам выключил микрофон или звук.
+  const notes = [];
+  if (peer.serverMuted) notes.push(isMe ? "хост заглушил вас для всех" : "заглушён хостом");
+  if (notes.length) {
     const badge = document.createElement("div");
-    badge.className = "badge";
-    badge.id = "my-badge";
+    badge.className = "badge off";
+    badge.textContent = notes.join(", ");
     main.append(badge);
+  }
+  if (!isMe) main.append(volumeControl(peer.id, peer.name));
+
+  const side = document.createElement("div");
+  side.className = "peer-side";
+  if (isMe) {
+    side.append(
+      toggleButton("my-mic", icon("mic", peer.muted), peer.muted, "Выключить/включить микрофон", () =>
+        setMuted(!call.me.muted),
+      ),
+      toggleButton("my-sound", icon("headphones", peer.deafened), peer.deafened, "Выключить/включить звук", () =>
+        setDeafened(!call.me.deafened),
+      ),
+    );
   } else {
-    main.append(volumeControl(id, name));
+    // Статус собеседника — просто значки.
+    if (peer.muted) side.append(statusIcon(icon("mic", true), "Выключил микрофон"));
+    if (peer.deafened) side.append(statusIcon(icon("headphones", true), "Выключил звук"));
+    // Права хоста — в меню, чтобы не путать с значками статуса.
+    if (call.me.admin) side.append(hostMenu(peer));
   }
 
-  li.append(avatar, main);
+  li.append(avatar, main, side);
   return li;
+}
+
+function toggleButton(id, iconEl, off, title, onClick) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "icon-btn";
+  if (id) button.id = id;
+  button.classList.toggle("off", off);
+  button.title = title;
+  button.append(iconEl);
+  button.addEventListener("click", onClick);
+  return button;
+}
+
+function statusIcon(iconEl, title) {
+  const span = document.createElement("span");
+  span.className = "status-icon";
+  span.title = title;
+  span.append(iconEl);
+  return span;
+}
+
+// Меню хоста для участника: заглушить для всех, выгнать.
+function hostMenu(peer) {
+  const wrap = document.createElement("div");
+  wrap.className = "menu-wrap";
+  const button = toggleButton(null, icon("more"), false, "Действия хоста", (event) => {
+    event.stopPropagation();
+    const open = !menu.hidden;
+    closeMenus();
+    menu.hidden = open;
+  });
+  // Без всплывающей подсказки: она закрывала бы открытое меню.
+  button.removeAttribute("title");
+  button.setAttribute("aria-label", "Действия хоста");
+  const menu = document.createElement("div");
+  menu.className = "menu";
+  menu.hidden = true;
+
+  const mute = document.createElement("button");
+  mute.type = "button";
+  mute.textContent = peer.serverMuted ? "Вернуть голос" : "Заглушить для всех";
+  mute.addEventListener("click", () => {
+    closeMenus();
+    invoke("set_server_mute", { id: peer.id, muted: !peer.serverMuted });
+  });
+
+  // Выгнать — нужно подтвердить вторым нажатием.
+  const kick = document.createElement("button");
+  kick.type = "button";
+  kick.className = "danger-item";
+  kick.textContent = "Выгнать из комнаты";
+  kick.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (!kick.classList.contains("armed")) {
+      kick.classList.add("armed");
+      kick.textContent = "Точно выгнать?";
+      return;
+    }
+    closeMenus();
+    invoke("kick", { id: peer.id });
+  });
+
+  menu.append(mute, kick);
+  wrap.append(button, menu);
+  return wrap;
+}
+
+function closeMenus() {
+  for (const menu of document.querySelectorAll(".menu")) menu.hidden = true;
+}
+
+document.addEventListener("click", closeMenus);
+
+function setMuted(muted) {
+  call.me.muted = muted;
+  renderPeers();
+  invoke("set_muted", { muted });
+}
+
+function setDeafened(deafened) {
+  call.me.deafened = deafened;
+  renderPeers();
+  invoke("set_deafened", { deafened });
 }
 
 function volumeControl(id, name) {
@@ -417,13 +562,27 @@ function applySavedVolume(id, name) {
 }
 
 listen("peer-joined", ({ payload }) => {
-  call.peers.set(payload.id, payload.name);
+  call.peers.set(payload.id, payload);
   applySavedVolume(payload.id, payload.name);
   renderPeers();
 });
 
 listen("peer-left", ({ payload }) => {
   call.peers.delete(payload.id);
+  renderPeers();
+});
+
+listen("peer-updated", ({ payload }) => {
+  if (!call.me) return;
+  if (payload.id === call.me.id) {
+    if (payload.serverMuted !== call.me.serverMuted) {
+      toast(payload.serverMuted ? "Хост заглушил вас: остальные вас не слышат" : "Хост вернул вам голос");
+    }
+    // Свои mute/deafen знаем точнее сервера: он мог ещё не получить последнее нажатие.
+    call.me = { ...payload, muted: call.me.muted, deafened: call.me.deafened };
+  } else {
+    call.peers.set(payload.id, payload);
+  }
   renderPeers();
 });
 
@@ -460,16 +619,6 @@ async function refreshStatus() {
     li.classList.toggle("speaking", active);
   }
 
-  const badge = $("my-badge");
-  if (badge) {
-    const parts = [];
-    if (status.muted) parts.push("микрофон выключен");
-    if (status.deafened) parts.push("звук выключен");
-    badge.textContent = parts.join(", ");
-    badge.classList.toggle("off", parts.length > 0);
-  }
-  setToggle($("mute-btn"), !status.muted, MIC_LABELS);
-  setToggle($("deafen-btn"), !status.deafened, SOUND_LABELS);
 
   const glitches = $("glitches");
   if (status.micGlitches || status.outputGlitches) {
@@ -480,29 +629,12 @@ async function refreshStatus() {
   }
 }
 
-const MIC_LABELS = ["Микрофон", "Микрофон выкл."];
-const SOUND_LABELS = ["Звук", "Звук выкл."];
-
-function setToggle(button, on, [onText, offText]) {
-  button.textContent = on ? onText : offText;
-  button.classList.toggle("off", !on);
-}
 
 // ---------------------------------------------------------------------------
 // Управление передачей
 // ---------------------------------------------------------------------------
 
-$("mute-btn").addEventListener("click", () => {
-  const muted = !$("mute-btn").classList.contains("off");
-  setToggle($("mute-btn"), !muted, MIC_LABELS);
-  invoke("set_muted", { muted });
-});
-
-$("deafen-btn").addEventListener("click", () => {
-  const deafened = !$("deafen-btn").classList.contains("off");
-  setToggle($("deafen-btn"), !deafened, SOUND_LABELS);
-  invoke("set_deafened", { deafened });
-});
+$("host-card").addEventListener("toggle", () => store.set("hostCardOpen", $("host-card").open));
 
 $("mode").addEventListener("change", async () => {
   const mode = $("mode").value;
