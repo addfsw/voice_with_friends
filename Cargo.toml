@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["proto", "server", "client"]
+members = ["proto", "server", "client", "app"]
 
 [workspace.package]
 version = "0.1.0"
@@ -11,6 +11,7 @@ license = "MIT"
 [workspace.dependencies]
 vwf-proto = { path = "proto" }
 vwf-server = { path = "server" }
+vwf-client = { path = "client" }
 
 anyhow = "1"
 bytes = "1"

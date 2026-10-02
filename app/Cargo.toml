@@ -1,0 +1,26 @@
+[package]
+name = "vwf-app"
+description = "Графический клиент voice_with_friends (Tauri)"
+version.workspace = true
+edition.workspace = true
+# Tauri 2 требует Rust новее, чем остальной проект.
+rust-version = "1.90"
+license.workspace = true
+
+[[bin]]
+name = "voice-with-friends"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+vwf-client.workspace = true
+vwf-proto.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+tokio.workspace = true
+# custom-protocol: интерфейс встраивается в exe, и программа работает
+# после обычного `cargo build`, без отдельного dev-сервера и tauri-cli.
+tauri = { version = "2", features = ["custom-protocol"] }
+tauri-plugin-global-shortcut = "2"

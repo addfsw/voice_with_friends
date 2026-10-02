@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Voice with Friends</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <!-- Экран подключения -->
+    <main id="connect-view" class="view">
+      <div class="brand">
+        <div class="logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/></svg>
+        </div>
+        <h1>Voice with Friends</h1>
+      </div>
+
+      <form id="connect-form" class="card" autocomplete="off">
+        <label class="field">
+          <span>Сервер</span>
+          <input id="server" placeholder="192.168.1.10 или 100.x.y.z" required spellcheck="false" />
+        </label>
+        <label class="field">
+          <span>Ваше имя</span>
+          <input id="name" maxlength="32" required />
+        </label>
+
+        <details id="audio-settings">
+          <summary>Звуковые устройства</summary>
+          <label class="field">
+            <span>Микрофон</span>
+            <select id="input"></select>
+          </label>
+          <label class="field">
+            <span>Динамики / наушники</span>
+            <select id="output"></select>
+          </label>
+        </details>
+
+        <button type="submit" id="connect-btn" class="primary">Подключиться</button>
+        <p id="connect-error" class="error" hidden></p>
+      </form>
+    </main>
+
+    <!-- Комната -->
+    <main id="room-view" class="view" hidden>
+      <header class="room-header">
+        <div>
+          <div class="room-title">Комната</div>
+          <div id="server-label" class="subtle"></div>
+        </div>
+        <button id="leave-btn" class="danger small">Отключиться</button>
+      </header>
+
+      <ul id="peers" class="peers"></ul>
+
+      <section class="card controls">
+        <div class="meter" title="Громкость микрофона и порог активации">
+          <div id="level-bar" class="meter-fill"></div>
+          <div id="threshold-mark" class="meter-mark"></div>
+        </div>
+
+        <label class="field inline">
+          <span>Передача</span>
+          <select id="mode">
+            <option value="voice">Голосом</option>
+            <option value="always">Всегда</option>
+            <option value="ptt">Рация (по клавише)</option>
+          </select>
+        </label>
+
+        <label id="vad-row" class="field inline">
+          <span>Порог</span>
+          <input type="range" id="vad" min="-70" max="-10" step="1" />
+          <output id="vad-value"></output>
+        </label>
+
+        <div id="ptt-row" class="field inline" hidden>
+          <span>Клавиша</span>
+          <button id="ptt-key" class="small">не назначена</button>
+        </div>
+        <p id="ptt-hint" class="subtle small-text" hidden>
+          Пока выбран режим рации, эта клавиша не работает в других программах.
+        </p>
+
+        <div class="buttons">
+          <button id="mute-btn" class="toggle" title="Выключить или включить микрофон">Микрофон</button>
+          <button id="deafen-btn" class="toggle" title="Выключить или включить звук собеседников">Звук</button>
+        </div>
+        <p id="glitches" class="subtle small-text" hidden></p>
+      </section>
+    </main>
+
+    <div id="toast" class="toast" hidden></div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

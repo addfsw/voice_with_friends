@@ -1,0 +1,411 @@
+:root {
+  --bg: #1e1f22;
+  --surface: #2b2d31;
+  --surface-2: #313338;
+  --border: #3f4147;
+  --text: #f2f3f5;
+  --text-subtle: #a3a6ad;
+  --accent: #5865f2;
+  --accent-hover: #4752c4;
+  --speaking: #23a55a;
+  --danger: #da373c;
+  --danger-hover: #a12828;
+  --meter-bg: #1a1b1e;
+  --radius: 10px;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f2f3f5;
+    --surface: #ffffff;
+    --surface-2: #ebedef;
+    --border: #d4d7dc;
+    --text: #1e1f22;
+    --text-subtle: #5c5e66;
+    --meter-bg: #e3e5e8;
+    color-scheme: light;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.4 "Segoe UI", system-ui, -apple-system, sans-serif;
+  user-select: none;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.view {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  height: 100%;
+  padding: 16px;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+/* --- Экран подключения --- */
+
+#connect-view {
+  justify-content: center;
+  max-width: 400px;
+  margin: 0 auto;
+}
+
+.brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.logo {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  background: var(--accent);
+  display: grid;
+  place-items: center;
+}
+
+.logo svg {
+  width: 30px;
+  height: 30px;
+  fill: #fff;
+}
+
+#connect-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.field > span {
+  color: var(--text-subtle);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.field.inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+
+.field.inline > span {
+  width: 76px;
+  flex: none;
+}
+
+.field.inline > select,
+.field.inline > input[type="range"] {
+  flex: 1;
+  min-width: 0;
+}
+
+input,
+select {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  outline: none;
+  user-select: text;
+}
+
+input:focus,
+select:focus {
+  border-color: var(--accent);
+}
+
+input[type="range"] {
+  padding: 0;
+  accent-color: var(--accent);
+  background: transparent;
+  border: none;
+}
+
+details summary {
+  cursor: pointer;
+  color: var(--text-subtle);
+  padding: 4px 0;
+}
+
+details[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+button {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 9px 14px;
+  cursor: pointer;
+}
+
+button:hover {
+  filter: brightness(1.1);
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+button.primary:hover {
+  background: var(--accent-hover);
+  filter: none;
+}
+
+button.danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+
+button.danger:hover {
+  background: var(--danger-hover);
+  filter: none;
+}
+
+button.small {
+  padding: 5px 10px;
+  font-size: 13px;
+}
+
+button.toggle.off {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+
+button.listening {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.error {
+  margin: 0;
+  color: var(--danger);
+  user-select: text;
+}
+
+.subtle {
+  color: var(--text-subtle);
+}
+
+.small-text {
+  font-size: 12px;
+  margin: 0;
+}
+
+/* --- Комната --- */
+
+.room-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.room-title {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.peers {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.peer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 600;
+  color: #fff;
+  flex: none;
+  box-shadow: 0 0 0 2px transparent;
+  transition: box-shadow 80ms;
+}
+
+.peer.speaking .avatar {
+  box-shadow: 0 0 0 3px var(--speaking);
+}
+
+.peer-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.peer-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.peer-name .you {
+  color: var(--text-subtle);
+  font-weight: 400;
+}
+
+.peer-volume {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.peer-volume input {
+  flex: 1;
+  min-width: 0;
+}
+
+.peer-volume output {
+  width: 40px;
+  text-align: right;
+  color: var(--text-subtle);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.badge {
+  font-size: 12px;
+  color: var(--text-subtle);
+}
+
+.badge.off {
+  color: var(--danger);
+}
+
+.empty {
+  color: var(--text-subtle);
+  text-align: center;
+  padding: 12px;
+}
+
+.controls {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.meter {
+  position: relative;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--meter-bg);
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  width: 0;
+  background: var(--text-subtle);
+  transition: width 60ms linear;
+}
+
+.meter-fill.active {
+  background: var(--speaking);
+}
+
+.meter-mark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
+}
+
+#vad-value {
+  width: 64px;
+  text-align: right;
+  color: var(--text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.buttons button {
+  white-space: nowrap;
+}
+
+.toast {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}

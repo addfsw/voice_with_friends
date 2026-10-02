@@ -48,24 +48,44 @@ impl Wakeup {
     }
 }
 
+/// Имена устройств для выбора в интерфейсе.
+#[derive(Debug, Clone, Default)]
+pub struct DeviceList {
+    pub inputs: Vec<String>,
+    pub outputs: Vec<String>,
+    pub default_input: Option<String>,
+    pub default_output: Option<String>,
+}
+
+pub fn device_list() -> anyhow::Result<DeviceList> {
+    let host = cpal::default_host();
+    Ok(DeviceList {
+        inputs: host.input_devices()?.map(|d| device_name(&d)).collect(),
+        outputs: host.output_devices()?.map(|d| device_name(&d)).collect(),
+        default_input: host.default_input_device().map(|d| device_name(&d)),
+        default_output: host.default_output_device().map(|d| device_name(&d)),
+    })
+}
+
 /// Печатает все устройства ввода и вывода.
 pub fn list_devices() -> anyhow::Result<()> {
-    let host = cpal::default_host();
-    let default_in = host.default_input_device().map(|d| device_name(&d));
-    let default_out = host.default_output_device().map(|d| device_name(&d));
-
+    let list = device_list()?;
     println!("Микрофоны:");
-    for d in host.input_devices()? {
-        let name = device_name(&d);
-        let mark =
-            if Some(&name) == default_in.as_ref() { " (по умолчанию)" } else { "" };
+    for name in &list.inputs {
+        let mark = if Some(name) == list.default_input.as_ref() {
+            " (по умолчанию)"
+        } else {
+            ""
+        };
         println!("  {name}{mark}");
     }
     println!("Динамики/наушники:");
-    for d in host.output_devices()? {
-        let name = device_name(&d);
-        let mark =
-            if Some(&name) == default_out.as_ref() { " (по умолчанию)" } else { "" };
+    for name in &list.outputs {
+        let mark = if Some(name) == list.default_output.as_ref() {
+            " (по умолчанию)"
+        } else {
+            ""
+        };
         println!("  {name}{mark}");
     }
     Ok(())
@@ -75,7 +95,8 @@ fn device_name(device: &Device) -> String {
     device.description().map(|d| d.to_string()).unwrap_or_else(|_| "<без имени>".into())
 }
 
-/// Ищет устройство по части имени (без учёта регистра) или берёт устройство по умолчанию.
+/// Ищет устройство по точному имени, затем по части имени (без учёта регистра),
+/// или берёт устройство по умолчанию.
 fn find_device(input: bool, name: Option<&str>) -> anyhow::Result<Device> {
     let host = cpal::default_host();
     let Some(pattern) = name else {
@@ -86,13 +107,18 @@ fn find_device(input: bool, name: Option<&str>) -> anyhow::Result<Device> {
             "в системе нет устройства вывода по умолчанию"
         });
     };
-    let pattern = pattern.to_lowercase();
-    let devices: Vec<Device> =
-        if input { host.input_devices()?.collect() } else { host.output_devices()?.collect() };
-    devices
-        .into_iter()
-        .find(|d| device_name(d).to_lowercase().contains(&pattern))
-        .with_context(|| format!("не найдено устройство «{pattern}» (см. команду `devices`)"))
+    let devices: Vec<(String, Device)> = if input {
+        host.input_devices()?.map(|d| (device_name(&d), d)).collect()
+    } else {
+        host.output_devices()?.map(|d| (device_name(&d), d)).collect()
+    };
+    let lower = pattern.to_lowercase();
+    let index = devices
+        .iter()
+        .position(|(name, _)| name == pattern)
+        .or_else(|| devices.iter().position(|(name, _)| name.to_lowercase().contains(&lower)))
+        .with_context(|| format!("не найдено устройство «{pattern}» (см. команду `devices`)"))?;
+    Ok(devices.into_iter().nth(index).expect("индекс из того же списка").1)
 }
 
 /// Предпочитаем 48 кГц, если устройство их умеет, — тогда не нужен ресемплинг.
