@@ -18,6 +18,8 @@ bytes = "1"
 clap = { version = "4", features = ["derive"] }
 cpal = "0.18"
 if-addrs = "0.15"
+nnnoiseless = { version = "0.5", default-features = false }
+nnoiseless = { version = "0.5", default-features = false }
 opus = "0.4"
 postcard = { version = "1", features = ["alloc"] }
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
@@ -32,3 +34,14 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [profile.release]
 debug = false
+
+# Шумодав и БПФ считаются на каждом аудиокадре. Без оптимизаций они в десятки
+# раз медленнее, и в отладочной сборке (`cargo run`) звук начал бы прерываться.
+[profile.dev.package.nnnoiseless]
+opt-level = 3
+[profile.dev.package.easyfft]
+opt-level = 3
+[profile.dev.package.rustfft]
+opt-level = 3
+[profile.dev.package.realfft]
+opt-level = 3

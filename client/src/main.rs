@@ -24,6 +24,8 @@ struct Cli {
 enum Command {
     /// Показать микрофоны и устройства вывода.
     Devices,
+    /// Найти серверы в локальной сети.
+    Discover,
     /// Проверка звука без сети: микрофон → Opus → джиттер-буфер → динамики.
     /// Говорите в микрофон (лучше в наушниках) и слушайте себя.
     Loopback {
@@ -65,6 +67,9 @@ struct AudioArgs {
     /// Передавать всегда, без активации голосом.
     #[arg(long)]
     no_vad: bool,
+    /// Отключить шумоподавление.
+    #[arg(long)]
+    no_denoise: bool,
     /// Постоянная задержка джиттер-буфера, мс. По умолчанию подстраивается под сеть
     /// сама: в локальной сети это ~10 мс, в плохом Wi-Fi больше.
     #[arg(long)]
@@ -91,7 +96,9 @@ impl AudioArgs {
 
     fn tx_state(&self) -> Arc<TxState> {
         let mode = if self.no_vad { TxMode::Always } else { TxMode::Voice };
-        Arc::new(TxState::new(mode, self.vad_db))
+        let state = TxState::new(mode, self.vad_db);
+        state.set_noise_suppression(!self.no_denoise);
+        Arc::new(state)
     }
 }
 
@@ -106,11 +113,29 @@ async fn main() -> anyhow::Result<()> {
 
     match Cli::parse().command {
         Command::Devices => audio::list_devices(),
+        Command::Discover => discover().await,
         Command::Loopback { audio, sim_loss, sim_jitter_ms } => {
             loopback(audio, sim_loss, sim_jitter_ms).await
         }
         Command::Connect { server, name, audio } => connect(&server, &name, audio).await,
     }
+}
+
+async fn discover() -> anyhow::Result<()> {
+    println!("Ищу серверы в локальной сети...");
+    let servers = vwf_client::discovery::discover(Duration::from_secs(1)).await?;
+    if servers.is_empty() {
+        println!(
+            "Ничего не найдено. Сервер запущен? Брандмауэр пропускает UDP-порт {}?",
+            vwf_proto::DISCOVERY_PORT
+        );
+    }
+    for server in servers {
+        let note =
+            if server.compatible { "" } else { "  (другая версия программы)" };
+        println!("  {}  —  {}  —  участников: {}{note}", server.name, server.address, server.users);
+    }
+    Ok(())
 }
 
 async fn loopback(args: AudioArgs, sim_loss: f32, sim_jitter_ms: u32) -> anyhow::Result<()> {

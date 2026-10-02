@@ -9,13 +9,14 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
-use vwf_client::audio;
 use vwf_client::call::{AudioSettings, Call, CallEvent};
 use vwf_client::pipeline::{TxMode, TxState};
+use vwf_client::{audio, discovery};
 use vwf_proto::{PeerId, PeerInfo};
 
 struct AppState {
@@ -172,6 +173,43 @@ async fn set_volume(state: State<'_, AppState>, id: PeerId, volume: f32) -> CmdR
     Ok(())
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LanServer {
+    name: String,
+    /// Полный адрес для подключения, например `192.168.1.10:47777`.
+    address: String,
+    /// Для показа: без порта, если он стандартный.
+    host: String,
+    users: u32,
+    compatible: bool,
+}
+
+/// Ищет серверы в локальной сети (около секунды).
+#[tauri::command]
+async fn discover_servers() -> CmdResult<Vec<LanServer>> {
+    let servers = discovery::discover(Duration::from_millis(800)).await.map_err(err)?;
+    Ok(servers
+        .into_iter()
+        .map(|s| LanServer {
+            host: if s.address.port() == vwf_proto::DEFAULT_PORT {
+                s.address.ip().to_string()
+            } else {
+                s.address.to_string()
+            },
+            address: s.address.to_string(),
+            name: s.name,
+            users: s.users,
+            compatible: s.compatible,
+        })
+        .collect())
+}
+
+#[tauri::command]
+fn set_noise_suppression(state: State<'_, AppState>, enabled: bool) {
+    state.tx.set_noise_suppression(enabled);
+}
+
 #[tauri::command]
 fn set_vad_threshold(state: State<'_, AppState>, db: f32) {
     state.tx.set_vad_threshold_db(db.clamp(-90.0, 0.0));
@@ -267,6 +305,8 @@ fn main() {
             set_deafened,
             set_volume,
             set_vad_threshold,
+            set_noise_suppression,
+            discover_servers,
             set_mode,
             set_ptt_key,
             status,

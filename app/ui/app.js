@@ -91,6 +91,79 @@ function fillSelect(select, names, systemDefault, saved) {
   select.value = names.includes(saved) ? saved : "";
 }
 
+// ---------------------------------------------------------------------------
+// Поиск серверов в локальной сети
+// ---------------------------------------------------------------------------
+
+const LAN_REFRESH_MS = 5000;
+let lanTimer = null;
+let lanSearching = false;
+
+async function refreshLan() {
+  if (lanSearching || $("connect-view").hidden) return;
+  lanSearching = true;
+  try {
+    renderLan(await invoke("discover_servers"));
+  } catch (e) {
+    $("lan-status").textContent = `Поиск не удался: ${e}`;
+  } finally {
+    lanSearching = false;
+  }
+}
+
+function renderLan(servers) {
+  const list = $("lan-list");
+  list.innerHTML = "";
+  for (const server of servers) {
+    const li = document.createElement("li");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "lan-item";
+    button.classList.toggle("selected", $("server").value.trim() === server.address);
+    button.disabled = !server.compatible;
+
+    const name = document.createElement("span");
+    name.className = "lan-name";
+    name.textContent = server.name;
+    const meta = document.createElement("span");
+    meta.className = "lan-meta";
+    meta.textContent = server.compatible
+      ? `${server.host} · ${server.users} чел.`
+      : `${server.host} · другая версия программы`;
+    button.append(name, meta);
+
+    button.addEventListener("click", () => {
+      $("server").value = server.address;
+      for (const other of list.querySelectorAll(".lan-item")) other.classList.remove("selected");
+      button.classList.add("selected");
+      if (!$("name").value.trim()) $("name").focus();
+    });
+    li.append(button);
+    list.append(li);
+  }
+  $("lan-status").textContent = servers.length
+    ? ""
+    : "Не найдено. Через интернет (Tailscale) адрес вводится вручную.";
+  $("lan-status").hidden = servers.length > 0;
+}
+
+function startLanSearch() {
+  clearInterval(lanTimer);
+  refreshLan();
+  lanTimer = setInterval(refreshLan, LAN_REFRESH_MS);
+}
+
+function stopLanSearch() {
+  clearInterval(lanTimer);
+  lanTimer = null;
+}
+
+$("lan-refresh").addEventListener("click", () => {
+  $("lan-status").hidden = false;
+  $("lan-status").textContent = "Ищу серверы…";
+  refreshLan();
+});
+
 $("connect-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const server = $("server").value.trim();
@@ -131,6 +204,7 @@ function enterRoom(server, name, joined) {
   renderPeers();
   for (const [id, peerName] of call.peers) applySavedVolume(id, peerName);
   showView("room");
+  stopLanSearch();
   clearInterval(call.statusTimer);
   call.statusTimer = setInterval(refreshStatus, 100);
 }
@@ -140,6 +214,7 @@ function leaveRoom(reason) {
   call.statusTimer = null;
   call.peers.clear();
   showView("connect");
+  startLanSearch();
   if (reason) toast(reason);
 }
 
@@ -342,6 +417,12 @@ function updateModeRows() {
   $("threshold-mark").hidden = mode !== "voice";
 }
 
+$("denoise").addEventListener("change", () => {
+  const enabled = $("denoise").checked;
+  store.set("denoise", enabled);
+  invoke("set_noise_suppression", { enabled });
+});
+
 $("vad").addEventListener("input", () => {
   const db = Number($("vad").value);
   store.set("vad", db);
@@ -407,14 +488,18 @@ async function init() {
   const mode = store.get("mode", "voice");
   const vad = store.get("vad", -45);
   const pttKey = store.get("pttKey", null);
+  const denoise = store.get("denoise", true);
   $("mode").value = mode;
+  $("denoise").checked = denoise;
   $("vad").value = vad;
   showVad(vad);
   showPttKey(pttKey);
   updateModeRows();
 
+  startLanSearch();
   await loadDevices();
   try {
+    await invoke("set_noise_suppression", { enabled: denoise });
     await invoke("set_vad_threshold", { db: vad });
     await invoke("set_ptt_key", { key: pttKey });
     await invoke("set_mode", { mode });

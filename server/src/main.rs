@@ -19,6 +19,14 @@ struct Args {
     /// Папка для сертификата и ключа сервера.
     #[arg(long, default_value = ".")]
     data_dir: PathBuf,
+
+    /// Название сервера для поиска в локальной сети. По умолчанию — имя компьютера.
+    #[arg(long)]
+    name: Option<String>,
+
+    /// Не отвечать на поиск серверов в локальной сети.
+    #[arg(long)]
+    no_discovery: bool,
 }
 
 #[tokio::main]
@@ -34,10 +42,16 @@ async fn main() -> anyhow::Result<()> {
         bind: args.bind,
         echo: args.echo,
         data_dir: Some(args.data_dir),
+        name: args.name.unwrap_or_else(vwf_server::default_server_name),
+        discovery: (!args.no_discovery)
+            .then(|| SocketAddr::from(([0, 0, 0, 0], vwf_proto::DISCOVERY_PORT))),
     })?;
     let addr = server.local_addr()?;
     info!("сервер слушает UDP {addr}");
     info!("отпечаток сертификата: {}", server.fingerprint());
+    if let Some(addr) = server.discovery_addr() {
+        info!("отвечаю на поиск в локальной сети: UDP {addr}");
+    }
     if args.echo {
         info!("режим эха включён: каждый слышит сам себя");
     }

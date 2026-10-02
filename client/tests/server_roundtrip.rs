@@ -10,6 +10,8 @@ async fn start_server(echo: bool) -> std::net::SocketAddr {
         bind: "127.0.0.1:0".parse().unwrap(),
         echo,
         data_dir: None,
+        name: "Тестовый".into(),
+        discovery: None,
     })
     .unwrap();
     let addr = server.local_addr().unwrap();
@@ -68,4 +70,35 @@ async fn echo_mode_returns_own_voice() {
     let (from, _, opus) = timeout(T, rx.recv()).await.unwrap().unwrap();
     assert_eq!(from, solo.my_id);
     assert_eq!(&opus[..], b"hello");
+}
+
+#[tokio::test]
+async fn server_is_found_by_discovery() {
+    let server = vwf_server::Server::bind(vwf_server::Config {
+        bind: "127.0.0.1:0".parse().unwrap(),
+        echo: false,
+        data_dir: None,
+        name: "Комната Пети".into(),
+        discovery: Some("127.0.0.1:0".parse().unwrap()),
+    })
+    .unwrap();
+    let addr = server.local_addr().unwrap();
+    let discovery_port = server.discovery_addr().unwrap().port();
+    tokio::spawn(server.run());
+
+    // Один участник уже в комнате — это должно попасть в ответ.
+    let _alice = vwf_client::net::connect(&addr.to_string(), "Алиса").await.unwrap();
+
+    let found = vwf_client::discovery::discover_on(discovery_port, Duration::from_millis(500))
+        .await
+        .unwrap();
+    assert_eq!(
+        found,
+        vec![vwf_client::discovery::FoundServer {
+            name: "Комната Пети".into(),
+            address: addr,
+            users: 1,
+            compatible: true,
+        }]
+    );
 }

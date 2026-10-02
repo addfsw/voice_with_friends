@@ -228,6 +228,88 @@ button.listening {
   color: var(--accent);
 }
 
+/* Серверы в локальной сети */
+
+.lan {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lan-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  color: var(--text-subtle);
+  font-size: 12px;
+}
+
+button.link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font-size: 12px;
+}
+
+button.link:hover {
+  text-decoration: underline;
+  filter: none;
+}
+
+.lan-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.lan-item {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  padding: 8px 10px;
+}
+
+.lan-item.selected {
+  border-color: var(--accent);
+}
+
+.lan-name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lan-meta {
+  color: var(--text-subtle);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* Галочка */
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.check input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
 .error {
   margin: 0;
   color: var(--danger);

@@ -44,6 +44,49 @@ pub struct PeerInfo {
     pub name: String,
 }
 
+// ---------------------------------------------------------------------------
+// Поиск серверов в локальной сети.
+//
+// Клиент шлёт широковещательный UDP-пакет `DISCOVERY_PROBE` на порт
+// `DISCOVERY_PORT`, и все серверы в сети отвечают ему лично пакетом
+// `[DISCOVERY_REPLY_MAGIC][postcard(Announcement)]`. Широковещательные пакеты
+// не выходят за пределы локальной сети (и не проходят через Tailscale),
+// поэтому через интернет адрес по-прежнему вводится вручную.
+// ---------------------------------------------------------------------------
+
+/// UDP-порт, на котором серверы отвечают на поиск.
+pub const DISCOVERY_PORT: u16 = 47778;
+
+/// Запрос «есть тут серверы?».
+pub const DISCOVERY_PROBE: &[u8] = b"VWF-DISCOVER-1";
+
+const DISCOVERY_REPLY_MAGIC: &[u8] = b"VWF-HERE-1";
+
+/// Ответ сервера на поиск.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Announcement {
+    /// Случайный номер запуска сервера: по нему клиент понимает, что ответы,
+    /// пришедшие через разные сетевые интерфейсы, — от одного и того же сервера.
+    pub instance: u64,
+    /// Название сервера (по умолчанию — имя компьютера).
+    pub name: String,
+    /// UDP-порт QUIC, к которому подключаться.
+    pub port: u16,
+    pub protocol: u32,
+    /// Сколько человек сейчас в комнате.
+    pub users: u32,
+}
+
+pub fn encode_announcement(announcement: &Announcement) -> Vec<u8> {
+    let mut buf = DISCOVERY_REPLY_MAGIC.to_vec();
+    buf.extend(postcard::to_allocvec(announcement).expect("сериализация в память не падает"));
+    buf
+}
+
+pub fn decode_announcement(data: &[u8]) -> Option<Announcement> {
+    postcard::from_bytes(data.strip_prefix(DISCOVERY_REPLY_MAGIC)?).ok()
+}
+
 /// Сообщения клиент → сервер.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ClientMsg {
@@ -149,6 +192,20 @@ mod tests {
         let server = encode_server_voice(7, &client);
         assert_eq!(decode_server_voice(&server), Some((7, 42, &b"opus"[..])));
         assert_eq!(decode_server_voice(&[1, 2, 3]), None);
+    }
+
+    #[test]
+    fn announcement_roundtrip() {
+        let a = Announcement {
+            instance: 42,
+            name: "Комната".into(),
+            port: DEFAULT_PORT,
+            protocol: PROTOCOL_VERSION,
+            users: 3,
+        };
+        assert_eq!(decode_announcement(&encode_announcement(&a)), Some(a));
+        assert_eq!(decode_announcement(DISCOVERY_PROBE), None);
+        assert_eq!(decode_announcement(b"VWF-HERE-1garbage"), None);
     }
 
     #[tokio::test]

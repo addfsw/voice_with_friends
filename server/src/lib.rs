@@ -18,7 +18,7 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
 use tracing::{info, warn};
-use vwf_proto::{ClientMsg, PROTOCOL_VERSION, PeerId, PeerInfo, ServerMsg};
+use vwf_proto::{Announcement, ClientMsg, PROTOCOL_VERSION, PeerId, PeerInfo, ServerMsg};
 
 const MAX_NAME_CHARS: usize = 32;
 
@@ -29,12 +29,18 @@ pub struct Config {
     pub echo: bool,
     /// Где хранить сертификат и ключ. `None` — сгенерировать временные (для тестов).
     pub data_dir: Option<PathBuf>,
+    /// Название сервера, которое видят клиенты при поиске в локальной сети.
+    pub name: String,
+    /// Где отвечать на поиск серверов (обычно `0.0.0.0:47778`); `None` — не отвечать.
+    pub discovery: Option<SocketAddr>,
 }
 
 pub struct Server {
     endpoint: quinn::Endpoint,
     fingerprint: String,
     echo: bool,
+    name: String,
+    discovery: Option<std::net::UdpSocket>,
 }
 
 impl Server {
@@ -59,7 +65,25 @@ impl Server {
 
         let endpoint = quinn::Endpoint::server(server_config, config.bind)
             .with_context(|| format!("не удалось открыть UDP-порт {}", config.bind))?;
-        Ok(Self { endpoint, fingerprint, echo: config.echo })
+
+        // Без поиска сервер прекрасно работает, поэтому ошибку здесь не считаем
+        // фатальной: например, на одном компьютере запущены два сервера.
+        let discovery = config.discovery.and_then(|addr| {
+            match std::net::UdpSocket::bind(addr).and_then(|s| s.set_nonblocking(true).map(|_| s)) {
+                Ok(socket) => Some(socket),
+                Err(e) => {
+                    warn!("поиск в локальной сети отключён: не удалось открыть UDP {addr}: {e}");
+                    None
+                }
+            }
+        });
+
+        Ok(Self { endpoint, fingerprint, echo: config.echo, name: config.name, discovery })
+    }
+
+    /// Адрес, на котором сервер отвечает на поиск (если отвечает).
+    pub fn discovery_addr(&self) -> Option<SocketAddr> {
+        self.discovery.as_ref().and_then(|s| s.local_addr().ok())
     }
 
     pub fn local_addr(&self) -> anyhow::Result<SocketAddr> {
@@ -75,6 +99,24 @@ impl Server {
     /// Принимает подключения, пока endpoint не закроют.
     pub async fn run(self) {
         let room = Arc::new(Mutex::new(Room::default()));
+
+        if let Some(socket) = self.discovery {
+            match tokio::net::UdpSocket::from_std(socket) {
+                Ok(socket) => {
+                    let port = self.endpoint.local_addr().map(|a| a.port()).unwrap_or_default();
+                    let announcement = Announcement {
+                        instance: random_u64(),
+                        name: self.name.clone(),
+                        port,
+                        protocol: PROTOCOL_VERSION,
+                        users: 0,
+                    };
+                    tokio::spawn(answer_discovery(socket, room.clone(), announcement));
+                }
+                Err(e) => warn!("поиск в локальной сети отключён: {e}"),
+            }
+        }
+
         while let Some(incoming) = self.endpoint.accept().await {
             let room = room.clone();
             let echo = self.echo;
@@ -90,6 +132,56 @@ impl Server {
     pub fn endpoint(&self) -> &quinn::Endpoint {
         &self.endpoint
     }
+}
+
+/// Отвечает на поисковые запросы клиентов. Ответ уходит лично спросившему.
+async fn answer_discovery(
+    socket: tokio::net::UdpSocket,
+    room: Arc<Mutex<Room>>,
+    mut announcement: Announcement,
+) {
+    let mut buf = [0u8; 64];
+    loop {
+        let (len, from) = match socket.recv_from(&mut buf).await {
+            Ok(received) => received,
+            // На Windows recv_from на UDP-сокете может вернуть ошибку, если
+            // какой-то из прошлых ответов не дошёл (ICMP «порт недоступен»).
+            // Сокет при этом исправен — просто продолжаем.
+            Err(_) => {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                continue;
+            }
+        };
+        if &buf[..len] != vwf_proto::DISCOVERY_PROBE {
+            continue;
+        }
+        announcement.users = room.lock().unwrap().peers.len() as u32;
+        let _ = socket.send_to(&vwf_proto::encode_announcement(&announcement), from).await;
+    }
+}
+
+/// Случайное число без отдельной библиотеки: хэш от времени и номера процесса.
+fn random_u64() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    hasher.write_u128(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos()),
+    );
+    hasher.write_u32(std::process::id());
+    hasher.finish()
+}
+
+/// Название компьютера — название сервера по умолчанию.
+pub fn default_server_name() -> String {
+    std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .ok()
+        .or_else(|| std::fs::read_to_string("/etc/hostname").ok())
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "vwf-server".to_string())
 }
 
 /// Общие настройки QUIC: регулярные keep-alive, чтобы NAT-роутеры не забывали

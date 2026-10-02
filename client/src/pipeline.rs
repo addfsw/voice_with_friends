@@ -19,6 +19,8 @@ use ringbuf::traits::{Consumer, Observer, Producer};
 use ringbuf::{HeapCons, HeapProd};
 use vwf_proto::{FRAME_MS, FRAME_SAMPLES, PeerId, SAMPLE_RATE};
 
+use nnnoiseless::DenoiseState;
+
 use crate::audio::Wakeup;
 use crate::jitter::{Delay, JitterBuffer, Pop};
 use crate::resample::Resampler;
@@ -76,6 +78,7 @@ pub struct TxState {
     mode: AtomicU8,
     vad_threshold_db_bits: AtomicU32,
     ptt_pressed: AtomicBool,
+    noise_suppression: AtomicBool,
     /// Идёт ли сейчас передача (для индикатора).
     transmitting: AtomicBool,
     /// Громкость последнего кадра с микрофона, dBFS.
@@ -89,6 +92,7 @@ impl TxState {
             mode: AtomicU8::new(mode as u8),
             vad_threshold_db_bits: AtomicU32::new(vad_threshold_db.to_bits()),
             ptt_pressed: AtomicBool::new(false),
+            noise_suppression: AtomicBool::new(true),
             transmitting: AtomicBool::new(false),
             level_db_bits: AtomicU32::new((-120f32).to_bits()),
         }
@@ -122,6 +126,14 @@ impl TxState {
         self.ptt_pressed.store(pressed, Ordering::Relaxed);
     }
 
+    pub fn noise_suppression(&self) -> bool {
+        self.noise_suppression.load(Ordering::Relaxed)
+    }
+
+    pub fn set_noise_suppression(&self, enabled: bool) {
+        self.noise_suppression.store(enabled, Ordering::Relaxed);
+    }
+
     pub fn transmitting(&self) -> bool {
         self.transmitting.load(Ordering::Relaxed)
     }
@@ -149,6 +161,44 @@ impl TxState {
 impl Default for TxState {
     fn default() -> Self {
         Self::new(TxMode::Voice, -45.0)
+    }
+}
+
+/// Шумоподавление RNNoise (крейт `nnnoiseless`, перенос на Rust).
+///
+/// Внутри небольшая рекуррентная нейросеть: по спектру каждого 10-мс кусочка
+/// она решает, сколько в каждой полосе частот голоса, а сколько шума, и
+/// приглушает полосы с шумом. Хорошо убирает гул вентилятора, шум улицы,
+/// стук клавиатуры. Добавляет около 10 мс задержки и немного нагружает процессор.
+struct NoiseSuppressor {
+    state: Box<DenoiseState<'static>>,
+    input: [f32; DenoiseState::FRAME_SIZE],
+    output: [f32; DenoiseState::FRAME_SIZE],
+}
+
+// Кадр Opus (20 мс) должен состоять из целого числа кадров RNNoise (10 мс).
+const _: () = assert!(FRAME_SAMPLES.is_multiple_of(DenoiseState::FRAME_SIZE));
+
+impl NoiseSuppressor {
+    fn new() -> Self {
+        Self {
+            state: DenoiseState::new(),
+            input: [0.0; DenoiseState::FRAME_SIZE],
+            output: [0.0; DenoiseState::FRAME_SIZE],
+        }
+    }
+
+    fn process(&mut self, frame: &mut [f32; FRAME_SAMPLES]) {
+        for chunk in frame.chunks_exact_mut(DenoiseState::FRAME_SIZE) {
+            // RNNoise ждёт сэмплы в масштабе 16-битного звука, а не [-1, 1].
+            for (dst, s) in self.input.iter_mut().zip(chunk.iter()) {
+                *dst = s * 32768.0;
+            }
+            self.state.process_frame(&mut self.output, &self.input);
+            for (s, out) in chunk.iter_mut().zip(self.output.iter()) {
+                *s = out / 32768.0;
+            }
+        }
     }
 }
 
@@ -212,6 +262,7 @@ impl Transmitter {
         let thread_stop = stop.clone();
         let thread = thread::Builder::new().name("vwf-encoder".into()).spawn(move || {
             let mut vad = Vad::default();
+            let mut denoiser = NoiseSuppressor::new();
             let mut frame = [0f32; FRAME_SAMPLES];
             let mut packet = [0u8; MAX_PACKET];
             let mut next_seq = 0u32;
@@ -228,6 +279,11 @@ impl Transmitter {
                 let seq = next_seq;
                 next_seq = next_seq.wrapping_add(1);
 
+                // Шум убираем до детектора речи: тогда гул комнаты не включает
+                // передачу, и индикатор громкости показывает то, что услышат другие.
+                if state.noise_suppression() {
+                    denoiser.process(&mut frame);
+                }
                 let level = level_db(&frame);
                 state.level_db_bits.store(level.to_bits(), Ordering::Relaxed);
                 let active = state.should_transmit(&mut vad, level);
@@ -515,6 +571,39 @@ mod tests {
             assert!(vad.is_active(-60.0, -40.0));
         }
         assert!(!vad.is_active(-60.0, -40.0));
+    }
+
+    #[test]
+    fn noise_suppressor_removes_fan_noise() {
+        // «Гул вентилятора»: белый шум через простой фильтр нижних частот,
+        // около -37 dBFS. Синтетическое белое шипение RNNoise глушит плохо —
+        // он обучен на реальных шумах, — поэтому тестируем на похожем на них.
+        let mut seed = 0x1234_5678_9abc_def1u64;
+        let mut low = 0f32;
+        let mut fan = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            let white = (seed >> 40) as f32 / (1u64 << 24) as f32 - 0.5;
+            low = 0.98 * low + 0.02 * white;
+            low * 0.5
+        };
+        let mut ns = NoiseSuppressor::new();
+        let mut before = Vec::new();
+        let mut after = Vec::new();
+        for i in 0..100 {
+            let mut frame: [f32; FRAME_SAMPLES] = std::array::from_fn(|_| fan());
+            let input_level = level_db(&frame);
+            ns.process(&mut frame);
+            // Первые кадры — разгон нейросети.
+            if i >= 20 {
+                before.push(input_level);
+                after.push(level_db(&frame));
+            }
+        }
+        let avg = |v: &[f32]| v.iter().sum::<f32>() / v.len() as f32;
+        let reduction = avg(&before) - avg(&after);
+        assert!(reduction > 20.0, "шум ослаблен всего на {reduction:.1} дБ");
     }
 
     #[test]

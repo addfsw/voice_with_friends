@@ -21,6 +21,15 @@
           <span>Сервер</span>
           <input id="server" placeholder="192.168.1.10 или 100.x.y.z" required spellcheck="false" />
         </label>
+
+        <div class="lan">
+          <div class="lan-head">
+            <span>В локальной сети</span>
+            <button type="button" id="lan-refresh" class="link">обновить</button>
+          </div>
+          <ul id="lan-list" class="lan-list"></ul>
+          <p id="lan-status" class="subtle small-text">Ищу серверы…</p>
+        </div>
         <label class="field">
           <span>Ваше имя</span>
           <input id="name" maxlength="32" required />
@@ -83,6 +92,11 @@
         <p id="ptt-hint" class="subtle small-text" hidden>
           Пока выбран режим рации, эта клавиша не работает в других программах.
         </p>
+
+        <label class="check" title="Убирает гул, шум улицы и стук клавиатуры из вашего микрофона">
+          <input type="checkbox" id="denoise" />
+          <span>Шумоподавление</span>
+        </label>
 
         <div class="buttons">
           <button id="mute-btn" class="toggle" title="Выключить или включить микрофон">Микрофон</button>
