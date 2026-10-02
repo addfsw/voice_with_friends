@@ -1,0 +1,16 @@
+[package]
+name = "vwf-proto"
+description = "Общий протокол клиента и сервера voice_with_friends"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+postcard.workspace = true
+serde.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

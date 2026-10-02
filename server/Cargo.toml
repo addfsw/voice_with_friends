@@ -1,0 +1,25 @@
+[package]
+name = "vwf-server"
+description = "Сервер voice_with_friends: комната и пересылка голоса"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "vwf-server"
+path = "src/main.rs"
+
+[dependencies]
+vwf-proto.workspace = true
+anyhow.workspace = true
+bytes.workspace = true
+clap.workspace = true
+if-addrs.workspace = true
+quinn.workspace = true
+rcgen.workspace = true
+rustls.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
