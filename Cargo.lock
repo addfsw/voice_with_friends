@@ -4863,6 +4863,7 @@ dependencies = [
  "anyhow",
  "postcard",
  "serde",
+ "sha2",
  "tokio",
 ]
 
@@ -4877,7 +4878,6 @@ dependencies = [
  "quinn",
  "rcgen",
  "rustls",
- "sha2",
  "tokio",
  "tracing",
  "tracing-subscriber",

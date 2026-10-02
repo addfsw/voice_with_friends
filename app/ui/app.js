@@ -217,15 +217,54 @@ $("connect-form").addEventListener("submit", async (event) => {
   button.disabled = true;
   button.textContent = "Подключение…";
   error.hidden = true;
+  $("cert-warning").hidden = true;
   try {
     const joined = await invoke("connect", { args: { server, name, input, output } });
     enterRoom(server, name, joined);
   } catch (e) {
-    error.textContent = String(e);
-    error.hidden = false;
+    if (e?.kind === "certificateChanged") {
+      showCertWarning(e);
+    } else {
+      error.textContent = errorText(e);
+      error.hidden = false;
+    }
   } finally {
     button.disabled = false;
     button.textContent = "Подключиться";
+  }
+});
+
+// Ошибки команд приходят строкой, а ошибки подключения — объектом.
+function errorText(e) {
+  return e?.message ?? String(e);
+}
+
+// Сертификат сервера не совпал с запомненным: решает пользователь.
+let pendingCertificate = null;
+
+function showCertWarning(e) {
+  pendingCertificate = e;
+  $("cert-address").textContent = e.address;
+  $("cert-known").textContent = e.knownCode;
+  $("cert-presented").textContent = e.presentedCode;
+  $("cert-warning").hidden = false;
+}
+
+$("cert-cancel").addEventListener("click", () => {
+  pendingCertificate = null;
+  $("cert-warning").hidden = true;
+});
+
+$("cert-trust").addEventListener("click", async () => {
+  if (!pendingCertificate) return;
+  const { address, presented } = pendingCertificate;
+  pendingCertificate = null;
+  $("cert-warning").hidden = true;
+  try {
+    await invoke("trust_server", { address, fingerprint: presented });
+    $("connect-form").requestSubmit();
+  } catch (e) {
+    toast(`Не удалось запомнить сертификат: ${errorText(e)}`);
   }
 });
 
@@ -251,7 +290,7 @@ $("host-btn").addEventListener("click", async () => {
     enterRoom("Ваш сервер", name, joined);
   } catch (e) {
     if (hosted) await invoke("stop_server").catch(() => {});
-    error.textContent = String(e);
+    error.textContent = errorText(e);
     error.hidden = false;
   } finally {
     button.disabled = false;
@@ -267,6 +306,7 @@ function enterRoom(server, name, joined) {
   call.me = joined.me;
   call.peers = new Map(joined.peers.map((p) => [p.id, p]));
   $("server-label").textContent = server;
+  $("server-code").textContent = `код ${joined.serverCode}`;
   renderHostCard();
   disarmLeave();
   renderPeers();
@@ -319,6 +359,7 @@ function renderHostCard() {
   card.hidden = !call.hosting;
   if (!call.hosting) return;
   card.open = store.get("hostCardOpen", false);
+  $("host-code").textContent = call.hosting.code;
   const list = $("host-addresses");
   list.innerHTML = "";
   for (const { interface: iface, address } of call.hosting.addresses) {

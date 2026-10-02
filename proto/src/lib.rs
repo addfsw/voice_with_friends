@@ -116,6 +116,27 @@ pub fn decode_announcement(data: &[u8]) -> Option<Announcement> {
     postcard::from_bytes(data.strip_prefix(DISCOVERY_REPLY_MAGIC)?).ok()
 }
 
+// ---------------------------------------------------------------------------
+// Отпечаток сертификата сервера.
+//
+// Сертификат сервера самоподписанный, удостоверяющего центра у нас нет.
+// Поэтому клиент запоминает отпечаток (SHA-256) при первом подключении и
+// при следующих сверяет: изменился — возможна подмена сервера.
+// ---------------------------------------------------------------------------
+
+/// Полный отпечаток сертификата: SHA-256 в виде `4E:ED:5F:...` (95 символов).
+pub fn cert_fingerprint(cert_der: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(cert_der).iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(":")
+}
+
+/// Короткий код для сверки глазами: первые 64 бита отпечатка, `4EED-5FD8-DCCD-3EE3`.
+/// Подобрать сертификат с тем же кодом практически невозможно.
+pub fn short_fingerprint(fingerprint: &str) -> String {
+    let hex: Vec<char> = fingerprint.chars().filter(char::is_ascii_hexdigit).take(16).collect();
+    hex.chunks(4).map(|c| c.iter().collect::<String>()).collect::<Vec<_>>().join("-")
+}
+
 /// Сообщения клиент → сервер.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ClientMsg {
@@ -230,6 +251,17 @@ mod tests {
         let server = encode_server_voice(7, &client);
         assert_eq!(decode_server_voice(&server), Some((7, 42, &b"opus"[..])));
         assert_eq!(decode_server_voice(&[1, 2, 3]), None);
+    }
+
+    #[test]
+    fn fingerprints() {
+        let full = cert_fingerprint(b"certificate");
+        assert_eq!(full.len(), 32 * 3 - 1);
+        assert_eq!(full, cert_fingerprint(b"certificate"));
+        assert_ne!(full, cert_fingerprint(b"other"));
+        let short = short_fingerprint(&full);
+        assert_eq!(short.len(), 19);
+        assert_eq!(short.replace('-', ""), full.replace(':', "")[..16]);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::io::Write;
-use std::sync::Arc;
 use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use clap::{Args, Parser, Subcommand};
@@ -9,6 +9,8 @@ use tokio::sync::mpsc as tokio_mpsc;
 use vwf_client::audio::{self, GlitchCounter};
 use vwf_client::call::{AudioEngine, AudioSettings, Call, CallEvent};
 use vwf_client::jitter::Delay;
+use vwf_client::known_servers::{self, KnownServers};
+use vwf_client::net::{CertificateChanged, Trust};
 use vwf_client::pipeline::{Mixer, TxMode, TxSettings, TxState};
 use vwf_proto::PeerId;
 
@@ -48,6 +50,10 @@ enum Command {
         /// Секрет хоста, если сервер запущен с `--admin-token`.
         #[arg(long)]
         admin_token: Option<String>,
+        /// Сертификат сервера изменился, и вы уверены, что это не подмена
+        /// (хост подтвердил новый код): запомнить новый и подключиться.
+        #[arg(long)]
+        trust_new_certificate: bool,
         #[command(flatten)]
         audio: AudioArgs,
     },
@@ -120,8 +126,8 @@ async fn main() -> anyhow::Result<()> {
         Command::Loopback { audio, sim_loss, sim_jitter_ms } => {
             loopback(audio, sim_loss, sim_jitter_ms).await
         }
-        Command::Connect { server, name, admin_token, audio } => {
-            connect(&server, &name, admin_token.as_deref(), audio).await
+        Command::Connect { server, name, admin_token, trust_new_certificate, audio } => {
+            connect(&server, &name, admin_token.as_deref(), trust_new_certificate, audio).await
         }
     }
 }
@@ -178,16 +184,54 @@ async fn connect(
     server: &str,
     name: &str,
     admin_token: Option<&str>,
+    trust_new_certificate: bool,
     args: AudioArgs,
 ) -> anyhow::Result<()> {
     println!("Подключаюсь к {server}...");
+    let known_path = known_servers::default_path();
+    let known = Mutex::new(KnownServers::load(&known_path));
     let (events_tx, mut events) = tokio_mpsc::unbounded_channel();
-    let call =
-        Call::start(server, name, admin_token, &args.settings(), args.tx_state(), move |event| {
-            let _ = events_tx.send(event);
-        })
-        .await?;
-    println!("Подключено.");
+    let on_event = move |event| {
+        let _ = events_tx.send(event);
+    };
+    let settings = args.settings();
+    let tx_state = args.tx_state();
+    // Новый сертификат принимаем не больше одного раза за запуск.
+    let mut accept_new_certificate = trust_new_certificate;
+    let call = loop {
+        let trust = Trust::Known(&known);
+        let result = Call::start(
+            server,
+            name,
+            admin_token,
+            trust,
+            &settings,
+            tx_state.clone(),
+            on_event.clone(),
+        )
+        .await;
+        match result {
+            Ok(call) => break call,
+            Err(e) => match e.downcast_ref::<CertificateChanged>() {
+                Some(changed) if accept_new_certificate => {
+                    accept_new_certificate = false;
+                    println!("Запоминаю новый сертификат сервера {}.", changed.address);
+                    known.lock().unwrap().remember(&changed.address, &changed.presented)?;
+                }
+                Some(_) => {
+                    println!("ВНИМАНИЕ: {e}.");
+                    println!(
+                        "Если хост подтвердил новый код, подключитесь с --trust-new-certificate \
+                         (запомненные сертификаты: {}).",
+                        known_path.display()
+                    );
+                    return Ok(());
+                }
+                None => return Err(e),
+            },
+        }
+    };
+    println!("Подключено. Код сервера: {}", vwf_proto::short_fingerprint(&call.fingerprint));
     if call.me().admin {
         println!("Вы хост этой комнаты.");
     }

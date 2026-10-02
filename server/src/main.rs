@@ -54,7 +54,11 @@ async fn main() -> anyhow::Result<()> {
     })?;
     let addr = server.local_addr()?;
     info!("сервер слушает UDP {addr}");
-    info!("отпечаток сертификата: {}", server.fingerprint());
+    info!(
+        "код сервера: {}  (полный отпечаток сертификата: {})",
+        vwf_proto::short_fingerprint(server.fingerprint()),
+        server.fingerprint()
+    );
     if let Some(addr) = server.discovery_addr() {
         info!("отвечаю на поиск в локальной сети: UDP {addr}");
     }

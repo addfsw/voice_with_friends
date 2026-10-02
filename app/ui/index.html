@@ -47,6 +47,27 @@
           </label>
         </details>
 
+        <div id="cert-warning" class="cert-warning" hidden>
+          <div class="cert-title">Сертификат сервера изменился</div>
+          <p class="small-text">
+            Сервер <b id="cert-address"></b> раньше предъявлял другой сертификат.
+            Так бывает, если хост переустановил программу. Но так же выглядит
+            и подмена сервера кем-то посередине.
+          </p>
+          <p class="small-text">
+            Спросите у хоста код сервера (он виден в его карточке «Вы — сервер»
+            или в окне сервера):
+          </p>
+          <div class="cert-codes">
+            <span class="subtle">было</span> <code id="cert-known"></code>
+            <span class="subtle">стало</span> <code id="cert-presented"></code>
+          </div>
+          <div class="cert-actions">
+            <button type="button" id="cert-cancel">Отмена</button>
+            <button type="button" id="cert-trust" class="danger" title="Код совпал с тем, что видит хост: запомнить новый сертификат">Доверять</button>
+          </div>
+        </div>
+
         <button type="submit" id="connect-btn" class="primary">Подключиться</button>
         <p id="connect-error" class="error" hidden></p>
 
@@ -65,6 +86,8 @@
         <div>
           <div class="room-title">Комната</div>
           <div id="server-label" class="subtle"></div>
+          <div id="server-code" class="subtle small-text"
+               title="Код сертификата сервера: его можно сверить с хостом"></div>
         </div>
         <button id="leave-btn" class="danger small">Отключиться</button>
       </header>
@@ -76,6 +99,10 @@
           Остальным (например, через Tailscale) скажите адрес:
         </p>
         <ul id="host-addresses" class="host-addresses"></ul>
+        <p class="subtle small-text">
+          Код сервера: <code id="host-code"></code>. Если у друга программа
+          предупредит, что сертификат изменился, он сверит этот код.
+        </p>
         <p class="subtle small-text">Закроете комнату или программу — все отключатся.</p>
       </details>
 

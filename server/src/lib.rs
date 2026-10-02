@@ -15,7 +15,6 @@ use anyhow::Context;
 use bytes::Bytes;
 use quinn::crypto::rustls::QuicServerConfig;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
-use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 use vwf_proto::{Announcement, ClientMsg, PROTOCOL_VERSION, PeerId, PeerInfo, ServerMsg};
@@ -53,7 +52,7 @@ impl Server {
             Some(dir) => load_or_create_cert(dir)?,
             None => generate_cert()?,
         };
-        let fingerprint = fingerprint(&cert);
+        let fingerprint = vwf_proto::cert_fingerprint(&cert);
 
         let mut tls = rustls::ServerConfig::builder_with_provider(Arc::new(
             rustls::crypto::ring::default_provider(),
@@ -101,8 +100,8 @@ impl Server {
         Ok(self.endpoint.local_addr()?)
     }
 
-    /// SHA-256 отпечаток сертификата. Позже клиенты смогут его запоминать
-    /// и замечать подмену сервера.
+    /// SHA-256 отпечаток сертификата. Клиенты запоминают его при первом
+    /// подключении и так замечают подмену сервера.
     pub fn fingerprint(&self) -> &str {
         &self.fingerprint
     }
@@ -418,10 +417,6 @@ fn load_or_create_cert(dir: &Path) -> anyhow::Result<CertAndKey> {
     std::fs::write(&key_path, certified.signing_key.serialize_der())?;
     info!("создан новый сертификат сервера: {}", cert_path.display());
     load_or_create_cert(dir)
-}
-
-fn fingerprint(cert: &CertificateDer<'_>) -> String {
-    Sha256::digest(cert.as_ref()).iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(":")
 }
 
 /// Адреса этого компьютера, по которым к серверу могут подключиться друзья

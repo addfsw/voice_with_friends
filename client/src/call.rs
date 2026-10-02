@@ -93,6 +93,8 @@ struct Room {
 /// Активный звонок.
 pub struct Call {
     pub my_id: PeerId,
+    /// Отпечаток сертификата сервера.
+    pub fingerprint: String,
     pub audio: AudioEngine,
     room: Arc<Mutex<Room>>,
     control: net::Control,
@@ -103,17 +105,20 @@ pub struct Call {
 
 impl Call {
     /// Подключается к серверу и запускает звук. События комнаты передаются в `on_event`.
-    /// `admin_token` — секрет хоста, если мы им являемся.
+    /// `admin_token` — секрет хоста, если мы им являемся; `trust` — как проверять
+    /// сертификат сервера.
     pub async fn start(
         server: &str,
         name: &str,
         admin_token: Option<&str>,
+        trust: net::Trust<'_>,
         settings: &AudioSettings,
         tx_state: Arc<TxState>,
         on_event: impl Fn(CallEvent) + Send + Sync + 'static,
     ) -> anyhow::Result<Self> {
-        let mut session = net::connect_with_token(server, name, admin_token).await?;
+        let mut session = net::connect_with(server, name, admin_token, trust).await?;
         let my_id = session.me.id;
+        let fingerprint = session.fingerprint.clone();
         let room = Arc::new(Mutex::new(Room {
             me: session.me.clone(),
             peers: session.peers.iter().map(|p| (p.id, p.clone())).collect(),
@@ -178,6 +183,7 @@ impl Call {
 
         let call = Self {
             my_id,
+            fingerprint,
             audio,
             room,
             control,

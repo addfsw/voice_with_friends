@@ -27,6 +27,8 @@ pub struct HostInfo {
     pub name: String,
     pub port: u16,
     pub addresses: Vec<HostAddress>,
+    /// Короткий код сертификата, чтобы друзья могли его сверить.
+    pub code: String,
 }
 
 pub struct HostedServer {
@@ -35,6 +37,7 @@ pub struct HostedServer {
     /// Секрет хоста: с ним наше собственное подключение получает права
     /// заглушать и выгонять. Каждый запуск комнаты — новый.
     admin_token: String,
+    fingerprint: String,
     pub info: HostInfo,
 }
 
@@ -71,6 +74,8 @@ impl HostedServer {
         };
 
         let port = server.local_addr()?.port();
+        let fingerprint = server.fingerprint().to_string();
+        let code = vwf_proto::short_fingerprint(&fingerprint);
         let endpoint = server.endpoint().clone();
         let task = tauri::async_runtime::spawn(server.run());
         let addresses = vwf_server::reachable_addresses(port)
@@ -84,12 +89,20 @@ impl HostedServer {
                 },
             })
             .collect();
-        Ok(Self { endpoint, task, admin_token, info: HostInfo { name, port, addresses } })
+        Ok(Self {
+            endpoint,
+            task,
+            admin_token,
+            fingerprint,
+            info: HostInfo { name, port, addresses, code },
+        })
     }
 
-    /// Секрет хоста, если `server` — это адрес нашего собственного сервера.
-    pub fn admin_token_for(&self, server: &str) -> Option<&str> {
-        (server == self.local_address()).then_some(self.admin_token.as_str())
+    /// Если `server` — адрес нашего собственного сервера: секрет хоста
+    /// и отпечаток сертификата, который он должен предъявить.
+    pub fn own(&self, server: &str) -> Option<(String, String)> {
+        (server == self.local_address())
+            .then(|| (self.admin_token.clone(), self.fingerprint.clone()))
     }
 
     /// Адрес, по которому к серверу подключается сам хост.

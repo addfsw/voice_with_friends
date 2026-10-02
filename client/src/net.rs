@@ -1,7 +1,7 @@
 //! Подключение к серверу по QUIC.
 
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context, bail};
@@ -12,6 +12,8 @@ use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, SignatureScheme};
 use vwf_proto::{ClientMsg, PROTOCOL_VERSION, PeerId, PeerInfo, ServerMsg};
 
+use crate::known_servers::KnownServers;
+
 /// Имя, которое клиент ожидает в сертификате сервера.
 const SERVER_NAME: &str = "vwf-server";
 
@@ -21,6 +23,10 @@ pub struct Session {
     conn: quinn::Connection,
     control_recv: quinn::RecvStream,
     control: Control,
+    /// Адрес сервера (после разрешения имени).
+    pub address: SocketAddr,
+    /// Отпечаток сертификата сервера.
+    pub fingerprint: String,
     /// Мы сами, как нас видит сервер (id, права хоста...).
     pub me: PeerInfo,
     /// Кто уже был в комнате в момент подключения.
@@ -113,8 +119,43 @@ async fn resolve(server: &str) -> anyhow::Result<SocketAddr> {
         .with_context(|| format!("у {with_port} нет IP-адресов"))
 }
 
+/// Как проверять сертификат сервера.
+pub enum Trust<'a> {
+    /// Принять любой (только для тестов и экспериментов).
+    Any,
+    /// Ожидаем ровно этот отпечаток (например, свой собственный сервер).
+    Exact(&'a str),
+    /// Запомнить при первом подключении, дальше сверять с запомненным.
+    Known(&'a Mutex<KnownServers>),
+}
+
+/// Сертификат сервера не совпал с ожидаемым. Возможна подмена сервера —
+/// или его честно переустановили. Решать пользователю.
+#[derive(Debug, Clone)]
+pub struct CertificateChanged {
+    /// Адрес сервера, как он хранится в списке запомненных.
+    pub address: String,
+    pub known: String,
+    pub presented: String,
+}
+
+impl std::fmt::Display for CertificateChanged {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "сертификат сервера {} изменился: был код {}, теперь {}. Возможна подмена сервера, \
+             или его переустановили — сверьте код с хостом",
+            self.address,
+            vwf_proto::short_fingerprint(&self.known),
+            vwf_proto::short_fingerprint(&self.presented),
+        )
+    }
+}
+
+impl std::error::Error for CertificateChanged {}
+
 pub async fn connect(server: &str, name: &str) -> anyhow::Result<Session> {
-    connect_with_token(server, name, None).await
+    connect_with(server, name, None, Trust::Any).await
 }
 
 /// Подключение с секретом хоста (см. `vwf_server::Config::admin_token`).
@@ -122,6 +163,16 @@ pub async fn connect_with_token(
     server: &str,
     name: &str,
     admin_token: Option<&str>,
+) -> anyhow::Result<Session> {
+    connect_with(server, name, admin_token, Trust::Any).await
+}
+
+/// Подключение с проверкой сертификата сервера.
+pub async fn connect_with(
+    server: &str,
+    name: &str,
+    admin_token: Option<&str>,
+    trust: Trust<'_>,
 ) -> anyhow::Result<Session> {
     let addr = resolve(server).await?;
     let bind: SocketAddr =
@@ -141,6 +192,22 @@ pub async fn connect_with_token(
         )
     })?
     .with_context(|| format!("не удалось подключиться к {addr}"))?;
+
+    // Сверяем сертификат сразу после рукопожатия — до того, как отправить
+    // серверу хоть что-то (имя, секрет хоста).
+    let fingerprint = presented_fingerprint(&conn)?;
+    let address = addr.to_string();
+    let expected = match &trust {
+        Trust::Any => None,
+        Trust::Exact(fp) => Some(fp.to_string()),
+        Trust::Known(known) => known.lock().unwrap().get(&address).map(str::to_string),
+    };
+    if let Some(known) = expected
+        && known != fingerprint
+    {
+        conn.close(0u32.into(), b"certificate changed");
+        return Err(CertificateChanged { address, known, presented: fingerprint }.into());
+    }
 
     let (mut send, mut recv) = conn.open_bi().await?;
     vwf_proto::write_msg(
@@ -167,11 +234,21 @@ pub async fn connect_with_token(
                 }
                 let _ = send.finish();
             });
+            // Первое подключение к серверу: запоминаем его сертификат.
+            if let Trust::Known(known) = trust {
+                let mut known = known.lock().unwrap();
+                if known.get(&address).is_none() {
+                    // Не смогли записать файл — подключиться это не мешает.
+                    let _ = known.remember(&address, &fingerprint);
+                }
+            }
             Ok(Session {
                 endpoint,
                 conn,
                 control_recv: recv,
                 control: Control(control_tx),
+                address: addr,
+                fingerprint,
                 me: you,
                 peers,
             })
@@ -209,6 +286,16 @@ impl Session {
     }
 }
 
+/// Отпечаток сертификата, который предъявил сервер.
+fn presented_fingerprint(conn: &quinn::Connection) -> anyhow::Result<String> {
+    let certs = conn
+        .peer_identity()
+        .and_then(|identity| identity.downcast::<Vec<CertificateDer<'static>>>().ok())
+        .context("сервер не предъявил сертификат")?;
+    let cert = certs.first().context("сервер не предъявил сертификат")?;
+    Ok(vwf_proto::cert_fingerprint(cert))
+}
+
 fn client_config() -> anyhow::Result<quinn::ClientConfig> {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let mut tls = rustls::ClientConfig::builder_with_provider(provider.clone())
@@ -226,9 +313,9 @@ fn client_config() -> anyhow::Result<quinn::ClientConfig> {
     Ok(config)
 }
 
-/// Сервер использует самоподписанный сертификат, поэтому пока принимаем любой.
-/// Трафик всё равно зашифрован, но подмену сервера клиент не заметит.
-/// TODO: запоминать отпечаток сертификата при первом подключении (как SSH).
+/// Сервер использует самоподписанный сертификат, удостоверяющего центра нет,
+/// поэтому на этапе рукопожатия принимаем любой. Настоящая проверка — сразу
+/// после него: отпечаток сверяется с запомненным (см. `Trust`).
 #[derive(Debug)]
 struct AcceptAnyServerCert(Arc<rustls::crypto::CryptoProvider>);
 

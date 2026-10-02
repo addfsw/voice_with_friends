@@ -229,3 +229,63 @@ async fn host_can_mute_and_kick_but_guest_cannot() {
         _ => unreachable!(),
     }
 }
+
+#[tokio::test]
+async fn changed_server_certificate_is_detected() {
+    use std::sync::Mutex;
+    use vwf_client::known_servers::KnownServers;
+    use vwf_client::net::{CertificateChanged, Trust, connect_with};
+
+    let config = |bind: &str| vwf_server::Config {
+        bind: bind.parse().unwrap(),
+        echo: false,
+        data_dir: None, // каждый запуск — новый сертификат
+        name: "Комната".into(),
+        discovery: None,
+        admin_token: None,
+    };
+    let known = Mutex::new(KnownServers::in_memory());
+
+    let first = vwf_server::Server::bind(config("127.0.0.1:0")).unwrap();
+    let addr = first.local_addr().unwrap().to_string();
+    let first_fp = first.fingerprint().to_string();
+    let endpoint = first.endpoint().clone();
+    let run = tokio::spawn(first.run());
+
+    // Первое подключение запоминает сертификат, второе с ним сверяется.
+    let session = connect_with(&addr, "Алиса", None, Trust::Known(&known)).await.unwrap();
+    assert_eq!(session.fingerprint, first_fp);
+    assert_eq!(known.lock().unwrap().get(&addr), Some(first_fp.as_str()));
+    session.close().await;
+    connect_with(&addr, "Алиса", None, Trust::Known(&known)).await.unwrap().close().await;
+
+    // На том же адресе теперь другой сервер — с другим сертификатом.
+    endpoint.close(0u32.into(), b"stop");
+    timeout(T, run).await.unwrap().unwrap();
+    endpoint.wait_idle().await;
+    drop(endpoint);
+    let started = std::time::Instant::now();
+    let second = loop {
+        match vwf_server::Server::bind(config(&addr)) {
+            Ok(server) => break server,
+            Err(_) if started.elapsed() < Duration::from_secs(2) => {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            Err(e) => panic!("порт не освободился: {e:#}"),
+        }
+    };
+    let second_fp = second.fingerprint().to_string();
+    tokio::spawn(second.run());
+
+    let error = connect_with(&addr, "Алиса", None, Trust::Known(&known)).await.err().unwrap();
+    let changed = error.downcast_ref::<CertificateChanged>().expect("ожидали CertificateChanged");
+    assert_eq!((changed.known.as_str(), changed.presented.as_str()), (&*first_fp, &*second_fp));
+    // Запомненный сертификат сам по себе не заменился.
+    assert_eq!(known.lock().unwrap().get(&addr), Some(first_fp.as_str()));
+
+    // Пользователь подтвердил новый — подключение проходит.
+    known.lock().unwrap().remember(&addr, &second_fp).unwrap();
+    connect_with(&addr, "Алиса", None, Trust::Known(&known)).await.unwrap().close().await;
+    // Явно ожидаемый отпечаток тоже проверяется.
+    assert!(connect_with(&addr, "Алиса", None, Trust::Exact(&first_fp)).await.is_err());
+}

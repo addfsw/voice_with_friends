@@ -17,6 +17,8 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use vwf_client::call::{AudioSettings, Call, CallEvent};
+use vwf_client::known_servers::KnownServers;
+use vwf_client::net::{CertificateChanged, Trust};
 use vwf_client::pipeline::{TxMode, TxState};
 use vwf_client::{audio, discovery};
 use vwf_proto::{PeerId, PeerInfo};
@@ -33,6 +35,8 @@ struct AppState {
     ptt_key: Mutex<Option<String>>,
     /// Сервер, запущенный кнопкой «Создать комнату».
     host: tokio::sync::Mutex<Option<HostedServer>>,
+    /// Запомненные сертификаты серверов (загружаются при запуске).
+    known: Mutex<KnownServers>,
 }
 
 /// Ошибки отдаём в интерфейс строкой — он покажет её пользователю.
@@ -101,6 +105,8 @@ impl From<PeerInfo> for Peer {
 struct Joined {
     me: Peer,
     peers: Vec<Peer>,
+    /// Короткий код сертификата сервера — для сверки с хостом.
+    server_code: String,
     input_device: String,
     output_device: String,
 }
@@ -115,12 +121,43 @@ struct CallEnded {
     reason: String,
 }
 
+/// Ошибка подключения. Подмену сертификата интерфейс показывает отдельно,
+/// с выбором «отмена / доверять новому».
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum ConnectError {
+    #[serde(rename_all = "camelCase")]
+    Message { message: String },
+    #[serde(rename_all = "camelCase")]
+    CertificateChanged {
+        address: String,
+        known_code: String,
+        presented_code: String,
+        /// Полный отпечаток: его запоминаем, если пользователь доверится.
+        presented: String,
+    },
+}
+
+impl From<anyhow::Error> for ConnectError {
+    fn from(e: anyhow::Error) -> Self {
+        match e.downcast_ref::<CertificateChanged>() {
+            Some(changed) => ConnectError::CertificateChanged {
+                address: changed.address.clone(),
+                known_code: vwf_proto::short_fingerprint(&changed.known),
+                presented_code: vwf_proto::short_fingerprint(&changed.presented),
+                presented: changed.presented.clone(),
+            },
+            None => ConnectError::Message { message: format!("{e:#}") },
+        }
+    }
+}
+
 #[tauri::command]
 async fn connect(
     app: AppHandle,
     state: State<'_, AppState>,
     args: ConnectArgs,
-) -> CmdResult<Joined> {
+) -> Result<Joined, ConnectError> {
     let mut slot = state.call.lock().await;
     if let Some(old) = slot.take() {
         old.hang_up().await;
@@ -133,18 +170,19 @@ async fn connect(
         ..AudioSettings::default()
     };
     let server = args.server.trim();
-    // К своему серверу подключаемся с секретом хоста.
-    let admin_token = state
-        .host
-        .lock()
-        .await
-        .as_ref()
-        .and_then(|h| h.admin_token_for(server).map(str::to_string));
+    // К своему серверу подключаемся с секретом хоста и знаем его сертификат
+    // точно. Для остальных — запоминаем при первом подключении и сверяем.
+    let own = state.host.lock().await.as_ref().and_then(|h| h.own(server));
+    let (admin_token, trust) = match &own {
+        Some((token, fingerprint)) => (Some(token.as_str()), Trust::Exact(fingerprint)),
+        None => (None, Trust::Known(&state.known)),
+    };
     let events = app.clone();
     let call = Call::start(
         server,
         args.name.trim(),
-        admin_token.as_deref(),
+        admin_token,
+        trust,
         &settings,
         state.tx.clone(),
         move |event| {
@@ -156,8 +194,7 @@ async fn connect(
             };
         },
     )
-    .await
-    .map_err(|e| format!("{e:#}"))?;
+    .await?;
     call.mixer().set_deafened(state.deafened.load(Ordering::Relaxed));
     call.sync_status();
 
@@ -170,11 +207,18 @@ async fn connect(
     let joined = Joined {
         me,
         peers: call.peers().into_iter().map(Peer::from).collect(),
+        server_code: vwf_proto::short_fingerprint(&call.fingerprint),
         input_device: call.audio.capture.device_name.clone(),
         output_device: call.audio.playback.device_name.clone(),
     };
     *slot = Some(call);
     Ok(joined)
+}
+
+/// Пользователь подтвердил новый сертификат сервера.
+#[tauri::command]
+fn trust_server(state: State<'_, AppState>, address: String, fingerprint: String) -> CmdResult<()> {
+    state.known.lock().unwrap().remember(&address, &fingerprint).map_err(err)
 }
 
 #[tauri::command]
@@ -392,10 +436,18 @@ fn main() {
             deafened: AtomicBool::new(false),
             ptt_key: Mutex::new(None),
             host: tokio::sync::Mutex::new(None),
+            known: Mutex::new(KnownServers::in_memory()),
+        })
+        .setup(|app| {
+            // Файл с запомненными сертификатами — в папке данных программы.
+            let path = app.path().app_data_dir()?.join("known_servers.txt");
+            *app.state::<AppState>().known.lock().unwrap() = KnownServers::load(path);
+            Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             list_devices,
             connect,
+            trust_server,
             disconnect,
             set_muted,
             set_deafened,

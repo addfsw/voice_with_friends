@@ -52,6 +52,7 @@ body {
   gap: 14px;
   height: 100%;
   padding: 16px;
+  overflow-y: auto;
 }
 
 .card {
@@ -64,9 +65,17 @@ body {
 /* --- Экран подключения --- */
 
 #connect-view {
-  justify-content: center;
   max-width: 400px;
   margin: 0 auto;
+}
+
+/* По центру, пока помещается; если форма выше окна — прокрутка, а не обрезка сверху. */
+#connect-view > :first-child {
+  margin-top: auto;
+}
+
+#connect-view > :last-child {
+  margin-bottom: auto;
 }
 
 .brand {
@@ -364,6 +373,42 @@ button.link:hover {
 
 button.armed {
   background: var(--danger-hover);
+}
+
+/* Предупреждение о смене сертификата */
+
+.cert-warning {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+.cert-title {
+  font-weight: 600;
+  color: var(--danger);
+}
+
+.cert-codes {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  align-items: baseline;
+}
+
+code {
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 13px;
+  user-select: text;
+}
+
+.cert-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
 }
 
 /* Галочка */

@@ -5,6 +5,7 @@ pub mod audio;
 pub mod call;
 pub mod discovery;
 pub mod jitter;
+pub mod known_servers;
 pub mod net;
 pub mod pipeline;
 pub mod resample;
