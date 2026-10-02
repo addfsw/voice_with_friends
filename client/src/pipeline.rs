@@ -9,7 +9,7 @@
 //! набрался, а микшер доливает звук сразу, как только карта его забрала.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -33,45 +33,138 @@ const MAX_PACKET: usize = 1275;
 // Передача
 // ---------------------------------------------------------------------------
 
+/// Когда передавать голос.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum TxMode {
+    /// Активация голосом: когда громкость выше порога.
+    Voice = 0,
+    /// Всегда, пока микрофон не выключен.
+    Always = 1,
+    /// Рация (push-to-talk): пока нажата клавиша.
+    PushToTalk = 2,
+}
+
+impl TxMode {
+    fn from_u8(v: u8) -> Self {
+        match v {
+            1 => TxMode::Always,
+            2 => TxMode::PushToTalk,
+            _ => TxMode::Voice,
+        }
+    }
+}
+
+/// Настройки кодера, которые задаются при запуске.
 #[derive(Clone, Debug)]
 pub struct TxSettings {
     /// Битрейт Opus, бит/с. Для голоса 24–32 кбит/с — уже отличное качество.
     pub bitrate: i32,
-    /// Порог активации голосом в dBFS; `None` — передавать всегда.
-    pub vad_threshold_db: Option<f32>,
 }
 
-/// Общее состояние передатчика, которое можно читать и менять из других потоков.
-#[derive(Default)]
+impl Default for TxSettings {
+    fn default() -> Self {
+        Self { bitrate: 32_000 }
+    }
+}
+
+/// Состояние передачи, которое меняют и читают другие потоки (интерфейс,
+/// обработчик горячей клавиши). Живёт дольше одного звонка, поэтому
+/// настройки сохраняются между подключениями.
 pub struct TxState {
-    pub muted: AtomicBool,
+    muted: AtomicBool,
+    mode: AtomicU8,
+    vad_threshold_db_bits: AtomicU32,
+    ptt_pressed: AtomicBool,
     /// Идёт ли сейчас передача (для индикатора).
-    pub transmitting: AtomicBool,
-    /// Громкость последнего кадра в dBFS (f32, упакованный в биты u32).
+    transmitting: AtomicBool,
+    /// Громкость последнего кадра с микрофона, dBFS.
     level_db_bits: AtomicU32,
-    stop: AtomicBool,
 }
 
 impl TxState {
+    pub fn new(mode: TxMode, vad_threshold_db: f32) -> Self {
+        Self {
+            muted: AtomicBool::new(false),
+            mode: AtomicU8::new(mode as u8),
+            vad_threshold_db_bits: AtomicU32::new(vad_threshold_db.to_bits()),
+            ptt_pressed: AtomicBool::new(false),
+            transmitting: AtomicBool::new(false),
+            level_db_bits: AtomicU32::new((-120f32).to_bits()),
+        }
+    }
+
+    pub fn muted(&self) -> bool {
+        self.muted.load(Ordering::Relaxed)
+    }
+
+    pub fn set_muted(&self, muted: bool) {
+        self.muted.store(muted, Ordering::Relaxed);
+    }
+
+    pub fn mode(&self) -> TxMode {
+        TxMode::from_u8(self.mode.load(Ordering::Relaxed))
+    }
+
+    pub fn set_mode(&self, mode: TxMode) {
+        self.mode.store(mode as u8, Ordering::Relaxed);
+    }
+
+    pub fn vad_threshold_db(&self) -> f32 {
+        f32::from_bits(self.vad_threshold_db_bits.load(Ordering::Relaxed))
+    }
+
+    pub fn set_vad_threshold_db(&self, db: f32) {
+        self.vad_threshold_db_bits.store(db.to_bits(), Ordering::Relaxed);
+    }
+
+    pub fn set_ptt_pressed(&self, pressed: bool) {
+        self.ptt_pressed.store(pressed, Ordering::Relaxed);
+    }
+
+    pub fn transmitting(&self) -> bool {
+        self.transmitting.load(Ordering::Relaxed)
+    }
+
     pub fn level_db(&self) -> f32 {
         f32::from_bits(self.level_db_bits.load(Ordering::Relaxed))
+    }
+
+    /// Решает, передавать ли кадр с громкостью `level_db`.
+    fn should_transmit(&self, vad: &mut Vad, level_db: f32) -> bool {
+        // Детектор речи обновляем всегда, чтобы при переключении режима
+        // у него было актуальное состояние.
+        let voice = vad.is_active(level_db, self.vad_threshold_db());
+        if self.muted() {
+            return false;
+        }
+        match self.mode() {
+            TxMode::Voice => voice,
+            TxMode::Always => true,
+            TxMode::PushToTalk => self.ptt_pressed.load(Ordering::Relaxed),
+        }
+    }
+}
+
+impl Default for TxState {
+    fn default() -> Self {
+        Self::new(TxMode::Voice, -45.0)
     }
 }
 
 /// Простейший детектор речи по громкости с «хвостом»: после того как голос
 /// стих, передача продолжается ещё `HANGOVER_FRAMES` кадров, чтобы не обрезать
 /// окончания слов.
+#[derive(Default)]
 struct Vad {
-    threshold_db: Option<f32>,
     hangover_left: u32,
 }
 
 const HANGOVER_FRAMES: u32 = 300 / FRAME_MS; // 300 мс
 
 impl Vad {
-    fn is_active(&mut self, level_db: f32) -> bool {
-        let Some(threshold) = self.threshold_db else { return true };
-        if level_db >= threshold {
+    fn is_active(&mut self, level_db: f32, threshold_db: f32) -> bool {
+        if level_db >= threshold_db {
             self.hangover_left = HANGOVER_FRAMES;
             true
         } else if self.hangover_left > 0 {
@@ -89,7 +182,7 @@ fn level_db(frame: &[f32]) -> f32 {
 }
 
 pub struct Transmitter {
-    pub state: Arc<TxState>,
+    stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -102,6 +195,7 @@ impl Transmitter {
     pub fn spawn(
         mut capture: HeapCons<f32>,
         wakeup: Arc<Wakeup>,
+        state: Arc<TxState>,
         settings: TxSettings,
         mut send: impl FnMut(u32, &[u8]) + Send + 'static,
     ) -> anyhow::Result<Self> {
@@ -114,10 +208,10 @@ impl Transmitter {
         encoder.set_inband_fec(true)?;
         encoder.set_packet_loss_perc(10)?;
 
-        let state = Arc::new(TxState::default());
-        let thread_state = state.clone();
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread_stop = stop.clone();
         let thread = thread::Builder::new().name("vwf-encoder".into()).spawn(move || {
-            let mut vad = Vad { threshold_db: settings.vad_threshold_db, hangover_left: 0 };
+            let mut vad = Vad::default();
             let mut frame = [0f32; FRAME_SAMPLES];
             let mut packet = [0u8; MAX_PACKET];
             let mut next_seq = 0u32;
@@ -125,7 +219,7 @@ impl Transmitter {
             // Пока запускались вывод и микшер, микрофон уже что-то записал.
             // Это старый звук: отправлять его — значит начать разговор с задержкой.
             capture.clear();
-            while !thread_state.stop.load(Ordering::Relaxed) {
+            while !thread_stop.load(Ordering::Relaxed) {
                 if capture.occupied_len() < FRAME_SAMPLES {
                     wakeup.wait(WAKE_TIMEOUT);
                     continue;
@@ -135,9 +229,9 @@ impl Transmitter {
                 next_seq = next_seq.wrapping_add(1);
 
                 let level = level_db(&frame);
-                thread_state.level_db_bits.store(level.to_bits(), Ordering::Relaxed);
-                let active = !thread_state.muted.load(Ordering::Relaxed) && vad.is_active(level);
-                thread_state.transmitting.store(active, Ordering::Relaxed);
+                state.level_db_bits.store(level.to_bits(), Ordering::Relaxed);
+                let active = state.should_transmit(&mut vad, level);
+                state.transmitting.store(active, Ordering::Relaxed);
                 if !active {
                     continue;
                 }
@@ -147,14 +241,15 @@ impl Transmitter {
                     Err(e) => eprintln!("ошибка кодирования Opus: {e}"),
                 }
             }
+            state.transmitting.store(false, Ordering::Relaxed);
         })?;
-        Ok(Self { state, thread: Some(thread) })
+        Ok(Self { stop, thread: Some(thread) })
     }
 }
 
 impl Drop for Transmitter {
     fn drop(&mut self) {
-        self.state.stop.store(true, Ordering::Relaxed);
+        self.stop.store(true, Ordering::Relaxed);
         if let Some(t) = self.thread.take() {
             let _ = t.join();
         }
@@ -173,10 +268,17 @@ const FADE_IN_SAMPLES: usize = (SAMPLE_RATE / 1000 * 5) as usize; // 5 мс
 struct Speaker {
     jitter: JitterBuffer,
     decoder: opus::Decoder,
-    volume: f32,
     /// Играл ли звук этого собеседника в прошлом кадре.
     active: bool,
+    /// До какого момента считать, что человек говорит (для индикатора).
+    speaking_until: Option<Instant>,
 }
+
+/// Громче этого кадр считается речью (для индикатора «говорит»).
+const SPEAKING_THRESHOLD_DB: f32 = -50.0;
+/// Индикатор «говорит» гаснет не сразу, а через это время после последнего слова,
+/// иначе он мигал бы на каждой паузе между словами.
+const SPEAKING_HOLD: Duration = Duration::from_millis(250);
 
 impl Speaker {
     /// Декодирует следующий кадр в `out`. `false` — человек молчит.
@@ -221,13 +323,23 @@ impl Speaker {
 /// Принимает пакеты от всех собеседников и сводит их в один поток.
 pub struct Mixer {
     speakers: Mutex<HashMap<PeerId, Speaker>>,
+    /// Громкость каждого собеседника (1.0 — как есть). Хранится отдельно от
+    /// `speakers`, чтобы её можно было задать ещё до того, как человек заговорил.
+    volumes: Mutex<HashMap<PeerId, f32>>,
+    /// «Выключить звук»: ничего не выводить, но продолжать принимать пакеты.
+    deafened: AtomicBool,
     delay: Delay,
 }
 
 impl Mixer {
     /// `delay` — как джиттер-буферы выбирают задержку.
     pub fn new(delay: Delay) -> Self {
-        Self { speakers: Mutex::new(HashMap::new()), delay }
+        Self {
+            speakers: Mutex::new(HashMap::new()),
+            volumes: Mutex::new(HashMap::new()),
+            deafened: AtomicBool::new(false),
+            delay,
+        }
     }
 
     /// Кладёт пришедший голосовой пакет в джиттер-буфер отправителя.
@@ -244,8 +356,8 @@ impl Mixer {
                     Ok(decoder) => e.insert(Speaker {
                         jitter: JitterBuffer::new(self.delay, now),
                         decoder,
-                        volume: 1.0,
                         active: false,
+                        speaking_until: None,
                     }),
                     Err(err) => {
                         eprintln!("не удалось создать декодер Opus: {err}");
@@ -260,13 +372,31 @@ impl Mixer {
     /// Собеседник ушёл — забываем его состояние.
     pub fn remove_speaker(&self, id: PeerId) {
         self.speakers.lock().unwrap().remove(&id);
+        self.volumes.lock().unwrap().remove(&id);
     }
 
-    /// Громкость конкретного собеседника (1.0 — как есть).
+    /// Громкость конкретного собеседника (1.0 — как есть, 0 — не слышно).
     pub fn set_volume(&self, id: PeerId, volume: f32) {
-        if let Some(s) = self.speakers.lock().unwrap().get_mut(&id) {
-            s.volume = volume;
-        }
+        self.volumes.lock().unwrap().insert(id, volume.clamp(0.0, 4.0));
+    }
+
+    pub fn set_deafened(&self, deafened: bool) {
+        self.deafened.store(deafened, Ordering::Relaxed);
+    }
+
+    pub fn deafened(&self) -> bool {
+        self.deafened.load(Ordering::Relaxed)
+    }
+
+    /// Кто сейчас говорит.
+    pub fn speaking(&self) -> Vec<PeerId> {
+        let now = Instant::now();
+        let speakers = self.speakers.lock().unwrap();
+        speakers
+            .iter()
+            .filter(|(_, s)| s.speaking_until.is_some_and(|until| until > now))
+            .map(|(id, _)| *id)
+            .collect()
     }
 
     /// Текущая задержка джиттер-буфера каждого собеседника, мс.
@@ -283,12 +413,24 @@ impl Mixer {
     fn mix_frame_at(&self, out: &mut [f32; FRAME_SAMPLES], now: Instant) {
         out.fill(0.0);
         let mut voice = [0f32; FRAME_SAMPLES];
+        let volumes = self.volumes.lock().unwrap().clone();
+        let deafened = self.deafened();
         let mut speakers = self.speakers.lock().unwrap();
-        for speaker in speakers.values_mut() {
-            if speaker.next_frame(&mut voice, now) {
-                for (o, v) in out.iter_mut().zip(voice.iter()) {
-                    *o += v * speaker.volume;
-                }
+        for (id, speaker) in speakers.iter_mut() {
+            // Кадры достаём и при выключенном звуке: иначе джиттер-буфер
+            // переполнится, а после включения зазвучит старое.
+            if !speaker.next_frame(&mut voice, now) {
+                continue;
+            }
+            if level_db(&voice) > SPEAKING_THRESHOLD_DB {
+                speaker.speaking_until = Some(now + SPEAKING_HOLD);
+            }
+            if deafened {
+                continue;
+            }
+            let volume = volumes.get(id).copied().unwrap_or(1.0);
+            for (o, v) in out.iter_mut().zip(voice.iter()) {
+                *o += v * volume;
             }
         }
         // Если несколько человек кричат одновременно, сумма может выйти за [-1, 1].
@@ -366,13 +508,31 @@ mod tests {
 
     #[test]
     fn vad_holds_after_speech() {
-        let mut vad = Vad { threshold_db: Some(-40.0), hangover_left: 0 };
-        assert!(!vad.is_active(-60.0));
-        assert!(vad.is_active(-20.0));
+        let mut vad = Vad::default();
+        assert!(!vad.is_active(-60.0, -40.0));
+        assert!(vad.is_active(-20.0, -40.0));
         for _ in 0..HANGOVER_FRAMES {
-            assert!(vad.is_active(-60.0));
+            assert!(vad.is_active(-60.0, -40.0));
         }
-        assert!(!vad.is_active(-60.0));
+        assert!(!vad.is_active(-60.0, -40.0));
+    }
+
+    #[test]
+    fn transmit_modes() {
+        let state = TxState::new(TxMode::Voice, -40.0);
+        let mut vad = Vad::default();
+        assert!(!state.should_transmit(&mut vad, -60.0));
+        assert!(state.should_transmit(&mut vad, -20.0));
+
+        state.set_mode(TxMode::PushToTalk);
+        assert!(!state.should_transmit(&mut vad, -20.0));
+        state.set_ptt_pressed(true);
+        assert!(state.should_transmit(&mut vad, -90.0));
+
+        state.set_mode(TxMode::Always);
+        assert!(state.should_transmit(&mut vad, -90.0));
+        state.set_muted(true);
+        assert!(!state.should_transmit(&mut vad, -20.0));
     }
 
     #[test]
@@ -418,5 +578,34 @@ mod tests {
         }
         mixer.mix_frame_at(&mut out, at(33));
         assert!(out.iter().all(|s| *s == 0.0), "после конца речи — тишина");
+    }
+
+    #[test]
+    fn volume_and_deafen() {
+        let mut encoder =
+            opus::Encoder::new(SAMPLE_RATE, opus::Channels::Mono, opus::Application::Voip).unwrap();
+        let mixer = Mixer::new(Delay::Fixed(0.0));
+        let start = Instant::now();
+        let at = |frame: u32| start + Duration::from_millis(frame as u64 * FRAME_MS as u64);
+        let mut out = [0f32; FRAME_SAMPLES];
+        let mut levels = Vec::new();
+        for seq in 0..30u32 {
+            match seq {
+                10 => mixer.set_volume(1, 0.5),
+                20 => mixer.set_deafened(true),
+                _ => {}
+            }
+            let packet = encoder
+                .encode_vec_float(&sine_frame(seq as usize * FRAME_SAMPLES), MAX_PACKET)
+                .unwrap();
+            mixer.push_packet_at(1, seq, &packet, at(seq));
+            mixer.mix_frame_at(&mut out, at(seq));
+            levels.push(level_db(&out));
+        }
+        // Половина громкости — минус 6 дБ.
+        assert!((levels[9] - levels[15] - 6.0).abs() < 1.0, "{levels:?}");
+        // Звук выключен — тишина, но собеседник по-прежнему «говорит».
+        assert_eq!(levels[25], -120.0);
+        assert_eq!(mixer.speaking(), vec![1]);
     }
 }

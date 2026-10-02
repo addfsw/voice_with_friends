@@ -2,6 +2,7 @@
 //! её же использовал графический клиент (Tauri) на Windows и Android.
 
 pub mod audio;
+pub mod call;
 pub mod jitter;
 pub mod net;
 pub mod pipeline;

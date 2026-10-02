@@ -27,6 +27,21 @@ pub struct Session {
     pub peers: Vec<PeerInfo>,
 }
 
+/// Позволяет закрыть соединение, когда сама `Session` уже отдана другой задаче.
+#[derive(Clone)]
+pub struct Closer {
+    endpoint: quinn::Endpoint,
+    conn: quinn::Connection,
+}
+
+impl Closer {
+    pub async fn close(&self) {
+        self.conn.close(0u32.into(), b"bye");
+        // Даём серверу узнать о закрытии, но не ждём вечно.
+        let _ = tokio::time::timeout(Duration::from_secs(1), self.endpoint.wait_idle()).await;
+    }
+}
+
 /// Отправка голоса. Дешёво клонируется и вызывается из потока кодера.
 #[derive(Clone)]
 pub struct VoiceSender(quinn::Connection);
@@ -127,14 +142,17 @@ impl Session {
         VoiceReceiver(self.conn.clone())
     }
 
+    pub fn closer(&self) -> Closer {
+        Closer { endpoint: self.endpoint.clone(), conn: self.conn.clone() }
+    }
+
     /// Ждёт следующее событие от сервера. `Ok(None)` — сервер закрыл соединение.
     pub async fn next_event(&mut self) -> anyhow::Result<Option<ServerMsg>> {
         vwf_proto::read_msg(&mut self.control_recv).await
     }
 
     pub async fn close(self) {
-        self.conn.close(0u32.into(), b"bye");
-        self.endpoint.wait_idle().await;
+        self.closer().close().await;
     }
 }
 
