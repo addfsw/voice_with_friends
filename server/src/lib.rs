@@ -202,7 +202,7 @@ pub fn default_server_name() -> String {
         .or_else(|| std::fs::read_to_string("/etc/hostname").ok())
         .map(|name| name.trim().to_string())
         .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| "vwf-server".to_string())
+        .unwrap_or_else(|| "Поигрулькины".to_string())
 }
 
 /// Общие настройки QUIC: регулярные keep-alive, чтобы NAT-роутеры не забывали

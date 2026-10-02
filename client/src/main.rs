@@ -12,7 +12,7 @@ use vwf_client::jitter::Delay;
 use vwf_client::pipeline::{Mixer, TxMode, TxSettings, TxState};
 use vwf_proto::PeerId;
 
-/// Голосовой чат voice_with_friends (консольный клиент).
+/// Поигрулькины: голосовой чат (консольный клиент).
 #[derive(Parser)]
 #[command(version)]
 struct Cli {

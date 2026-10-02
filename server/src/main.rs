@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use clap::Parser;
 use tracing::info;
 
-/// Сервер голосового чата voice_with_friends.
+/// Поигрулькины: сервер голосового чата.
 #[derive(Parser)]
 #[command(version)]
 struct Args {
@@ -28,7 +28,7 @@ struct Args {
     #[arg(long)]
     no_discovery: bool,
 
-    /// Секрет для прав хоста. Кто подключится с ним (`vwf-client connect ...
+    /// Секрет для прав хоста. Кто подключится с ним (`poigrulkiny-cli connect ...
     /// --admin-token ...`), сможет заглушать и выгонять участников.
     #[arg(long)]
     admin_token: Option<String>,

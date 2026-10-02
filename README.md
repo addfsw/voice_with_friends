@@ -1,4 +1,4 @@
-# voice_with_friends
+# Поигрулькины
 
 Голосовой чат для небольшой компании (до 8 человек), в духе Mumble. Работает
 в локальной сети и через интернет. Написан на Rust.
@@ -33,11 +33,11 @@ cargo build --release
 Первая сборка занимает несколько минут: графический клиент тянет за собой Tauri.
 
 Готовые программы появятся в `target\release\`:
-- `voice-with-friends.exe` — графический клиент (нужен всем);
-- `vwf-server.exe` — сервер (нужен одному человеку, у кого он будет запущен);
-- `vwf-client.exe` — консольный клиент (для проверок и экспериментов).
+- `poigrulkiny.exe` — графический клиент (нужен всем);
+- `poigrulkiny-server.exe` — сервер (нужен одному человеку, у кого он будет запущен);
+- `poigrulkiny-cli.exe` — консольный клиент (для проверок и экспериментов).
 
-Друзьям не обязательно ставить Rust: достаточно передать им `voice-with-friends.exe`.
+Друзьям не обязательно ставить Rust: достаточно передать им `poigrulkiny.exe`.
 Графическому клиенту нужен WebView2, в Windows 11 он уже встроен.
 Если при запуске Windows ругается на отсутствующий `VCRUNTIME140.dll`, нужно
 установить «Microsoft Visual C++ Redistributable».
@@ -46,7 +46,7 @@ cargo build --release
 
 ## Графический клиент
 
-Запустите `voice-with-friends.exe`, введите адрес сервера (как для консольного
+Запустите `poigrulkiny.exe`, введите адрес сервера (как для консольного
 клиента, например `192.168.1.10` или `100.101.102.103`) и своё имя.
 Серверы из вашей локальной сети программа находит сама и показывает под полем
 адреса вместе с числом участников: достаточно нажать на нужный.
@@ -57,12 +57,12 @@ cargo build --release
 ### Своя комната без отдельного сервера
 
 Кнопка **«Создать комнату на этом компьютере»** запускает сервер прямо внутри
-программы, и вы сразу в нём. Запускать `vwf-server.exe` не нужно.
+программы, и вы сразу в нём. Запускать `poigrulkiny-server.exe` не нужно.
 - Друзья из вашей локальной сети увидят комнату в списке («Имя — комната»).
 - Остальным скажите адрес из карточки «Вы — сервер этой комнаты» (кнопка
   «копировать» рядом). Через Tailscale это адрес вида `100.x.y.z`.
 - **При первом создании комнаты Windows спросит про брандмауэр** для
-  `voice-with-friends.exe`, разрешите. Если друзья не могут подключиться,
+  `poigrulkiny.exe`, разрешите. Если друзья не могут подключиться,
   откройте порты 47777 и 47778 командой из раздела про сервер ниже.
 - Карточка «Вы — сервер» свёрнута, адреса для друзей видны по нажатию.
 - Создатель комнаты — **хост** (корона у имени). В меню «⋮» у каждого
@@ -71,10 +71,10 @@ cargo build --release
   (нужно подтвердить). Выгнанный может подключиться снова: это не бан.
 - «Закрыть комнату» (нужно нажать два раза) или закрытие программы
   отключает всех. Гости увидят «сервер остановлен».
-- Если на компьютере уже запущен `vwf-server`, комнату создать не получится:
+- Если на компьютере уже запущен `poigrulkiny-server`, комнату создать не получится:
   порт занят. Подключайтесь к нему как обычно.
 - Сертификат встроенного сервера хранится в
-  `%APPDATA%\io.github.addfsw.voicewithfriends`.
+  `%APPDATA%\io.github.addfsw.poigrulkiny`.
 
 В комнате:
 - зелёное кольцо вокруг аватара — человек говорит (вокруг своего — идёт передача);
@@ -103,7 +103,7 @@ cargo run -p vwf-app
 После правок достаточно перезапустить эту команду.
 
 Установщик (`.exe`-инсталлятор) можно собрать через tauri-cli, но это
-не обязательно, хватает и самого `voice-with-friends.exe`:
+не обязательно, хватает и самого `poigrulkiny.exe`:
 ```powershell
 cargo install tauri-cli --version "^2" --locked
 cd app
@@ -114,8 +114,8 @@ cargo tauri build
 
 ```powershell
 cd target\release
-.\vwf-client devices      # список микрофонов и устройств вывода
-.\vwf-client loopback     # говорите и слушайте себя
+.\poigrulkiny-cli devices      # список микрофонов и устройств вывода
+.\poigrulkiny-cli loopback     # говорите и слушайте себя
 ```
 
 **Наденьте наушники**, иначе звук из колонок попадёт обратно в микрофон
@@ -126,14 +126,14 @@ cd target\release
 порог нужно понизить. Если передаётся шум комнаты, порог нужно повысить:
 
 ```powershell
-.\vwf-client loopback --vad-db -50
-.\vwf-client loopback --no-vad          # передавать всегда
+.\poigrulkiny-cli loopback --vad-db -50
+.\poigrulkiny-cli loopback --no-vad          # передавать всегда
 ```
 
 Можно послушать, как программа справляется с плохой сетью:
 
 ```powershell
-.\vwf-client loopback --sim-loss 10 --sim-jitter-ms 40
+.\poigrulkiny-cli loopback --sim-loss 10 --sim-jitter-ms 40
 ```
 
 Здесь 10 % пакетов теряется, а остальные приходят с задержкой от 0 до 40 мс.
@@ -144,7 +144,7 @@ cd target\release
 Другие устройства выбираются по части имени из списка `devices`:
 
 ```powershell
-.\vwf-client loopback --input "USB" --output "Наушники"
+.\poigrulkiny-cli loopback --input "USB" --output "Наушники"
 ```
 
 ## Шаг 2. Разговор через сервер
@@ -154,7 +154,7 @@ cd target\release
 На компьютере, который будет сервером:
 
 ```powershell
-.\vwf-server
+.\poigrulkiny-server
 ```
 
 Сервер выведет адреса, по которым к нему можно подключиться. Например:
@@ -175,14 +175,14 @@ cd target\release
 откройте порты вручную в PowerShell **от имени администратора**:
 
 ```powershell
-New-NetFirewallRule -DisplayName "voice_with_friends" -Direction Inbound -Protocol UDP -LocalPort 47777,47778 -Action Allow
+New-NetFirewallRule -DisplayName "Poigrulkiny" -Direction Inbound -Protocol UDP -LocalPort 47777,47778 -Action Allow
 ```
 
 Другие параметры сервера:
 - `--name "Комната Пети"` — название, которое видят при поиске (по умолчанию имя компьютера);
 - `--no-discovery` — не отвечать на поиск;
 - `--admin-token <секрет>` — права хоста получит тот, кто подключится с этим
-  секретом: `vwf-client connect ... --admin-token <секрет>`. В графическом
+  секретом: `poigrulkiny-cli connect ... --admin-token <секрет>`. В графическом
   клиенте права хоста есть у того, кто создал комнату кнопкой.
 
 При первом запуске сервер создаёт рядом с собой файлы `server_cert.der`
@@ -194,14 +194,14 @@ New-NetFirewallRule -DisplayName "voice_with_friends" -Direction Inbound -Protoc
 проверить всю цепочку через сеть, не дожидаясь друзей:
 
 ```powershell
-.\vwf-server --echo
+.\poigrulkiny-server --echo
 # в другом окне:
-.\vwf-client connect 127.0.0.1 --name Я
+.\poigrulkiny-cli connect 127.0.0.1 --name Я
 ```
 
 ### Если клиент пишет «сервер не отвечает»
 
-1. Убедитесь, что `vwf-server` запущен **в отдельном окне** и не закрылся с ошибкой.
+1. Убедитесь, что `poigrulkiny-server` запущен **в отдельном окне** и не закрылся с ошибкой.
    Окно сервера должно оставаться открытым всё время разговора.
 2. Проверьте, что сервер слушает порт:
    ```powershell
@@ -212,7 +212,7 @@ New-NetFirewallRule -DisplayName "voice_with_friends" -Direction Inbound -Protoc
    доходят ли пакеты до сервера:
    ```powershell
    set RUST_LOG=debug
-   .\vwf-server --echo
+   .\poigrulkiny-server --echo
    ```
    (в PowerShell вместо `set` используйте `$env:RUST_LOG="debug"`)
 
@@ -221,8 +221,8 @@ New-NetFirewallRule -DisplayName "voice_with_friends" -Direction Inbound -Protoc
 **В одной локальной сети** (дома, в общежитии):
 
 ```powershell
-.\vwf-client discover                          # найти серверы в сети
-.\vwf-client connect 192.168.1.10 --name Петя
+.\poigrulkiny-cli discover                          # найти серверы в сети
+.\poigrulkiny-cli connect 192.168.1.10 --name Петя
 ```
 
 **Через интернет** (белого IP ни у кого нет):
@@ -233,7 +233,7 @@ New-NetFirewallRule -DisplayName "voice_with_friends" -Direction Inbound -Protoc
 2. Подключаются по адресу из диапазона `100.x.y.z`, который показывает сервер
    (его также видно в приложении Tailscale):
    ```powershell
-   .\vwf-client connect 100.101.102.103 --name Петя
+   .\poigrulkiny-cli connect 100.101.102.103 --name Петя
    ```
 
 Tailscale сам пробивает NAT. Если напрямую не получается, он пускает трафик

@@ -61,7 +61,7 @@ impl HostedServer {
                     if started.elapsed() > Duration::from_secs(1) {
                         bail!(
                             "порт {DEFAULT_PORT} занят: похоже, на этом компьютере уже запущен \
-                             vwf-server или ещё одна копия программы с комнатой"
+                             poigrulkiny-server или ещё одна копия программы с комнатой"
                         );
                     }
                     tokio::time::sleep(Duration::from_millis(20)).await;

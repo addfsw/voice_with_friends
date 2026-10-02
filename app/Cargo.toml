@@ -1,6 +1,6 @@
 [package]
 name = "vwf-app"
-description = "Графический клиент voice_with_friends (Tauri)"
+description = "Поигрулькины: графический клиент (Tauri)"
 version.workspace = true
 edition.workspace = true
 # Tauri 2 требует Rust новее, чем остальной проект.
@@ -8,7 +8,7 @@ rust-version = "1.90"
 license.workspace = true
 
 [[bin]]
-name = "voice-with-friends"
+name = "poigrulkiny"
 path = "src/main.rs"
 
 [build-dependencies]

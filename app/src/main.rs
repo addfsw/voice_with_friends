@@ -203,7 +203,7 @@ async fn start_server(
     let mut host = state.host.lock().await;
     if host.is_none() {
         // Сертификат сервера храним в папке данных приложения
-        // (на Windows это %APPDATA%\io.github.addfsw.voicewithfriends).
+        // (на Windows это %APPDATA%\io.github.addfsw.poigrulkiny).
         let data_dir = app.path().app_data_dir().map_err(err)?;
         let name = name.trim();
         let name =
