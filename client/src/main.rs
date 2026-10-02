@@ -8,7 +8,9 @@ use std::time::{Duration, Instant};
 use clap::{Args, Parser, Subcommand};
 use tokio::sync::mpsc as tokio_mpsc;
 use vwf_client::audio::GlitchCounter;
-use vwf_client::pipeline::{Mixer, Transmitter, TxSettings, TxState};
+use vwf_client::audio::Wakeup;
+use vwf_client::jitter::Delay;
+use vwf_client::pipeline::{Mixer, MixerOutput, Transmitter, TxSettings, TxState};
 use vwf_client::{audio, net};
 use vwf_proto::{PeerId, ServerMsg};
 
@@ -65,9 +67,14 @@ struct AudioArgs {
     /// Передавать всегда, без активации голосом.
     #[arg(long)]
     no_vad: bool,
-    /// Глубина джиттер-буфера, мс. Больше — устойчивее к плохой сети, но больше задержка.
-    #[arg(long, default_value_t = 60)]
-    jitter_ms: u32,
+    /// Постоянная задержка джиттер-буфера, мс. По умолчанию подстраивается под сеть
+    /// сама: в локальной сети это ~10 мс, в плохом Wi-Fi больше.
+    #[arg(long)]
+    jitter_ms: Option<u32>,
+    /// Сколько звука держать готовым для звуковой карты, мс. Если появляются
+    /// сбои вывода (щелчки), увеличьте до 30–40.
+    #[arg(long, default_value_t = 20)]
+    playback_ms: u32,
 }
 
 impl AudioArgs {
@@ -76,6 +83,46 @@ impl AudioArgs {
             bitrate: self.bitrate.clamp(6, 128) * 1000,
             vad_threshold_db: (!self.no_vad).then_some(self.vad_db),
         }
+    }
+
+    fn jitter_delay(&self) -> Delay {
+        match self.jitter_ms {
+            Some(ms) => Delay::Fixed(ms as f64),
+            None => Delay::default(),
+        }
+    }
+}
+
+/// Запущенные микрофон, динамики, микшер и кодер.
+struct Audio {
+    capture: audio::Capture,
+    playback: audio::Playback,
+    mixer: Arc<Mixer>,
+    tx: Transmitter,
+    _output: MixerOutput,
+}
+
+impl Audio {
+    fn start(
+        args: &AudioArgs,
+        send: impl FnMut(u32, &[u8]) + Send + 'static,
+    ) -> anyhow::Result<Self> {
+        let mic_wakeup = Arc::new(Wakeup::default());
+        let speaker_wakeup = Arc::new(Wakeup::default());
+        let (capture, mic) = audio::start_capture(args.input.as_deref(), mic_wakeup.clone())?;
+        let (playback, speakers) =
+            audio::start_playback(args.output.as_deref(), speaker_wakeup.clone())?;
+        print_devices(&capture, &playback);
+
+        let mixer = Arc::new(Mixer::new(args.jitter_delay()));
+        let output = mixer.spawn_output(
+            speakers,
+            playback.config.sample_rate,
+            speaker_wakeup,
+            args.playback_ms.clamp(5, 200),
+        )?;
+        let tx = Transmitter::spawn(mic, mic_wakeup, args.tx_settings(), send)?;
+        Ok(Self { capture, playback, mixer, tx, _output: output })
     }
 }
 
@@ -98,28 +145,26 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn loopback(args: AudioArgs, sim_loss: f32, sim_jitter_ms: u32) -> anyhow::Result<()> {
-    let (capture, mic) = audio::start_capture(args.input.as_deref())?;
-    let (playback, speakers) = audio::start_playback(args.output.as_deref())?;
-    print_devices(&capture, &playback);
-
-    let mixer = Arc::new(Mixer::new(args.jitter_ms));
-    let _output = mixer.spawn_output(speakers, playback.config.sample_rate)?;
-    let network = SimulatedNetwork::spawn(mixer.clone(), sim_loss, sim_jitter_ms);
-    let tx = Transmitter::spawn(mic, args.tx_settings(), move |seq, opus| network.send(seq, opus))?;
+    // Сеть создаём до звука, а микшер подключаем к ней сразу после запуска.
+    let mixer_slot: Arc<std::sync::OnceLock<Arc<Mixer>>> = Arc::default();
+    let network = SimulatedNetwork::spawn(mixer_slot.clone(), sim_loss, sim_jitter_ms);
+    let audio = Audio::start(&args, move |seq, opus| network.send(seq, opus))?;
+    let _ = mixer_slot.set(audio.mixer.clone());
+    let names = HashMap::from([(LOOPBACK_ID, "вы".to_string())]);
 
     println!("Говорите — вы должны слышать себя с небольшой задержкой.");
     println!("Если голос не передаётся, подберите порог --vad-db по индикатору ниже.");
-    println!("m + Enter — выключить/включить микрофон, Ctrl+C — выход.\n");
+    println!("{COMMANDS_HELP}\n");
 
-    let mut glitches = glitch_counters(&capture, &playback);
+    let mut glitches = glitch_counters(&audio);
     let mut glitch_check = tokio::time::interval(GLITCH_REPORT_INTERVAL);
     let mut commands = spawn_stdin_reader();
     let mut meter = tokio::time::interval(Duration::from_millis(100));
     loop {
         tokio::select! {
-            _ = meter.tick() => print_meter(&tx.state),
+            _ = meter.tick() => print_meter(&audio.tx.state),
             _ = glitch_check.tick() => report_glitches(&mut glitches, true),
-            Some(cmd) = commands.recv() => handle_command(&cmd, &tx.state),
+            Some(cmd) = commands.recv() => handle_command(&cmd, &audio, &names),
             _ = tokio::signal::ctrl_c() => break,
         }
     }
@@ -141,26 +186,19 @@ async fn connect(server: &str, name: &str, args: AudioArgs) -> anyhow::Result<()
         println!("В комнате: {}", list.join(", "));
     }
 
-    let (capture, mic) = audio::start_capture(args.input.as_deref())?;
-    let (playback, speakers) = audio::start_playback(args.output.as_deref())?;
-    print_devices(&capture, &playback);
-
-    let mixer = Arc::new(Mixer::new(args.jitter_ms));
-    let output = mixer.spawn_output(speakers, playback.config.sample_rate)?;
-
     let sender = session.voice_sender();
-    let tx = Transmitter::spawn(mic, args.tx_settings(), move |seq, opus| sender.send(seq, opus))?;
+    let audio = Audio::start(&args, move |seq, opus| sender.send(seq, opus))?;
 
     let receiver = session.voice_receiver();
-    let rx_mixer = mixer.clone();
+    let rx_mixer = audio.mixer.clone();
     tokio::spawn(async move {
         while let Some((from, seq, opus)) = receiver.recv().await {
             rx_mixer.push_packet(from, seq, &opus);
         }
     });
 
-    println!("m + Enter — выключить/включить микрофон, Ctrl+C — выход.\n");
-    let mut glitches = glitch_counters(&capture, &playback);
+    println!("{COMMANDS_HELP}\n");
+    let mut glitches = glitch_counters(&audio);
     let mut glitch_check = tokio::time::interval(GLITCH_REPORT_INTERVAL);
     let mut commands = spawn_stdin_reader();
     loop {
@@ -174,7 +212,7 @@ async fn connect(server: &str, name: &str, args: AudioArgs) -> anyhow::Result<()
                 Ok(Some(ServerMsg::PeerLeft { id })) => {
                     let name = names.remove(&id).unwrap_or_else(|| format!("#{id}"));
                     println!("← {name} отключился");
-                    mixer.remove_speaker(id);
+                    audio.mixer.remove_speaker(id);
                 }
                 Ok(Some(_)) => {}
                 Ok(None) => {
@@ -186,13 +224,12 @@ async fn connect(server: &str, name: &str, args: AudioArgs) -> anyhow::Result<()
                     break;
                 }
             },
-            Some(cmd) = commands.recv() => handle_command(&cmd, &tx.state),
+            Some(cmd) = commands.recv() => handle_command(&cmd, &audio, &names),
             _ = tokio::signal::ctrl_c() => break,
         }
     }
 
-    drop(tx);
-    drop(output);
+    drop(audio);
     session.close().await;
     Ok(())
 }
@@ -200,10 +237,10 @@ async fn connect(server: &str, name: &str, args: AudioArgs) -> anyhow::Result<()
 /// Как часто сообщать о сбоях звука (чтобы не засорять консоль).
 const GLITCH_REPORT_INTERVAL: Duration = Duration::from_secs(5);
 
-fn glitch_counters(capture: &audio::Capture, playback: &audio::Playback) -> [GlitchCounter; 2] {
+fn glitch_counters(audio: &Audio) -> [GlitchCounter; 2] {
     [
-        GlitchCounter::new("микрофон", capture.glitches.clone()),
-        GlitchCounter::new("вывод", playback.glitches.clone()),
+        GlitchCounter::new("микрофон", audio.capture.glitches.clone()),
+        GlitchCounter::new("вывод", audio.playback.glitches.clone()),
     ]
 }
 
@@ -244,18 +281,35 @@ fn print_meter(state: &TxState) {
     let _ = std::io::stdout().flush();
 }
 
-fn handle_command(cmd: &str, state: &TxState) {
-    if cmd.trim().eq_ignore_ascii_case("m") {
-        let muted = !state.muted.load(Ordering::Relaxed);
-        state.muted.store(muted, Ordering::Relaxed);
-        println!(
-            "{}",
-            if muted {
-                "Микрофон выключен."
-            } else {
-                "Микрофон включён."
+const COMMANDS_HELP: &str = "Команды (+ Enter): m — выключить/включить микрофон, \
+                             s — задержка джиттер-буфера. Ctrl+C — выход.";
+
+fn handle_command(cmd: &str, audio: &Audio, names: &HashMap<PeerId, String>) {
+    match cmd.trim().to_lowercase().as_str() {
+        "m" => {
+            let state = &audio.tx.state;
+            let muted = !state.muted.load(Ordering::Relaxed);
+            state.muted.store(muted, Ordering::Relaxed);
+            println!(
+                "{}",
+                if muted {
+                    "Микрофон выключен."
+                } else {
+                    "Микрофон включён."
+                }
+            );
+        }
+        "s" => {
+            let delays = audio.mixer.delays_ms();
+            if delays.is_empty() {
+                println!("Пока никого не слышно.");
             }
-        );
+            for (id, delay) in delays {
+                let name = names.get(&id).cloned().unwrap_or_else(|| format!("#{id}"));
+                println!("{name}: задержка джиттер-буфера {delay:.0} мс");
+            }
+        }
+        _ => {}
     }
 }
 
@@ -273,6 +327,9 @@ fn spawn_stdin_reader() -> tokio_mpsc::UnboundedReceiver<String> {
     rx
 }
 
+/// Под каким id в режиме loopback микшер слышит собственный голос.
+const LOOPBACK_ID: PeerId = 0;
+
 /// «Плохая сеть» для режима loopback: теряет и задерживает пакеты, чтобы было
 /// слышно, как с этим справляются джиттер-буфер, FEC и PLC.
 struct SimulatedNetwork {
@@ -283,7 +340,11 @@ struct SimulatedNetwork {
 }
 
 impl SimulatedNetwork {
-    fn spawn(mixer: Arc<Mixer>, loss_percent: f32, jitter_ms: u32) -> Self {
+    fn spawn(
+        mixer: Arc<std::sync::OnceLock<Arc<Mixer>>>,
+        loss_percent: f32,
+        jitter_ms: u32,
+    ) -> Self {
         let (queue, incoming) = mpsc::channel::<(Instant, u32, Vec<u8>)>();
         std::thread::spawn(move || {
             let mut in_flight = Vec::new();
@@ -296,7 +357,9 @@ impl SimulatedNetwork {
                 let now = Instant::now();
                 in_flight.retain(|(due, seq, opus)| {
                     if *due <= now {
-                        mixer.push_packet(0, *seq, opus);
+                        if let Some(mixer) = mixer.get() {
+                            mixer.push_packet(LOOPBACK_ID, *seq, opus);
+                        }
                         false
                     } else {
                         true
