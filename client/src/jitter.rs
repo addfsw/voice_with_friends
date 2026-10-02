@@ -73,9 +73,11 @@ impl JitterBuffer {
         }
 
         // Буфер раздулся (пачка пакетов после задержки в сети, или часы отправителя
-        // идут чуть быстрее наших): выкидываем старое, чтобы не копить задержку.
+        // идут чуть быстрее наших): выкидываем лишнее старое, чтобы не копить задержку.
+        // Только сверх `max`: при медленном дрейфе часов это пропуск одного кадра
+        // раз в несколько минут, а не скачок сразу на 100 мс.
         if self.packets.len() > self.max {
-            while self.packets.len() > self.target {
+            while self.packets.len() > self.max {
                 self.packets.pop_first();
             }
             self.next_seq = self.next_seq.max(self.first_seq().expect("буфер не пуст"));
@@ -187,9 +189,9 @@ mod tests {
         for s in 0..20 {
             jb.push(s, p(s));
         }
-        // max = 7, буфер ужимается до target = 2: остаются 18 и 19.
-        assert_eq!(jb.pop(), Pop::Packet(p(18)));
-        assert_eq!(jb.pop(), Pop::Packet(p(19)));
+        // max = 7: остаются кадры 13..=19.
+        assert_eq!(jb.pop(), Pop::Packet(p(13)));
+        assert_eq!(jb.pop(), Pop::Packet(p(14)));
     }
 
     #[test]

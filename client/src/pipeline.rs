@@ -157,32 +157,56 @@ impl Drop for Transmitter {
 // Приём и микширование
 // ---------------------------------------------------------------------------
 
+/// Длительность плавного нарастания звука в начале фразы.
+const FADE_IN_SAMPLES: usize = (SAMPLE_RATE / 1000 * 5) as usize; // 5 мс
+
 /// Всё, что относится к одному собеседнику: свой джиттер-буфер и свой декодер
 /// (декодер Opus хранит состояние между кадрами, его нельзя делить между людьми).
 struct Speaker {
     jitter: JitterBuffer,
     decoder: opus::Decoder,
     volume: f32,
+    /// Играл ли звук этого собеседника в прошлом кадре.
+    active: bool,
 }
 
 impl Speaker {
     /// Декодирует следующий кадр в `out`. `false` — человек молчит.
+    ///
+    /// Резкий переход между тишиной и звуком слышен как щелчок, поэтому начало
+    /// фразы плавно нарастает, а в конце фразы декодер «договаривает» один кадр
+    /// (PLC), который плавно затухает до нуля.
     fn next_frame(&mut self, out: &mut [f32; FRAME_SAMPLES]) -> bool {
         let result = match self.jitter.pop() {
-            Pop::Idle => return false,
+            Pop::Idle => {
+                if !std::mem::take(&mut self.active) {
+                    return false;
+                }
+                if self.decoder.decode_float(&[], out, false).is_err() {
+                    return false;
+                }
+                let n = out.len() as f32;
+                for (i, s) in out.iter_mut().enumerate() {
+                    *s *= 1.0 - i as f32 / n;
+                }
+                return true;
+            }
             Pop::Packet(p) => self.decoder.decode_float(&p, out, false),
             // Восстанавливаем потерянный кадр из FEC-копии в следующем пакете...
             Pop::Lost { next: Some(next) } => self.decoder.decode_float(&next, out, true),
             // ...или, если его нет, просим декодер «додумать» звук (packet loss concealment).
             Pop::Lost { next: None } => self.decoder.decode_float(&[], out, false),
         };
-        match result {
-            Ok(_) => true,
-            Err(e) => {
-                eprintln!("ошибка декодирования Opus: {e}");
-                false
+        if let Err(e) = result {
+            eprintln!("ошибка декодирования Opus: {e}");
+            return false;
+        }
+        if !std::mem::replace(&mut self.active, true) {
+            for (i, s) in out.iter_mut().take(FADE_IN_SAMPLES).enumerate() {
+                *s *= i as f32 / FADE_IN_SAMPLES as f32;
             }
         }
+        true
     }
 }
 
@@ -212,6 +236,7 @@ impl Mixer {
                         jitter: JitterBuffer::new(self.jitter_frames),
                         decoder,
                         volume: 1.0,
+                        active: false,
                     }),
                     Err(err) => {
                         eprintln!("не удалось создать декодер Opus: {err}");
@@ -357,10 +382,12 @@ mod tests {
                 _ => assert!(level > -20.0, "кадр {seq}: {level} dBFS"),
             }
         }
-        // Буфер доигрывает остаток, потом снова тишина.
+        // Буфер доигрывает остаток и затухающий кадр, потом снова тишина.
         for _ in 0..3 {
             mixer.mix_frame(&mut out);
+            assert!(level_db(&out) > -40.0);
         }
+        mixer.mix_frame(&mut out);
         assert!(out.iter().all(|s| *s == 0.0), "после конца речи — тишина");
     }
 }
