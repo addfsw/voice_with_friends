@@ -84,7 +84,13 @@ pub async fn connect(server: &str, name: &str) -> anyhow::Result<Session> {
         endpoint.connect_with(client_config()?, addr, SERVER_NAME)?,
     )
     .await
-    .with_context(|| format!("сервер {addr} не отвечает (запущен ли он? открыт ли UDP-порт?)"))?
+    .with_context(|| {
+        format!(
+            "сервер {addr} не отвечает. Проверьте, что vwf-server запущен (в отдельном окне) \
+             и что UDP-порт {} не закрыт брандмауэром",
+            addr.port()
+        )
+    })?
     .with_context(|| format!("не удалось подключиться к {addr}"))?;
 
     let (mut send, mut recv) = conn.open_bi().await?;

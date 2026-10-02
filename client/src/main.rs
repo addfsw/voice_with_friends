@@ -80,6 +80,13 @@ impl AudioArgs {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Подробный журнал для диагностики: `set RUST_LOG=debug` перед запуском.
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "warn".into()),
+        )
+        .init();
+
     match Cli::parse().command {
         Command::Devices => audio::list_devices(),
         Command::Loopback { audio, sim_loss, sim_jitter_ms } => {
