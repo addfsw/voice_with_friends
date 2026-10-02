@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use clap::{Args, Parser, Subcommand};
 use tokio::sync::mpsc as tokio_mpsc;
+use vwf_client::audio::GlitchCounter;
 use vwf_client::pipeline::{Mixer, Transmitter, TxSettings, TxState};
 use vwf_client::{audio, net};
 use vwf_proto::{PeerId, ServerMsg};
@@ -80,6 +81,13 @@ impl AudioArgs {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Подробный журнал для диагностики: `set RUST_LOG=debug` перед запуском.
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "warn".into()),
+        )
+        .init();
+
     match Cli::parse().command {
         Command::Devices => audio::list_devices(),
         Command::Loopback { audio, sim_loss, sim_jitter_ms } => {
@@ -103,11 +111,14 @@ async fn loopback(args: AudioArgs, sim_loss: f32, sim_jitter_ms: u32) -> anyhow:
     println!("Если голос не передаётся, подберите порог --vad-db по индикатору ниже.");
     println!("m + Enter — выключить/включить микрофон, Ctrl+C — выход.\n");
 
+    let mut glitches = glitch_counters(&capture, &playback);
+    let mut glitch_check = tokio::time::interval(GLITCH_REPORT_INTERVAL);
     let mut commands = spawn_stdin_reader();
     let mut meter = tokio::time::interval(Duration::from_millis(100));
     loop {
         tokio::select! {
             _ = meter.tick() => print_meter(&tx.state),
+            _ = glitch_check.tick() => report_glitches(&mut glitches, true),
             Some(cmd) = commands.recv() => handle_command(&cmd, &tx.state),
             _ = tokio::signal::ctrl_c() => break,
         }
@@ -149,9 +160,12 @@ async fn connect(server: &str, name: &str, args: AudioArgs) -> anyhow::Result<()
     });
 
     println!("m + Enter — выключить/включить микрофон, Ctrl+C — выход.\n");
+    let mut glitches = glitch_counters(&capture, &playback);
+    let mut glitch_check = tokio::time::interval(GLITCH_REPORT_INTERVAL);
     let mut commands = spawn_stdin_reader();
     loop {
         tokio::select! {
+            _ = glitch_check.tick() => report_glitches(&mut glitches, false),
             event = session.next_event() => match event {
                 Ok(Some(ServerMsg::PeerJoined(peer))) => {
                     println!("→ {} подключился", peer.name);
@@ -181,6 +195,28 @@ async fn connect(server: &str, name: &str, args: AudioArgs) -> anyhow::Result<()
     drop(output);
     session.close().await;
     Ok(())
+}
+
+/// Как часто сообщать о сбоях звука (чтобы не засорять консоль).
+const GLITCH_REPORT_INTERVAL: Duration = Duration::from_secs(5);
+
+fn glitch_counters(capture: &audio::Capture, playback: &audio::Playback) -> [GlitchCounter; 2] {
+    [
+        GlitchCounter::new("микрофон", capture.glitches.clone()),
+        GlitchCounter::new("вывод", playback.glitches.clone()),
+    ]
+}
+
+fn report_glitches(counters: &mut [GlitchCounter], after_meter: bool) {
+    for counter in counters {
+        if let Some(report) = counter.take_report() {
+            // Индикатор громкости рисуется без перевода строки — не затираем его.
+            if after_meter {
+                println!();
+            }
+            println!("{report}");
+        }
+    }
 }
 
 fn print_devices(capture: &audio::Capture, playback: &audio::Playback) {

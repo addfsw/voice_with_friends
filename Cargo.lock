@@ -1723,6 +1723,7 @@ dependencies = [
  "ringbuf",
  "rustls",
  "tokio",
+ "tracing-subscriber",
  "vwf-proto",
  "vwf-server",
 ]

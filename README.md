@@ -8,7 +8,14 @@
 
 ## Что понадобится (Windows 11)
 
-1. **Rust** (у вас уже есть). Обновите: `rustup update`. Нужна версия 1.88 или новее.
+1. **Rust** версии 1.88 или новее. Если `cargo` пишет *«rustup could not choose
+   a version of cargo to run… no default is configured»*, значит rustup установлен,
+   но ни один тулчейн не выбран. Установите и выберите стабильный:
+   ```powershell
+   rustup default stable-x86_64-pc-windows-msvc
+   rustc --version    # проверка
+   ```
+   Если тулчейн уже стоял: `rustup update`.
 2. **Visual Studio Build Tools** с компонентом «Разработка классических приложений на C++».
    Обычно ставится вместе с Rust: без него не работает даже `cargo build` для hello world.
 3. **CMake** — нужен, чтобы собрать кодек Opus (это C-библиотека):
@@ -109,6 +116,23 @@ New-NetFirewallRule -DisplayName "voice_with_friends" -Direction Inbound -Protoc
 # в другом окне:
 .\vwf-client connect 127.0.0.1 --name Я
 ```
+
+### Если клиент пишет «сервер не отвечает»
+
+1. Убедитесь, что `vwf-server` запущен **в отдельном окне** и не закрылся с ошибкой.
+   Окно сервера должно оставаться открытым всё время разговора.
+2. Проверьте, что сервер слушает порт:
+   ```powershell
+   netstat -ano -p udp | findstr 47777
+   ```
+   Пустой вывод означает, что сервер не запущен или запущен на другом порту.
+3. Запустите сервер и клиент с подробным журналом. Журнал покажет,
+   доходят ли пакеты до сервера:
+   ```powershell
+   set RUST_LOG=debug
+   .\vwf-server --echo
+   ```
+   (в PowerShell вместо `set` используйте `$env:RUST_LOG="debug"`)
 
 ### Подключение друзей
 
