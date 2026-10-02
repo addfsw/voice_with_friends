@@ -8,7 +8,14 @@
 
 ## Что понадобится (Windows 11)
 
-1. **Rust** (у вас уже есть). Обновите: `rustup update`. Нужна версия 1.88 или новее.
+1. **Rust** версии 1.88 или новее. Если `cargo` пишет *«rustup could not choose
+   a version of cargo to run… no default is configured»*, значит rustup установлен,
+   но ни один тулчейн не выбран. Установите и выберите стабильный:
+   ```powershell
+   rustup default stable-x86_64-pc-windows-msvc
+   rustc --version    # проверка
+   ```
+   Если тулчейн уже стоял: `rustup update`.
 2. **Visual Studio Build Tools** с компонентом «Разработка классических приложений на C++».
    Обычно ставится вместе с Rust: без него не работает даже `cargo build` для hello world.
 3. **CMake** — нужен, чтобы собрать кодек Opus (это C-библиотека):
