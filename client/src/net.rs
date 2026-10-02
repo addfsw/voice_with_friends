@@ -167,13 +167,18 @@ pub async fn connect_with_token(
     connect_with(server, name, admin_token, Trust::Any).await
 }
 
-/// Подключение с проверкой сертификата сервера.
+/// Подключение с проверкой сертификата сервера. Вместо адреса можно передать
+/// код приглашения (`poi-...`) — тогда подключение идёт через пробивку NAT.
 pub async fn connect_with(
     server: &str,
     name: &str,
     admin_token: Option<&str>,
     trust: Trust<'_>,
 ) -> anyhow::Result<Session> {
+    if vwf_nat::invite::looks_like_invite(server) {
+        let mailbox = vwf_nat::mailbox::Mailbox::from_env()?;
+        return connect_invite(server, name, admin_token, &mailbox).await;
+    }
     let addr = resolve(server).await?;
     let bind: SocketAddr =
         if addr.is_ipv6() { "[::]:0".parse().unwrap() } else { "0.0.0.0:0".parse().unwrap() };
@@ -193,6 +198,75 @@ pub async fn connect_with(
     })?
     .with_context(|| format!("не удалось подключиться к {addr}"))?;
 
+    handshake(endpoint, conn, addr, name, admin_token, trust).await
+}
+
+/// Подключение по коду приглашения: встреча через почтовый ящик, пробивка
+/// NAT, затем QUIC сразу на все известные адреса хоста — кто первый ответит.
+/// Сертификат сверяется с отпечатком из кода: подменить сервер нельзя даже
+/// при первом подключении.
+pub async fn connect_invite(
+    code: &str,
+    name: &str,
+    admin_token: Option<&str>,
+    mailbox: &vwf_nat::mailbox::Mailbox,
+) -> anyhow::Result<Session> {
+    let invite = vwf_nat::invite::Invite::decode(code)?;
+    let socket = vwf_nat::socket::NatSocket::bind("0.0.0.0:0".parse().unwrap())?;
+    let endpoint = socket.endpoint(None)?;
+    let found =
+        vwf_nat::rendezvous::find_host(&socket, mailbox, &invite.topic(), Duration::from_secs(20))
+            .await?;
+
+    let config = client_config()?;
+    let mut attempts = tokio::task::JoinSet::new();
+    for addr in found.candidates.iter().copied() {
+        let endpoint = endpoint.clone();
+        let config = config.clone();
+        attempts.spawn(async move {
+            let attempt = async {
+                let connecting = endpoint.connect_with(config, addr, SERVER_NAME)?;
+                let conn = tokio::time::timeout(Duration::from_secs(10), connecting)
+                    .await
+                    .context("нет ответа")??;
+                anyhow::Ok(conn)
+            };
+            (addr, attempt.await)
+        });
+    }
+    let mut failures = Vec::new();
+    let (conn, addr) = loop {
+        match attempts.join_next().await {
+            Some(Ok((addr, Ok(conn)))) => break (conn, addr),
+            Some(Ok((addr, Err(e)))) => failures.push(format!("{addr}: {e:#}")),
+            Some(Err(_)) => {}
+            None if found.me.symmetric => bail!(
+                "не удалось пробить NAT: ваш роутер или оператор выдаёт для каждого \
+                 собеседника новый внешний порт («симметричный» NAT, так бывает у мобильного \
+                 интернета). Попробуйте другую сеть (например, домашний Wi-Fi) или Tailscale"
+            ),
+            None => bail!(
+                "не удалось пробить NAT до хоста ({}). Похоже, роутер хоста или ваш \
+                 такого не позволяет — остаётся Tailscale или сервер на VPS",
+                failures.join("; ")
+            ),
+        }
+    };
+    // Остальные попытки больше не нужны.
+    attempts.abort_all();
+
+    handshake(endpoint, conn, addr, name, admin_token, Trust::Exact(&invite.fingerprint)).await
+}
+
+/// Общая часть подключения после того, как QUIC-соединение установлено.
+async fn handshake(
+    endpoint: quinn::Endpoint,
+    conn: quinn::Connection,
+    addr: SocketAddr,
+    name: &str,
+    admin_token: Option<&str>,
+    trust: Trust<'_>,
+) -> anyhow::Result<Session> {
     // Сверяем сертификат сразу после рукопожатия — до того, как отправить
     // серверу хоть что-то (имя, секрет хоста).
     let fingerprint = presented_fingerprint(&conn)?;

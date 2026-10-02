@@ -18,6 +18,7 @@ tauri-build = { version = "2", features = [] }
 vwf-client.workspace = true
 vwf-proto.workspace = true
 vwf-server.workspace = true
+vwf-nat.workspace = true
 anyhow.workspace = true
 quinn.workspace = true
 serde.workspace = true

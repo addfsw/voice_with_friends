@@ -50,6 +50,15 @@ pub struct Server {
 
 impl Server {
     pub fn bind(config: Config) -> anyhow::Result<Self> {
+        Self::bind_with_socket(config, None)
+    }
+
+    /// То же, но поверх готового сокета (`config.bind` тогда не используется).
+    /// Так сервер работает на сокете с пробивкой NAT (см. `vwf-nat`).
+    pub fn bind_with_socket(
+        config: Config,
+        socket: Option<Arc<dyn quinn::AsyncUdpSocket>>,
+    ) -> anyhow::Result<Self> {
         let (cert, key) = match &config.data_dir {
             Some(dir) => load_or_create_cert(dir)?,
             None => generate_cert()?,
@@ -68,8 +77,16 @@ impl Server {
             quinn::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(tls)?));
         server_config.transport_config(Arc::new(transport_config()));
 
-        let endpoint = quinn::Endpoint::server(server_config, config.bind)
-            .with_context(|| format!("не удалось открыть UDP-порт {}", config.bind))?;
+        let endpoint = match socket {
+            Some(socket) => quinn::Endpoint::new_with_abstract_socket(
+                quinn::EndpointConfig::default(),
+                Some(server_config),
+                socket,
+                Arc::new(quinn::TokioRuntime),
+            )?,
+            None => quinn::Endpoint::server(server_config, config.bind)
+                .with_context(|| format!("не удалось открыть UDP-порт {}", config.bind))?,
+        };
 
         // Без поиска сервер прекрасно работает, поэтому ошибку здесь не считаем
         // фатальной: например, на одном компьютере запущены два сервера.

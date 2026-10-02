@@ -18,8 +18,8 @@
 
       <form id="connect-form" class="card" autocomplete="off">
         <label class="field">
-          <span>Сервер</span>
-          <input id="server" placeholder="192.168.1.10 или 100.x.y.z" required spellcheck="false" />
+          <span>Сервер или код приглашения</span>
+          <input id="server" placeholder="192.168.1.10, 100.x.y.z или poi-…" required spellcheck="false" />
         </label>
 
         <div class="lan">
@@ -96,7 +96,7 @@
         <summary>Вы — сервер <span class="subtle">· адреса для друзей</span></summary>
         <p class="subtle small-text">
           Друзья из вашей локальной сети увидят комнату в списке сами.
-          Остальным (например, через Tailscale) скажите адрес:
+          Остальным — код приглашения (галочка ниже) или адрес Tailscale:
         </p>
         <ul id="host-addresses" class="host-addresses"></ul>
         <p class="subtle small-text">
@@ -107,6 +107,20 @@
           <input type="checkbox" id="echo" />
           <span>Эхо: каждый слышит себя (проверка связи)</span>
         </label>
+        <label class="check" title="Друзья смогут подключиться по коду приглашения без Tailscale и белого IP">
+          <input type="checkbox" id="internet" />
+          <span>Доступ через интернет по коду приглашения</span>
+        </label>
+        <div id="internet-info" class="internet-info" hidden>
+          <p id="internet-state" class="subtle small-text"></p>
+          <div class="invite-row">
+            <code id="invite-code"></code>
+            <button type="button" id="invite-copy" class="link">копировать</button>
+          </div>
+          <p class="subtle small-text">
+            Друг вставляет этот код в поле «Сервер». Код постоянный: отправьте его один раз.
+          </p>
+        </div>
         <p class="subtle small-text">Закроете комнату или программу — все отключатся.</p>
       </details>
 

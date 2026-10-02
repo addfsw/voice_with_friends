@@ -23,7 +23,7 @@ use vwf_client::pipeline::{TxMode, TxState};
 use vwf_client::{audio, discovery};
 use vwf_proto::{PeerId, PeerInfo};
 
-use crate::host::{HostInfo, HostedServer};
+use crate::host::{HostInfo, HostedServer, InternetStatus};
 
 struct AppState {
     /// Настройки передачи и индикаторы микрофона. Живут всё время работы
@@ -267,6 +267,20 @@ async fn set_echo(state: State<'_, AppState>, enabled: bool) -> CmdResult<()> {
     Ok(())
 }
 
+/// Только для своей комнаты: доступ через интернет (пробивка NAT, код приглашения).
+#[tauri::command]
+async fn set_internet(state: State<'_, AppState>, enabled: bool) -> CmdResult<InternetStatus> {
+    let host = state.host.lock().await;
+    let server = host.as_ref().ok_or("комната не создана")?;
+    server.set_internet(enabled).map_err(|e| format!("{e:#}"))?;
+    Ok(server.internet_status())
+}
+
+#[tauri::command]
+async fn internet_status(state: State<'_, AppState>) -> CmdResult<Option<InternetStatus>> {
+    Ok(state.host.lock().await.as_ref().map(HostedServer::internet_status))
+}
+
 /// Останавливает свой сервер; все участники отключаются.
 #[tauri::command]
 async fn stop_server(state: State<'_, AppState>) -> CmdResult<()> {
@@ -462,6 +476,8 @@ fn main() {
             start_server,
             stop_server,
             set_echo,
+            set_internet,
+            internet_status,
             set_server_mute,
             kick,
             status,

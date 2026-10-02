@@ -5,13 +5,17 @@
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::bail;
 use serde::Serialize;
 use tauri::async_runtime::JoinHandle;
+use vwf_nat::invite::{Invite, load_or_create_room};
+use vwf_nat::mailbox::Mailbox;
+use vwf_nat::rendezvous::HostRendezvous;
+use vwf_nat::socket::NatSocket;
 use vwf_proto::{DEFAULT_PORT, DISCOVERY_PORT};
 
 #[derive(Serialize, Clone)]
@@ -33,8 +37,26 @@ pub struct HostInfo {
     pub code: String,
 }
 
+/// Состояние доступа через интернет (пробивка NAT) для интерфейса.
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct InternetStatus {
+    pub enabled: bool,
+    /// Код приглашения для друзей.
+    pub invite: String,
+    /// Внешний адрес, если уже известен.
+    pub public: Option<String>,
+    pub symmetric: bool,
+    pub error: Option<String>,
+    pub guests: u32,
+}
+
 pub struct HostedServer {
     endpoint: quinn::Endpoint,
+    /// Общий сокет QUIC и пробивки NAT.
+    socket: Arc<NatSocket>,
+    invite: Invite,
+    rendezvous: Mutex<Option<HostRendezvous>>,
     task: JoinHandle<()>,
     /// Секрет хоста: с ним наше собственное подключение получает права
     /// заглушать и выгонять. Каждый запуск комнаты — новый.
@@ -47,6 +69,7 @@ pub struct HostedServer {
 impl HostedServer {
     /// `data_dir` — где хранить сертификат сервера, чтобы он не менялся между запусками.
     pub async fn start(name: String, data_dir: PathBuf) -> anyhow::Result<Self> {
+        let room_file = data_dir.join("room_id.txt");
         let admin_token = random_token();
         let config = || vwf_server::Config {
             bind: SocketAddr::from(([0, 0, 0, 0], DEFAULT_PORT)),
@@ -60,9 +83,14 @@ impl HostedServer {
         // Если комнату только что закрыли, порт освобождается не мгновенно
         // (десятки миллисекунд), поэтому немного подождём.
         let started = Instant::now();
-        let server = loop {
-            match vwf_server::Server::bind(config()) {
-                Ok(server) => break server,
+        let bind = || {
+            let socket = NatSocket::bind(SocketAddr::from(([0, 0, 0, 0], DEFAULT_PORT)))?;
+            let server = vwf_server::Server::bind_with_socket(config(), Some(socket.clone() as _))?;
+            anyhow::Ok((server, socket))
+        };
+        let (server, socket) = loop {
+            match bind() {
+                Ok(bound) => break bound,
                 Err(e) if is_addr_in_use(&e) => {
                     if started.elapsed() > Duration::from_secs(1) {
                         bail!(
@@ -78,6 +106,7 @@ impl HostedServer {
 
         let port = server.local_addr()?.port();
         let fingerprint = server.fingerprint().to_string();
+        let invite = Invite::new(load_or_create_room(&room_file)?, &fingerprint);
         let code = vwf_proto::short_fingerprint(&fingerprint);
         let endpoint = server.endpoint().clone();
         let echo = server.echo_switch();
@@ -95,6 +124,9 @@ impl HostedServer {
             .collect();
         Ok(Self {
             endpoint,
+            socket,
+            invite,
+            rendezvous: Mutex::new(None),
             task,
             admin_token,
             fingerprint,
@@ -110,6 +142,35 @@ impl HostedServer {
             .then(|| (self.admin_token.clone(), self.fingerprint.clone()))
     }
 
+    /// Включает или выключает доступ через интернет. Пока он включён, программа
+    /// обращается к STUN-серверам и к почтовому ящику (ntfy.sh).
+    pub fn set_internet(&self, enabled: bool) -> anyhow::Result<()> {
+        let mut rendezvous = self.rendezvous.lock().unwrap();
+        if enabled && rendezvous.is_none() {
+            let mailbox = Mailbox::from_env()?;
+            *rendezvous =
+                Some(HostRendezvous::start(self.socket.clone(), mailbox, self.invite.topic()));
+        } else if !enabled {
+            *rendezvous = None;
+        }
+        Ok(())
+    }
+
+    pub fn internet_status(&self) -> InternetStatus {
+        let rendezvous = self.rendezvous.lock().unwrap();
+        let mut status =
+            InternetStatus { invite: self.invite.encode(), ..InternetStatus::default() };
+        if let Some(rendezvous) = rendezvous.as_ref() {
+            let host = rendezvous.status();
+            status.enabled = true;
+            status.public = host.public.map(|a| a.to_string());
+            status.symmetric = host.symmetric;
+            status.error = host.error;
+            status.guests = host.guests;
+        }
+        status
+    }
+
     /// Эхо: сервер возвращает каждому его собственный голос.
     pub fn set_echo(&self, enabled: bool) {
         self.echo.store(enabled, Ordering::Relaxed);
@@ -122,6 +183,9 @@ impl HostedServer {
 
     /// Останавливает сервер: все участники получат «сервер остановлен».
     pub async fn stop(self) {
+        // Сначала перестаём отвечать гостям, потом закрываем сервер.
+        self.rendezvous.lock().unwrap().take();
+        drop(self.socket);
         self.endpoint.close(0u32.into(), vwf_proto::SERVER_STOPPED_REASON.as_bytes());
         let _ = tokio::time::timeout(Duration::from_secs(1), self.endpoint.wait_idle()).await;
         drop(self.endpoint);

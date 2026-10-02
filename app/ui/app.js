@@ -175,7 +175,7 @@ function renderLan(servers) {
   }
   $("lan-status").textContent = servers.length
     ? ""
-    : "Не найдено. Через интернет (Tailscale) адрес вводится вручную.";
+    : "Не найдено. Друзья через интернет вставляют сюда код приглашения от хоста.";
   $("lan-status").hidden = servers.length > 0;
 }
 
@@ -215,7 +215,8 @@ $("connect-form").addEventListener("submit", async (event) => {
   const button = $("connect-btn");
   const error = $("connect-error");
   button.disabled = true;
-  button.textContent = "Подключение…";
+  // По коду приглашения подключение дольше: встреча через ящик и пробивка NAT.
+  button.textContent = isInvite(server) ? "Связываюсь с хостом через интернет…" : "Подключение…";
   error.hidden = true;
   $("cert-warning").hidden = true;
   try {
@@ -233,6 +234,10 @@ $("connect-form").addEventListener("submit", async (event) => {
     button.textContent = "Подключиться";
   }
 });
+
+function isInvite(text) {
+  return text.trim().startsWith("poi-");
+}
 
 // Ошибки команд приходят строкой, а ошибки подключения — объектом.
 function errorText(e) {
@@ -305,7 +310,7 @@ $("host-btn").addEventListener("click", async () => {
 function enterRoom(server, name, joined) {
   call.me = joined.me;
   call.peers = new Map(joined.peers.map((p) => [p.id, p]));
-  $("server-label").textContent = server;
+  $("server-label").textContent = isInvite(server) ? "Через интернет по коду приглашения" : server;
   $("server-code").textContent = `код ${joined.serverCode}`;
   renderHostCard();
   disarmLeave();
@@ -319,6 +324,7 @@ function enterRoom(server, name, joined) {
 
 function leaveRoom(reason) {
   call.hosting = null;
+  stopInternetPolling();
   clearInterval(call.statusTimer);
   call.statusTimer = null;
   call.peers.clear();
@@ -361,6 +367,10 @@ function renderHostCard() {
   card.open = store.get("hostCardOpen", false);
   $("host-code").textContent = call.hosting.code;
   $("echo").checked = false; // новая комната всегда без эха
+  const internet = store.get("internet", false);
+  $("internet").checked = internet;
+  if (internet) setInternet(true);
+  else renderInternet(null);
   const list = $("host-addresses");
   list.innerHTML = "";
   for (const { interface: iface, address } of call.hosting.addresses) {
@@ -668,6 +678,69 @@ async function refreshStatus() {
 // ---------------------------------------------------------------------------
 
 $("host-card").addEventListener("toggle", () => store.set("hostCardOpen", $("host-card").open));
+
+// ---------------------------------------------------------------------------
+// Доступ через интернет (пробивка NAT)
+// ---------------------------------------------------------------------------
+
+let internetTimer = null;
+
+async function setInternet(enabled) {
+  try {
+    renderInternet(await invoke("set_internet", { enabled }));
+  } catch (e) {
+    $("internet").checked = false;
+    toast(errorText(e));
+    renderInternet(null);
+    return;
+  }
+  stopInternetPolling();
+  if (enabled) internetTimer = setInterval(refreshInternet, 2000);
+}
+
+function stopInternetPolling() {
+  clearInterval(internetTimer);
+  internetTimer = null;
+}
+
+async function refreshInternet() {
+  try {
+    renderInternet(await invoke("internet_status"));
+  } catch {
+    // Комнату закрыли — опрос остановит leaveRoom.
+  }
+}
+
+function renderInternet(status) {
+  const info = $("internet-info");
+  info.hidden = !status?.enabled;
+  if (!status?.enabled) return;
+  $("invite-code").textContent = status.invite;
+  const state = $("internet-state");
+  state.classList.remove("warning-text");
+  if (status.error) {
+    state.textContent = `Не получается: ${status.error}`;
+    state.classList.add("warning-text");
+  } else if (!status.public) {
+    state.textContent = "Определяю внешний адрес…";
+  } else if (status.symmetric) {
+    state.textContent =
+      `Внешний адрес ${status.public}, но ваш роутер выдаёт разным собеседникам разные порты ` +
+      "(«симметричный» NAT). Друзья, скорее всего, не подключатся — нужен Tailscale.";
+    state.classList.add("warning-text");
+  } else {
+    const guests = status.guests ? ` · подключений по коду: ${status.guests}` : "";
+    state.textContent = `Готово. Внешний адрес ${status.public}${guests}`;
+  }
+}
+
+$("internet").addEventListener("change", () => {
+  const enabled = $("internet").checked;
+  store.set("internet", enabled);
+  setInternet(enabled);
+});
+
+$("invite-copy").addEventListener("click", () => copyText($("invite-code").textContent));
 
 $("echo").addEventListener("change", () => {
   invoke("set_echo", { enabled: $("echo").checked });
