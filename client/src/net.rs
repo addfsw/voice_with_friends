@@ -369,7 +369,15 @@ async fn handshake(
 
     let reply = tokio::time::timeout(Duration::from_secs(10), vwf_proto::read_msg(&mut recv))
         .await
-        .context("сервер не ответил на приветствие")??;
+        .context("сервер не ответил на приветствие")?
+        // Не разобрали ответ — у сервера почти наверняка другая версия
+        // программы (новее или старее, чем у нас).
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "у сервера другая версия программы: обновите «Поигрулькиных» у всех \
+                 до одной версии ({e})"
+            )
+        })?;
     match reply {
         Some(ServerMsg::Welcome { you, peers, chat }) => {
             let (control_tx, mut control_rx) = tokio::sync::mpsc::unbounded_channel();

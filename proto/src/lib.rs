@@ -152,7 +152,8 @@ pub fn short_fingerprint(fingerprint: &str) -> String {
     hex.chunks(4).map(|c| c.iter().collect::<String>()).collect::<Vec<_>>().join("-")
 }
 
-/// Сообщения клиент → сервер.
+/// Сообщения клиент → сервер. `Hello` всегда первый (номер 0), новые
+/// варианты — только в конец (см. [`ServerMsg`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ClientMsg {
     /// Первое сообщение после подключения. `admin_token` даёт права хоста,
@@ -188,6 +189,11 @@ pub struct ChatMessage {
 }
 
 /// Сообщения сервер → клиент.
+///
+/// postcard кодирует вариант его номером по порядку. `Welcome` (0) и
+/// `Rejected` (4) понимают все версии программы — так клиент любой версии
+/// узнаёт «обновите программу», а не получает ошибку разбора. Поэтому новые
+/// варианты добавляются только в конец, а эти два не двигаются.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ServerMsg {
     /// Ответ на `Hello`: сведения о нас самих, кто уже в комнате и последние
@@ -203,6 +209,11 @@ pub enum ServerMsg {
     },
     /// У участника (возможно, у нас самих) изменился статус.
     PeerUpdated(PeerInfo),
+    /// Сервер отказал в подключении (после этого соединение закрывается).
+    /// Должен оставаться пятым (номер 4), см. выше.
+    Rejected {
+        reason: String,
+    },
     /// Новое сообщение в чате (и наше собственное тоже).
     Chat(ChatMessage),
     /// Тому, кто показывает экран: пришли опорный кадр (новый зритель или
@@ -211,10 +222,6 @@ pub enum ServerMsg {
     /// Тому, кто показывает экран: сколько человек сейчас смотрят.
     Viewers {
         count: u32,
-    },
-    /// Сервер отказал в подключении (после этого соединение закрывается).
-    Rejected {
-        reason: String,
     },
 }
 
@@ -328,6 +335,21 @@ impl VideoHeader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Номера `Hello`, `Welcome` и `Rejected` нельзя менять: по ним разные
+    /// версии программы понимают друг друга при подключении.
+    #[test]
+    fn handshake_messages_keep_their_numbers() {
+        let hello = ClientMsg::Hello { protocol: 1, name: String::new(), admin_token: None };
+        assert_eq!(postcard::to_allocvec(&hello).unwrap()[0], 0);
+        let rejected = ServerMsg::Rejected { reason: "обновите программу".into() };
+        let bytes = postcard::to_allocvec(&rejected).unwrap();
+        assert_eq!(bytes[0], 4);
+        // Именно так отказ закодирован в версиях 1–3 протокола.
+        let mut v3 = vec![4, "обновите программу".len() as u8];
+        v3.extend_from_slice("обновите программу".as_bytes());
+        assert_eq!(postcard::from_bytes::<ServerMsg>(&v3).unwrap(), rejected);
+    }
 
     #[test]
     fn video_header_roundtrip() {
