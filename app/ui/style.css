@@ -99,6 +99,8 @@ body {
   height: 100%;
   padding: 14px 16px 16px;
   overflow-y: auto;
+  /* Подсказка или меню, вылезшие за край, не должны давать прокрутку вбок. */
+  overflow-x: hidden;
 }
 
 .card {
