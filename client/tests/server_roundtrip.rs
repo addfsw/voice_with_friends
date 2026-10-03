@@ -358,3 +358,90 @@ async fn chat_reaches_everyone_and_newcomers_get_history() {
     assert_eq!(carol.chat[0], to_bob);
     assert!(carol.chat.windows(2).all(|w| w[0].id < w[1].id));
 }
+
+/// Синтетический «экран» для теста: полоски, которые сдвигаются каждый кадр.
+struct MovingStripes(u32);
+
+impl vwf_client::screen::FrameSource for MovingStripes {
+    fn frame(
+        &mut self,
+        deadline: std::time::Instant,
+    ) -> anyhow::Result<Option<vwf_client::screen::Image>> {
+        std::thread::sleep(deadline.saturating_duration_since(std::time::Instant::now()));
+        self.0 += 4;
+        let (w, h) = (320u32, 240u32);
+        let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+        for y in 0..h {
+            for x in 0..w {
+                let v = (((x + self.0) / 16 + y / 16) % 2 * 200 + 30) as u8;
+                rgba.extend_from_slice(&[v, v / 2, 255 - v, 255]);
+            }
+        }
+        Ok(Some(vwf_client::screen::Image { width: w, height: h, rgba }))
+    }
+}
+
+#[tokio::test]
+async fn screen_share_reaches_only_watchers() {
+    use vwf_client::screen::{ShareSettings, Sharer, Viewer};
+    use vwf_proto::ClientMsg;
+
+    let addr = start_server(false).await.to_string();
+    let mut alice = vwf_client::net::connect(&addr, "Алиса").await.unwrap();
+    let mut bob = vwf_client::net::connect(&addr, "Боб").await.unwrap();
+    let carol = vwf_client::net::connect(&addr, "Кэрол").await.unwrap();
+    let alice_id = alice.me.id;
+
+    // Алиса показывает экран. Пока никто не смотрит, кадров нет.
+    alice.control().send(ClientMsg::SetSharing { sharing: true });
+    let video = alice.video_sender();
+    let sharer = Sharer::start_with(
+        || Ok(Box::new(MovingStripes(0))),
+        ShareSettings { max_height: 0, fps: 30 },
+        move |frame| video.send(frame),
+        |e| panic!("демонстрация прервалась: {e}"),
+    )
+    .unwrap();
+    expect_event(&mut bob, |e| matches!(e, ServerMsg::PeerUpdated(p) if p.sharing)).await;
+
+    // Боб начинает смотреть: Алиса узнаёт о зрителе и что нужен опорный кадр.
+    bob.control().send(ClientMsg::Watch { id: alice_id, watch: true });
+    expect_event(&mut alice, |e| matches!(e, ServerMsg::Viewers { count: 1 })).await;
+    sharer.set_viewers(1);
+    sharer.request_keyframe();
+
+    let (frames_tx, mut frames) = tokio::sync::mpsc::unbounded_channel();
+    let viewer = Viewer::start(move |f| drop(frames_tx.send(f)), |_| {}).unwrap();
+    let receiver = bob.video_receiver();
+    let decoded = timeout(T, async {
+        let mut decoded = Vec::new();
+        while decoded.len() < 5 {
+            tokio::select! {
+                Some((from, header, data)) = receiver.recv() => {
+                    assert_eq!(from, alice_id);
+                    viewer.push(from, header, data);
+                }
+                Some(frame) = frames.recv() => decoded.push(frame),
+            }
+        }
+        decoded
+    })
+    .await
+    .expect("кадры не дошли");
+    assert!(decoded.iter().all(|f| (f.from, f.width, f.height) == (alice_id, 320, 240)));
+
+    // Кэрол не смотрит — ей кадры не идут.
+    let carol_video = carol.video_receiver();
+    assert!(timeout(Duration::from_millis(300), carol_video.recv()).await.is_err());
+
+    // Боб перестал смотреть — зрителей ноль; Алиса закончила — все это видят.
+    bob.control().send(ClientMsg::Watch { id: alice_id, watch: false });
+    expect_event(&mut alice, |e| matches!(e, ServerMsg::Viewers { count: 0 })).await;
+    drop(sharer);
+    alice.control().send(ClientMsg::SetSharing { sharing: false });
+    expect_event(
+        &mut bob,
+        |e| matches!(e, ServerMsg::PeerUpdated(p) if p.id == alice_id && !p.sharing),
+    )
+    .await;
+}

@@ -1,7 +1,7 @@
 //! Всё вместе: звуковые устройства, кодер, микшер и соединение с сервером.
 //! Этим пользуются и консольный клиент, и графический.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -14,6 +14,7 @@ use crate::net;
 use ringbuf::{HeapCons, HeapProd};
 
 use crate::pipeline::{Mixer, MixerOutput, Transmitter, TxSettings, TxState};
+use crate::screen::{ShareSettings, Sharer, Viewer, ViewerFrame};
 
 /// Параметры звука.
 #[derive(Clone, Debug)]
@@ -200,6 +201,12 @@ pub enum CallEvent {
     PeerUpdated(PeerInfo),
     /// Новое сообщение в чате (в том числе наше собственное, вернувшееся от сервера).
     Chat(ChatMessage),
+    /// Новый кадр экрана, который мы смотрим.
+    ScreenFrame(ViewerFrame),
+    /// Сколько человек смотрит наш экран.
+    Viewers(u32),
+    /// Наша демонстрация прервалась сама (например, закрыли показываемое окно).
+    ShareStopped(String),
     /// Соединение закрылось не по нашей инициативе.
     Ended {
         reason: String,
@@ -231,7 +238,16 @@ pub struct Call {
     closer: net::Closer,
     hanging_up: Arc<AtomicBool>,
     tasks: Vec<tokio::task::JoinHandle<()>>,
+    on_event: OnEvent,
+    video: net::VideoSender,
+    /// Наша демонстрация экрана, если идёт.
+    sharer: Arc<Mutex<Option<Sharer>>>,
+    viewer: Arc<Viewer>,
+    /// Чьи экраны мы смотрим.
+    watching: Arc<Mutex<HashSet<PeerId>>>,
 }
+
+type OnEvent = Arc<dyn Fn(CallEvent) + Send + Sync>;
 
 impl Call {
     /// Подключается к серверу и запускает звук. События комнаты передаются в `on_event`.
@@ -246,6 +262,7 @@ impl Call {
         tx_state: Arc<TxState>,
         on_event: impl Fn(CallEvent) + Send + Sync + 'static,
     ) -> anyhow::Result<Self> {
+        let on_event: OnEvent = Arc::new(on_event);
         let mut session = net::connect_with(server, name, admin_token, trust).await?;
         let my_id = session.me.id;
         let fingerprint = session.fingerprint.clone();
@@ -270,7 +287,45 @@ impl Call {
         let control = session.control();
         let closer = session.closer();
         let hanging_up = Arc::new(AtomicBool::new(false));
+
+        // Демонстрация экрана: свои кадры — в сеть, чужие — в декодер.
+        let video = session.video_sender();
+        let sharer: Arc<Mutex<Option<Sharer>>> = Arc::default();
+        let watching: Arc<Mutex<HashSet<PeerId>>> = Arc::default();
+        let viewer = Arc::new(Viewer::start(
+            {
+                let on_event = on_event.clone();
+                move |frame| on_event(CallEvent::ScreenFrame(frame))
+            },
+            {
+                let control = control.clone();
+                move |id| control.send(ClientMsg::RequestKeyframe { id })
+            },
+        )?);
+        let video_task = {
+            let receiver = session.video_receiver();
+            let viewer = viewer.clone();
+            let watching = watching.clone();
+            tokio::spawn(async move {
+                while let Some((from, header, data)) = receiver.recv().await {
+                    if watching.lock().unwrap().contains(&from) {
+                        // Не успел — выброшен; декодер заметит пропуск и сам
+                        // попросит опорный кадр.
+                        viewer.push(from, header, data);
+                    }
+                }
+            })
+        };
         let control_task = {
+            let on_event = on_event.clone();
+            let sharer = sharer.clone();
+            let viewer = viewer.clone();
+            let watching = watching.clone();
+            let stop_watching = move |id: PeerId| {
+                if watching.lock().unwrap().remove(&id) {
+                    viewer.forget(id);
+                }
+            };
             let mixer = audio.mixer.clone();
             let room = room.clone();
             let hanging_up = hanging_up.clone();
@@ -286,6 +341,7 @@ impl Call {
                         Ok(Some(ServerMsg::PeerLeft { id })) => {
                             room.lock().unwrap().peers.remove(&id);
                             mixer.remove_speaker(id);
+                            stop_watching(id);
                             mixer.play_cue(Cue::PeerLeft);
                             on_event(CallEvent::PeerLeft(id));
                         }
@@ -302,7 +358,21 @@ impl Call {
                             }
                             on_event(CallEvent::Chat(message));
                         }
+                        Ok(Some(ServerMsg::KeyframeNeeded)) => {
+                            if let Some(sharer) = sharer.lock().unwrap().as_ref() {
+                                sharer.request_keyframe();
+                            }
+                        }
+                        Ok(Some(ServerMsg::Viewers { count })) => {
+                            if let Some(sharer) = sharer.lock().unwrap().as_ref() {
+                                sharer.set_viewers(count);
+                            }
+                            on_event(CallEvent::Viewers(count));
+                        }
                         Ok(Some(ServerMsg::PeerUpdated(peer))) => {
+                            if !peer.sharing {
+                                stop_watching(peer.id);
+                            }
                             {
                                 let mut room = room.lock().unwrap();
                                 if peer.id == my_id {
@@ -336,7 +406,12 @@ impl Call {
             control,
             closer,
             hanging_up,
-            tasks: vec![voice_task, control_task],
+            tasks: vec![voice_task, control_task, video_task],
+            on_event,
+            video,
+            sharer,
+            viewer,
+            watching,
         };
         call.sync_status();
         call.audio.mixer.play_cue(Cue::Connected);
@@ -402,8 +477,60 @@ impl Call {
         self.control.send(ClientMsg::Kick { id });
     }
 
+    /// Начинает показывать экран: `source` — идентификатор из
+    /// [`crate::screen::sources`]. Предыдущая демонстрация, если была, заканчивается.
+    pub fn start_share(&self, source: &str, settings: ShareSettings) -> anyhow::Result<()> {
+        self.stop_share();
+        let video = self.video.clone();
+        let control = self.control.clone();
+        let on_event = self.on_event.clone();
+        let sharer = Sharer::start(
+            source,
+            settings,
+            move |frame| video.send(frame),
+            move |reason| {
+                control.send(ClientMsg::SetSharing { sharing: false });
+                on_event(CallEvent::ShareStopped(reason));
+            },
+        )?;
+        *self.sharer.lock().unwrap() = Some(sharer);
+        self.control.send(ClientMsg::SetSharing { sharing: true });
+        Ok(())
+    }
+
+    /// Заканчивает показ экрана.
+    pub fn stop_share(&self) {
+        let sharer = self.sharer.lock().unwrap().take();
+        if let Some(sharer) = sharer {
+            drop(sharer);
+            self.control.send(ClientMsg::SetSharing { sharing: false });
+        }
+    }
+
+    /// Идёт ли наша демонстрация.
+    pub fn sharing(&self) -> bool {
+        self.sharer.lock().unwrap().is_some()
+    }
+
+    /// Смотреть экран участника `id` (или перестать). Кадры приходят
+    /// событиями [`CallEvent::ScreenFrame`].
+    pub fn watch(&self, id: PeerId, watch: bool) {
+        let changed = if watch {
+            self.watching.lock().unwrap().insert(id)
+        } else {
+            self.watching.lock().unwrap().remove(&id)
+        };
+        if changed {
+            if !watch {
+                self.viewer.forget(id);
+            }
+            self.control.send(ClientMsg::Watch { id, watch });
+        }
+    }
+
     /// Завершает звонок.
     pub async fn hang_up(self) {
+        self.sharer.lock().unwrap().take();
         self.hanging_up.store(true, Ordering::Relaxed);
         self.closer.close().await;
         for task in &self.tasks {

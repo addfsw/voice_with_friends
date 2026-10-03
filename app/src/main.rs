@@ -8,6 +8,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod host;
+mod screen;
 mod tray;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -97,6 +98,7 @@ struct Peer {
     muted: bool,
     deafened: bool,
     server_muted: bool,
+    sharing: bool,
 }
 
 impl From<PeerInfo> for Peer {
@@ -108,6 +110,7 @@ impl From<PeerInfo> for Peer {
             muted: p.muted,
             deafened: p.deafened,
             server_muted: p.server_muted,
+            sharing: p.sharing,
         }
     }
 }
@@ -157,6 +160,16 @@ struct PeerLeft {
 
 #[derive(Serialize, Clone)]
 struct CallEnded {
+    reason: String,
+}
+
+#[derive(Serialize, Clone)]
+struct ShareViewers {
+    count: u32,
+}
+
+#[derive(Serialize, Clone)]
+struct ShareStopped {
     reason: String,
 }
 
@@ -271,14 +284,32 @@ async fn start_call(
             }
             let _ = match event {
                 CallEvent::PeerJoined(p) => events.emit("peer-joined", Peer::from(p)),
-                CallEvent::PeerLeft(id) => events.emit("peer-left", PeerLeft { id }),
-                CallEvent::PeerUpdated(p) => events.emit("peer-updated", Peer::from(p)),
+                CallEvent::PeerLeft(id) => {
+                    screen::close_viewer(&events, id);
+                    events.emit("peer-left", PeerLeft { id })
+                }
+                CallEvent::PeerUpdated(p) => {
+                    if !p.sharing {
+                        screen::close_viewer(&events, p.id);
+                    }
+                    events.emit("peer-updated", Peer::from(p))
+                }
                 CallEvent::Chat(m) => events.emit("chat-message", ChatMessage::from(m)),
+                CallEvent::ScreenFrame(frame) => {
+                    screen::on_frame(&events, frame);
+                    Ok(())
+                }
+                CallEvent::Viewers(count) => events.emit("share-viewers", ShareViewers { count }),
+                CallEvent::ShareStopped(reason) => {
+                    events.emit("share-stopped", ShareStopped { reason })
+                }
                 CallEvent::Ended { reason, lost: true } => {
+                    screen::close_all_viewers(&events);
                     spawn_reconnect(events.clone(), generation, reason);
                     Ok(())
                 }
                 CallEvent::Ended { reason, lost: false } => {
+                    screen::close_all_viewers(&events);
                     events.emit("call-ended", CallEnded { reason })
                 }
             };
@@ -741,6 +772,8 @@ fn main() {
             close_to_tray: AtomicBool::new(true),
             tray_ready: AtomicBool::new(false),
         })
+        .manage(screen::Frames::default())
+        .manage(screen::FrameCounter::default())
         .setup(|app| {
             // Файл с запомненными сертификатами — в папке данных программы.
             let path = app.path().app_data_dir()?.join("known_servers.txt");
@@ -772,6 +805,10 @@ fn main() {
             set_close_to_tray,
             send_chat,
             open_url,
+            screen::screen_sources,
+            screen::start_share,
+            screen::stop_share,
+            screen::open_viewer,
             discover_servers,
             set_mode,
             set_ptt_key,
@@ -784,7 +821,17 @@ fn main() {
             kick,
             status,
         ])
+        .register_uri_scheme_protocol("screen", |ctx, request| {
+            screen::protocol(ctx.app_handle(), request)
+        })
         .on_window_event(|window, event| {
+            // Окна просмотра чужого экрана закрываются как обычно.
+            if let Some(id) = screen::peer_of_window(window.label()) {
+                if let tauri::WindowEvent::Destroyed = event {
+                    screen::viewer_closed(window.app_handle(), id);
+                }
+                return;
+            }
             let tauri::WindowEvent::CloseRequested { api, .. } = event else { return };
             let app = window.app_handle();
             let state = app.state::<AppState>();

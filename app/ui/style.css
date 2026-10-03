@@ -1304,6 +1304,103 @@ button.key.listening {
   opacity: 0.6;
 }
 
+/* Демонстрация экрана */
+
+.share-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.share-btn .icon {
+  width: 17px;
+  height: 17px;
+}
+
+.share-btn.active {
+  color: #fff;
+  background: var(--accent);
+}
+
+.share-btn.active:hover {
+  background: var(--danger);
+}
+
+.share-sources {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.share-sources .section {
+  padding: 6px 2px 2px;
+  color: var(--text-3);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.source {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  text-align: left;
+  background: transparent;
+  border: 1px solid var(--border);
+}
+
+.source .icon {
+  color: var(--text-2);
+}
+
+.source .label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source.selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.watch-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.watch-btn .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.watch-btn:hover {
+  color: #fff;
+  background: var(--accent);
+}
+
+.badge.live {
+  color: var(--accent);
+}
+
 /* --- Настройки --- */
 
 .sheet-backdrop {

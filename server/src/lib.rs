@@ -5,7 +5,7 @@
 //! и Mumble, и SFU в WebRTC). Поэтому нагрузка на процессор почти нулевая,
 //! а качество звука определяется только клиентами.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -20,6 +20,7 @@ use tokio::sync::mpsc;
 use tracing::{info, warn};
 use vwf_proto::{
     Announcement, ChatMessage, ClientMsg, PROTOCOL_VERSION, PeerId, PeerInfo, ServerMsg,
+    VideoHeader,
 };
 
 const MAX_NAME_CHARS: usize = 32;
@@ -259,7 +260,23 @@ struct Peer {
     control: mpsc::UnboundedSender<ServerMsg>,
     /// Когда участник отправлял последние сообщения в чат — против флуда.
     recent_chat: VecDeque<Instant>,
+    /// Чьи экраны он смотрит.
+    watching: HashSet<PeerId>,
+    /// Чьи кадры ему сейчас нельзя слать до опорного: он пропустил кадр,
+    /// и без опорного картинка у него развалится.
+    waiting_keyframe: HashSet<PeerId>,
+    /// Очередь кадров демонстрации ему (пишет отдельная задача).
+    video: mpsc::Sender<Bytes>,
+    /// Когда у него последний раз просили опорный кадр (если он показывает экран).
+    keyframe_asked: Option<Instant>,
 }
+
+/// Сколько кадров демонстрации может ждать отправки одному зрителю. Больше —
+/// значит, его канал не успевает, и лишние кадры пропускаются до опорного.
+const VIDEO_QUEUE: usize = 6;
+
+/// Не чаще этого просить у показывающего опорный кадр (он тяжёлый).
+const KEYFRAME_INTERVAL: Duration = Duration::from_millis(500);
 
 /// Не больше стольких сообщений в чат...
 const CHAT_BURST: usize = 10;
@@ -276,6 +293,86 @@ impl Room {
             // перезапустят, новые сообщения не совпадут по номеру со старыми,
             // которые остались у клиентов на экране.
             next_message_id: random_u64() >> 16,
+        }
+    }
+
+    fn send_to(&self, id: PeerId, msg: ServerMsg) {
+        if let Some(peer) = self.peers.get(&id) {
+            let _ = peer.control.send(msg);
+        }
+    }
+
+    /// Просит показывающего `sharer` прислать опорный кадр (не слишком часто).
+    fn ask_keyframe(&mut self, sharer: PeerId) {
+        let Some(peer) = self.peers.get_mut(&sharer) else { return };
+        if peer.keyframe_asked.is_some_and(|t| t.elapsed() < KEYFRAME_INTERVAL) {
+            return;
+        }
+        peer.keyframe_asked = Some(Instant::now());
+        let _ = peer.control.send(ServerMsg::KeyframeNeeded);
+    }
+
+    /// Сообщает показывающему, сколько у него зрителей.
+    fn send_viewer_count(&self, sharer: PeerId) {
+        let count = self.peers.values().filter(|p| p.watching.contains(&sharer)).count();
+        self.send_to(sharer, ServerMsg::Viewers { count: count as u32 });
+    }
+
+    /// `viewer` начинает или перестаёт смотреть экран `sharer`.
+    fn watch(&mut self, viewer: PeerId, sharer: PeerId, watch: bool) {
+        let sharing = self.peers.get(&sharer).is_some_and(|p| p.info.sharing);
+        let Some(peer) = self.peers.get_mut(&viewer) else { return };
+        let changed = if watch && sharing {
+            // Начинать показ можно только с опорного кадра.
+            peer.waiting_keyframe.insert(sharer);
+            peer.watching.insert(sharer)
+        } else {
+            peer.waiting_keyframe.remove(&sharer);
+            peer.watching.remove(&sharer)
+        };
+        if changed {
+            if watch {
+                self.ask_keyframe(sharer);
+            }
+            self.send_viewer_count(sharer);
+        }
+    }
+
+    /// Участник перестал показывать экран (или ушёл): зрители больше не смотрят.
+    fn stop_sharing(&mut self, sharer: PeerId) {
+        for peer in self.peers.values_mut() {
+            peer.watching.remove(&sharer);
+            peer.waiting_keyframe.remove(&sharer);
+        }
+    }
+
+    /// Рассылает кадр демонстрации от `from` его зрителям. `packet` — уже
+    /// готовый поток для зрителя: `[from][заголовок][H.264]`.
+    fn forward_video(&mut self, from: PeerId, keyframe: bool, packet: Bytes) {
+        if !self.peers.get(&from).is_some_and(|p| p.info.sharing) {
+            return;
+        }
+        let mut lagging = false;
+        for peer in self.peers.values_mut() {
+            if !peer.watching.contains(&from) {
+                continue;
+            }
+            if peer.waiting_keyframe.contains(&from) && !keyframe {
+                continue;
+            }
+            match peer.video.try_send(packet.clone()) {
+                Ok(()) => {
+                    peer.waiting_keyframe.remove(&from);
+                }
+                // Зритель не успевает: пропускаем кадры до следующего опорного.
+                Err(_) => {
+                    peer.waiting_keyframe.insert(from);
+                    lagging = true;
+                }
+            }
+        }
+        if lagging {
+            self.ask_keyframe(from);
         }
     }
 
@@ -350,6 +447,21 @@ impl Room {
                 self.update(id, |p| p.server_muted = muted);
             }
             ClientMsg::Chat { text } => self.chat(from, &text),
+            ClientMsg::SetSharing { sharing } => {
+                if !sharing {
+                    self.stop_sharing(from);
+                }
+                self.update(from, |p| p.sharing = sharing);
+                if sharing {
+                    self.send_viewer_count(from);
+                }
+            }
+            ClientMsg::Watch { id, watch } => self.watch(from, id, watch),
+            ClientMsg::RequestKeyframe { id } => {
+                if self.peers.get(&from).is_some_and(|p| p.watching.contains(&id)) {
+                    self.ask_keyframe(id);
+                }
+            }
             ClientMsg::Kick { id } if from_admin && id != from => {
                 if let Some(peer) = self.peers.get(&id) {
                     info!("хост выгнал {} (id {id})", peer.info.name);
@@ -397,6 +509,7 @@ async fn handle_connection(
     let admin = settings.admin_token.is_some() && admin_token == settings.admin_token;
 
     let (control_tx, mut control_rx) = mpsc::unbounded_channel();
+    let (video_tx, mut video_rx) = mpsc::channel::<Bytes>(VIDEO_QUEUE);
     let id = {
         let mut room = room.lock().unwrap();
         let id = room.next_id;
@@ -411,7 +524,16 @@ async fn handle_connection(
         room.broadcast(id, &ServerMsg::PeerJoined(info.clone()));
         room.peers.insert(
             id,
-            Peer { info, conn: conn.clone(), control: control_tx, recent_chat: VecDeque::new() },
+            Peer {
+                info,
+                conn: conn.clone(),
+                control: control_tx,
+                recent_chat: VecDeque::new(),
+                watching: HashSet::new(),
+                waiting_keyframe: HashSet::new(),
+                video: video_tx,
+                keyframe_asked: None,
+            },
         );
         id
     };
@@ -424,6 +546,34 @@ async fn handle_connection(
             if vwf_proto::write_msg(&mut send, &msg).await.is_err() {
                 break;
             }
+        }
+    });
+
+    // Кадры демонстрации этому участнику: каждый — отдельным потоком, по порядку.
+    let video_conn = conn.clone();
+    tokio::spawn(async move {
+        while let Some(packet) = video_rx.recv().await {
+            let Ok(mut stream) = video_conn.open_uni().await else { break };
+            if stream.write_all(&packet).await.is_err() {
+                break;
+            }
+            let _ = stream.finish();
+        }
+    });
+
+    // Кадры демонстрации от этого участника. Читаем потоки по одному, чтобы
+    // кадры уходили зрителям в том же порядке, в каком были сняты.
+    let video_conn = conn.clone();
+    let video_room = room.clone();
+    tokio::spawn(async move {
+        while let Ok(mut stream) = video_conn.accept_uni().await {
+            let limit = vwf_proto::MAX_VIDEO_FRAME + VideoHeader::LEN;
+            let Ok(data) = stream.read_to_end(limit).await else { continue };
+            let Some((header, _)) = VideoHeader::decode(&data) else { continue };
+            let mut packet = Vec::with_capacity(4 + data.len());
+            packet.extend_from_slice(&id.to_le_bytes());
+            packet.extend_from_slice(&data);
+            video_room.lock().unwrap().forward_video(id, header.keyframe, Bytes::from(packet));
         }
     });
 
@@ -469,7 +619,13 @@ async fn handle_connection(
 
     {
         let mut room = room.lock().unwrap();
-        room.peers.remove(&id);
+        if let Some(peer) = room.peers.remove(&id) {
+            // Ушедший больше никого не смотрит, а его зрители — его.
+            for sharer in peer.watching {
+                room.send_viewer_count(sharer);
+            }
+            room.stop_sharing(id);
+        }
         room.broadcast(id, &ServerMsg::PeerLeft { id });
     }
     info!("- {name} (id {id}): {reason}");

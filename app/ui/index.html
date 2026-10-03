@@ -190,6 +190,10 @@
             <div id="output-menu" class="menu up right" hidden></div>
           </div>
         </div>
+
+        <button type="button" id="share-btn" class="share-btn" data-icon="screen">
+          <span id="share-label">Показать экран</span>
+        </button>
       </section>
     </main>
 
@@ -246,6 +250,40 @@
             <input type="checkbox" id="close-to-tray" class="switch" />
           </label>
         </div>
+      </section>
+    </div>
+
+    <!-- Выбор, что показать -->
+    <div id="share-sheet" class="sheet-backdrop" hidden>
+      <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="share-title">
+        <header class="sheet-head">
+          <h2 id="share-title">Показать экран</h2>
+          <button type="button" id="share-close" class="icon-btn ghost" data-icon="close" aria-label="Закрыть"></button>
+        </header>
+
+        <div class="group">
+          <div class="group-title">Что показать</div>
+          <ul id="share-sources" class="share-sources"></ul>
+        </div>
+
+        <div class="group">
+          <div class="group-title">Качество</div>
+          <div id="share-quality" class="segmented" role="radiogroup" aria-label="Качество">
+            <button type="button" data-value="720" title="Меньше трафика: подойдёт для медленного интернета">720p</button>
+            <button type="button" data-value="1080">1080p</button>
+            <button type="button" data-value="0" title="Как на экране (например, 1440p) — больше трафика">Как есть</button>
+          </div>
+          <div id="share-fps" class="segmented" role="radiogroup" aria-label="Кадров в секунду">
+            <button type="button" data-value="15" title="Для презентаций и документов">15 к/с</button>
+            <button type="button" data-value="30" title="Для игр и видео">30 к/с</button>
+          </div>
+          <p class="hint">
+            Пока никто не смотрит, экран не снимается. Каждому зрителю уходит
+            около 2–4 Мбит/с; если вы хост, эти мегабиты идут через ваш интернет.
+          </p>
+        </div>
+
+        <button type="button" id="share-start" class="primary" disabled>Начать показ</button>
       </section>
     </div>
 

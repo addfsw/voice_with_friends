@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Экран — Поигрулькины</title>
+    <link rel="stylesheet" href="viewer.css" />
+  </head>
+  <body>
+    <main id="stage" class="stage">
+      <img id="screen" alt="" hidden />
+      <div id="waiting" class="waiting">
+        <span class="spinner" aria-hidden="true"></span>
+        <span id="waiting-text">Жду картинку…</span>
+      </div>
+    </main>
+
+    <header id="bar" class="bar">
+      <span id="title" class="title"></span>
+      <span id="info" class="info"></span>
+      <button type="button" id="fullscreen" title="На весь экран (двойной щелчок, F11)">На весь экран</button>
+    </header>
+
+    <script src="viewer.js"></script>
+  </body>
+</html>

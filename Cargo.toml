@@ -50,3 +50,14 @@ opt-level = 3
 opt-level = 3
 [profile.dev.package.realfft]
 opt-level = 3
+
+# То же для демонстрации экрана: кодек, JPEG и масштабирование кадров
+# (оно в vwf-client) обрабатывают миллионы пикселей в секунду.
+[profile.dev.package.openh264]
+opt-level = 3
+[profile.dev.package.openh264-sys2]
+opt-level = 3
+[profile.dev.package.jpeg-encoder]
+opt-level = 3
+[profile.dev.package.vwf-client]
+opt-level = 2

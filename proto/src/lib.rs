@@ -7,6 +7,9 @@
 //! - **голос** — QUIC-датаграммы (ненадёжные, как обычный UDP, но зашифрованные).
 //!   Потерянный голосовой пакет переотправлять бессмысленно: пока он дойдёт,
 //!   его время проигрывания уже пройдёт.
+//! - **демонстрация экрана** — каждый кадр (H.264) идёт отдельным
+//!   однонаправленным QUIC-потоком: кадр большой и должен дойти целиком, но
+//!   опоздавший кадр не задерживает следующие (см. [`VideoHeader`]).
 
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -15,7 +18,8 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 /// 2 — `seq` голосовых пакетов растёт и в тишине (см. ниже).
 /// 3 — статус участников (микрофон/звук) и права хоста.
 /// 4 — текстовый чат.
-pub const PROTOCOL_VERSION: u32 = 4;
+/// 5 — демонстрация экрана.
+pub const PROTOCOL_VERSION: u32 = 5;
 
 /// ALPN-идентификатор для TLS-рукопожатия QUIC.
 pub const ALPN: &[u8] = b"vwf/1";
@@ -66,6 +70,8 @@ pub struct PeerInfo {
     pub deafened: bool,
     /// Хост заглушил его для всех: сервер не пересылает его голос.
     pub server_muted: bool,
+    /// Показывает свой экран.
+    pub sharing: bool,
 }
 
 impl PeerInfo {
@@ -77,6 +83,7 @@ impl PeerInfo {
             muted: false,
             deafened: false,
             server_muted: false,
+            sharing: false,
         }
     }
 }
@@ -159,6 +166,12 @@ pub enum ClientMsg {
     Kick { id: PeerId },
     /// Сообщение в чат (не длиннее [`MAX_CHAT_CHARS`]).
     Chat { text: String },
+    /// Начали или закончили показывать свой экран.
+    SetSharing { sharing: bool },
+    /// Смотреть экран участника `id` (или перестать).
+    Watch { id: PeerId, watch: bool },
+    /// Картинка от `id` сломалась (потерялся кадр): попросить у него опорный кадр.
+    RequestKeyframe { id: PeerId },
 }
 
 /// Сообщение в чате комнаты.
@@ -192,6 +205,13 @@ pub enum ServerMsg {
     PeerUpdated(PeerInfo),
     /// Новое сообщение в чате (и наше собственное тоже).
     Chat(ChatMessage),
+    /// Тому, кто показывает экран: пришли опорный кадр (новый зритель или
+    /// у кого-то потерялись кадры).
+    KeyframeNeeded,
+    /// Тому, кто показывает экран: сколько человек сейчас смотрят.
+    Viewers {
+        count: u32,
+    },
     /// Сервер отказал в подключении (после этого соединение закрывается).
     Rejected {
         reason: String,
@@ -267,9 +287,57 @@ pub fn decode_server_voice(data: &[u8]) -> Option<(PeerId, u32, &[u8])> {
     Some((PeerId::from_le_bytes(*from), seq, opus))
 }
 
+/// Самый большой кадр демонстрации, который принимают сервер и клиенты.
+pub const MAX_VIDEO_FRAME: usize = 8 * 1024 * 1024;
+
+/// Заголовок кадра демонстрации экрана. Поток клиента: `[заголовок][H.264]`;
+/// поток сервера зрителю: `[id отправителя u32][заголовок][H.264]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VideoHeader {
+    /// Номер кадра у отправителя.
+    pub frame: u32,
+    /// Опорный кадр (IDR): с него можно начать показ.
+    pub keyframe: bool,
+    pub width: u16,
+    pub height: u16,
+}
+
+impl VideoHeader {
+    pub const LEN: usize = 9;
+
+    pub fn encode(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.frame.to_le_bytes());
+        out.push(u8::from(self.keyframe));
+        out.extend_from_slice(&self.width.to_le_bytes());
+        out.extend_from_slice(&self.height.to_le_bytes());
+    }
+
+    /// Разбирает заголовок; возвращает его и остаток (H.264).
+    pub fn decode(data: &[u8]) -> Option<(Self, &[u8])> {
+        let (head, rest) = data.split_first_chunk::<{ Self::LEN }>()?;
+        let header = Self {
+            frame: u32::from_le_bytes(head[0..4].try_into().ok()?),
+            keyframe: head[4] != 0,
+            width: u16::from_le_bytes(head[5..7].try_into().ok()?),
+            height: u16::from_le_bytes(head[7..9].try_into().ok()?),
+        };
+        Some((header, rest))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn video_header_roundtrip() {
+        let header = VideoHeader { frame: 77, keyframe: true, width: 1920, height: 1080 };
+        let mut buf = Vec::new();
+        header.encode(&mut buf);
+        buf.extend_from_slice(b"h264");
+        assert_eq!(VideoHeader::decode(&buf), Some((header, &b"h264"[..])));
+        assert_eq!(VideoHeader::decode(&buf[..5]), None);
+    }
 
     #[test]
     fn voice_roundtrip() {

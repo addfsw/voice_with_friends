@@ -12,6 +12,7 @@ use vwf_client::jitter::Delay;
 use vwf_client::known_servers::{self, KnownServers};
 use vwf_client::net::{CertificateChanged, Trust};
 use vwf_client::pipeline::{Mixer, TxMode, TxSettings, TxState};
+use vwf_client::screen::ShareSettings;
 use vwf_proto::PeerId;
 
 /// Поигрулькины: голосовой чат (консольный клиент).
@@ -28,6 +29,8 @@ enum Command {
     Devices,
     /// Найти серверы в локальной сети.
     Discover,
+    /// Что можно показать при демонстрации экрана (для `connect --share`).
+    Screens,
     /// Проверка звука без сети: микрофон → Opus → джиттер-буфер → динамики.
     /// Говорите в микрофон (лучше в наушниках) и слушайте себя.
     Loopback {
@@ -54,6 +57,16 @@ enum Command {
         /// (хост подтвердил новый код): запомнить новый и подключиться.
         #[arg(long)]
         trust_new_certificate: bool,
+        /// Показать экран остальным: идентификатор из `screens`
+        /// (без значения — первый экран).
+        #[arg(long, num_args = 0..=1, default_missing_value = "")]
+        share: Option<String>,
+        /// Наибольшая высота кадра демонстрации (0 — как на экране).
+        #[arg(long, default_value_t = 1080)]
+        share_height: u32,
+        /// Кадров в секунду для демонстрации.
+        #[arg(long, default_value_t = 30)]
+        share_fps: u32,
         #[command(flatten)]
         audio: AudioArgs,
     },
@@ -127,11 +140,29 @@ async fn main() -> anyhow::Result<()> {
     match Cli::parse().command {
         Command::Devices => audio::list_devices(),
         Command::Discover => discover().await,
+        Command::Screens => {
+            for source in vwf_client::screen::sources()? {
+                println!("{}  —  {}", source.id, source.name);
+            }
+            Ok(())
+        }
         Command::Loopback { audio, sim_loss, sim_jitter_ms } => {
             loopback(audio, sim_loss, sim_jitter_ms).await
         }
-        Command::Connect { server, name, admin_token, trust_new_certificate, audio } => {
-            connect(&server, &name, admin_token.as_deref(), trust_new_certificate, audio).await
+        Command::Connect {
+            server,
+            name,
+            admin_token,
+            trust_new_certificate,
+            share,
+            share_height,
+            share_fps,
+            audio,
+        } => {
+            let share = share
+                .map(|source| (source, ShareSettings { max_height: share_height, fps: share_fps }));
+            connect(&server, &name, admin_token.as_deref(), trust_new_certificate, share, audio)
+                .await
         }
     }
 }
@@ -189,6 +220,7 @@ async fn connect(
     name: &str,
     admin_token: Option<&str>,
     trust_new_certificate: bool,
+    share: Option<(String, ShareSettings)>,
     args: AudioArgs,
 ) -> anyhow::Result<()> {
     println!("Подключаюсь к {server}...");
@@ -251,6 +283,17 @@ async fn connect(
         println!("В комнате: {}", list.join(", "));
     }
 
+    if let Some((source, settings)) = share {
+        let source = if source.is_empty() {
+            let first = vwf_client::screen::sources()?.into_iter().next();
+            first.map(|s| s.id).ok_or_else(|| anyhow::anyhow!("нечего показывать"))?
+        } else {
+            source
+        };
+        call.start_share(&source, settings)?;
+        println!("Показываю экран ({source}). Пока никто не смотрит, экран не снимается.");
+    }
+
     let history = call.chat();
     if !history.is_empty() {
         println!("Последние сообщения в чате:");
@@ -288,6 +331,9 @@ async fn connect(
                 }
                 CallEvent::PeerUpdated(_) => {}
                 CallEvent::Chat(message) => print_chat(&message),
+                CallEvent::Viewers(count) => println!("Ваш экран смотрят: {count}"),
+                CallEvent::ShareStopped(reason) => println!("Демонстрация прервалась: {reason}"),
+                CallEvent::ScreenFrame(_) => {}
                 CallEvent::Ended { reason, .. } => {
                     println!("Звонок завершён: {reason}.");
                     break;

@@ -34,6 +34,8 @@ const call = {
   chat: [], // сообщения чата: { id, from, name, text, timeMs }, старые — первыми
   chatPending: [], // пришли, пока интерфейс ещё не вошёл в комнату
   unread: 0,
+  sharing: false, // мы показываем экран
+  viewers: 0, // сколько человек смотрит наш экран
 };
 
 // ---------------------------------------------------------------------------
@@ -58,6 +60,9 @@ const ICON_PATHS = {
     "M12 11a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm6 2a6 6 0 1 0-9 5.19l1-1.74a4 4 0 1 1 4 0l1 1.74A6 6 0 0 0 18 13ZM12 3a10 10 0 0 0-5 18.66l1-1.73a8 8 0 1 1 8 0l1 1.73A10 10 0 0 0 12 3Z",
   copy: "M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1Zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 16H8V7h11v14Z",
   send: "M2.01 21 23 12 2.01 3 2 10l15 2-15 2z",
+  screen:
+    "M21 3H3a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h5v2h8v-2h5a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2Zm0 14H3V5h18v12Z",
+  window: "M19 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2Zm0 14H5V8h14v10Z",
 };
 
 // Иконка; `crossed` — перечёркнутая (выключено).
@@ -357,6 +362,8 @@ function applyJoined(joined) {
   $("server-code").textContent = joined.serverCode;
   showDevice("input", joined.inputDevice);
   showDevice("output", joined.outputDevice);
+  // После (пере)подключения демонстрация не идёт: звонок новый.
+  setSharing(false);
   call.chat = [];
   for (const message of [...joined.chat, ...call.chatPending]) addMessage(message, false);
   call.chatPending = [];
@@ -392,6 +399,8 @@ listen("call-reconnected", ({ payload }) => {
 
 function leaveRoom(reason) {
   setReconnecting(false);
+  closeShareSheet();
+  setSharing(false);
   call.chat = [];
   call.chatPending = [];
   setUnread(0);
@@ -552,10 +561,17 @@ function peerItem(peer, isMe) {
     badge.textContent = notes.join(", ");
     main.append(badge);
   }
+  if (peer.sharing) {
+    const badge = document.createElement("div");
+    badge.className = "badge live";
+    badge.textContent = isMe ? "показываете экран" : "показывает экран";
+    main.append(badge);
+  }
   if (!isMe) main.append(volumeControl(peer.id, peer.name));
 
   const side = document.createElement("div");
   side.className = "peer-side";
+  if (peer.sharing) side.append(watchButton(peer, isMe));
   if (isMe) {
     side.append(
       toggleButton("my-mic", icon("mic", peer.muted), peer.muted, "Выключить/включить микрофон", () =>
@@ -904,6 +920,155 @@ $("chat-form").addEventListener("submit", async (event) => {
 });
 
 // ---------------------------------------------------------------------------
+// Демонстрация экрана
+// ---------------------------------------------------------------------------
+
+// «Смотреть» — окно с экраном участника. Свой экран тоже можно открыть:
+// так видно, что получают остальные.
+function watchButton(peer, isMe) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "watch-btn";
+  button.title = isMe ? "Посмотреть, что видят остальные" : `Смотреть экран: ${peer.name}`;
+  button.append(icon("screen"));
+  if (!isMe) button.append(document.createTextNode("Смотреть"));
+  button.addEventListener("click", () => {
+    invoke("open_viewer", { id: peer.id, name: peer.name }).catch((e) => toast(errorText(e)));
+  });
+  return button;
+}
+
+function setSharing(on) {
+  call.sharing = on;
+  if (!on) call.viewers = 0;
+  $("share-btn").classList.toggle("active", on);
+  $("share-label").textContent = on
+    ? `Остановить показ · смотрят: ${call.viewers}`
+    : "Показать экран";
+}
+
+let shareSource = null;
+const shareQuality = { height: store.get("shareHeight", "1080"), fps: store.get("shareFps", "30") };
+segmented($("share-quality"), shareQuality.height, (v) => {
+  shareQuality.height = v;
+  store.set("shareHeight", v);
+});
+segmented($("share-fps"), shareQuality.fps, (v) => {
+  shareQuality.fps = v;
+  store.set("shareFps", v);
+});
+
+$("share-btn").addEventListener("click", async () => {
+  if (call.sharing) {
+    await invoke("stop_share").catch(() => {});
+    setSharing(false);
+    return;
+  }
+  openShareSheet();
+});
+
+async function openShareSheet() {
+  closeMenus();
+  $("share-sheet").hidden = false;
+  const list = $("share-sources");
+  list.innerHTML = "";
+  $("share-start").disabled = true;
+  const loading = document.createElement("li");
+  loading.className = "hint";
+  loading.textContent = "Ищу экраны и окна…";
+  list.append(loading);
+  let sources;
+  try {
+    sources = await invoke("screen_sources");
+  } catch (e) {
+    loading.textContent = `Не удалось: ${errorText(e)}`;
+    return;
+  }
+  list.innerHTML = "";
+  const saved = store.get("shareSource", null);
+  shareSource = sources.some((s) => s.id === saved) ? saved : sources[0]?.id ?? null;
+  let lastKind = null;
+  for (const source of sources) {
+    if (source.window !== lastKind && sources.some((s) => s.window)) {
+      const head = document.createElement("li");
+      head.className = "section";
+      head.textContent = source.window ? "Окна" : "Экраны";
+      list.append(head);
+      lastKind = source.window;
+    }
+    const li = document.createElement("li");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "source";
+    button.classList.toggle("selected", source.id === shareSource);
+    button.title = source.name;
+    const label = document.createElement("span");
+    label.className = "label";
+    label.textContent = source.name;
+    button.append(icon(source.window ? "window" : "screen"), label);
+    button.addEventListener("click", () => {
+      shareSource = source.id;
+      for (const other of list.querySelectorAll(".source")) other.classList.remove("selected");
+      button.classList.add("selected");
+      $("share-start").disabled = false;
+    });
+    button.addEventListener("dblclick", () => $("share-start").click());
+    li.append(button);
+    list.append(li);
+  }
+  if (sources.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "hint";
+    empty.textContent = "Нечего показать.";
+    list.append(empty);
+  }
+  $("share-start").disabled = !shareSource;
+}
+
+function closeShareSheet() {
+  $("share-sheet").hidden = true;
+}
+
+$("share-close").addEventListener("click", closeShareSheet);
+$("share-sheet").addEventListener("click", (event) => {
+  if (event.target === $("share-sheet")) closeShareSheet();
+});
+
+$("share-start").addEventListener("click", async () => {
+  if (!shareSource) return;
+  const button = $("share-start");
+  button.disabled = true;
+  button.textContent = "Запускаю…";
+  try {
+    await invoke("start_share", {
+      source: shareSource,
+      maxHeight: Number(shareQuality.height),
+      fps: Number(shareQuality.fps),
+    });
+    store.set("shareSource", shareSource);
+    setSharing(true);
+    closeShareSheet();
+  } catch (e) {
+    toast(errorText(e));
+  } finally {
+    button.disabled = false;
+    button.textContent = "Начать показ";
+  }
+});
+
+listen("share-viewers", ({ payload }) => {
+  call.viewers = payload.count;
+  if (call.sharing) setSharing(true);
+  if (call.me) renderPeers();
+});
+
+listen("share-stopped", ({ payload }) => {
+  setSharing(false);
+  invoke("stop_share").catch(() => {});
+  toast(`Показ экрана остановлен: ${payload.reason}`);
+});
+
+// ---------------------------------------------------------------------------
 // Индикаторы
 // ---------------------------------------------------------------------------
 
@@ -1136,6 +1301,7 @@ $("settings").addEventListener("click", (event) => {
 window.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !capturingKey) {
     closeSettings();
+    closeShareSheet();
     closeMenus();
   }
 });

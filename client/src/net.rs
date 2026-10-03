@@ -10,7 +10,9 @@ use quinn::crypto::rustls::QuicClientConfig;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, SignatureScheme};
-use vwf_proto::{ChatMessage, ClientMsg, PROTOCOL_VERSION, PeerId, PeerInfo, ServerMsg};
+use vwf_proto::{
+    ChatMessage, ClientMsg, PROTOCOL_VERSION, PeerId, PeerInfo, ServerMsg, VideoHeader,
+};
 
 use crate::known_servers::KnownServers;
 
@@ -96,6 +98,63 @@ impl VoiceSender {
         let packet = Bytes::from(vwf_proto::encode_client_voice(seq, opus));
         // Ошибка означает, что соединение уже закрыто, — это заметит основной цикл.
         let _ = self.0.send_datagram(packet);
+    }
+}
+
+/// Сколько кадров демонстрации может ждать отправки. Больше — сеть не
+/// успевает, и показывающий пропускает кадры до опорного.
+const VIDEO_SEND_QUEUE: usize = 3;
+
+/// Отправка кадров демонстрации экрана: каждый кадр — отдельный
+/// однонаправленный поток, по порядку. Создаётся внутри рантайма tokio.
+#[derive(Clone)]
+pub struct VideoSender(tokio::sync::mpsc::Sender<crate::screen::VideoFrame>);
+
+impl VideoSender {
+    fn spawn(conn: quinn::Connection) -> Self {
+        let (tx, mut rx) =
+            tokio::sync::mpsc::channel::<crate::screen::VideoFrame>(VIDEO_SEND_QUEUE);
+        tokio::spawn(async move {
+            while let Some(frame) = rx.recv().await {
+                let mut packet = Vec::with_capacity(VideoHeader::LEN + frame.data.len());
+                frame.header.encode(&mut packet);
+                packet.extend_from_slice(&frame.data);
+                let Ok(mut stream) = conn.open_uni().await else { break };
+                // Голос (датаграммы) QUIC и так кладёт в пакет раньше потоков,
+                // а приоритет ниже обычного пропускает вперёд управляющие
+                // сообщения (чат, статусы).
+                let _ = stream.set_priority(-1);
+                if stream.write_all(&packet).await.is_err() {
+                    break;
+                }
+                let _ = stream.finish();
+            }
+        });
+        Self(tx)
+    }
+
+    /// Отдаёт кадр в сеть. `false` — очередь полна, кадр выброшен.
+    /// Можно вызывать из любого потока.
+    pub fn send(&self, frame: crate::screen::VideoFrame) -> bool {
+        self.0.try_send(frame).is_ok()
+    }
+}
+
+/// Приём кадров демонстрации экрана.
+pub struct VideoReceiver(quinn::Connection);
+
+impl VideoReceiver {
+    /// Ждёт следующий кадр: `(показывающий, заголовок, H.264)`.
+    /// `None` — соединение закрыто.
+    pub async fn recv(&self) -> Option<(PeerId, VideoHeader, Vec<u8>)> {
+        loop {
+            let mut stream = self.0.accept_uni().await.ok()?;
+            let limit = 4 + VideoHeader::LEN + vwf_proto::MAX_VIDEO_FRAME;
+            let Ok(data) = stream.read_to_end(limit).await else { continue };
+            let Some((from, rest)) = data.split_first_chunk::<4>() else { continue };
+            let Some((header, h264)) = VideoHeader::decode(rest) else { continue };
+            return Some((PeerId::from_le_bytes(*from), header, h264.to_vec()));
+        }
     }
 }
 
@@ -355,6 +414,15 @@ impl Session {
 
     pub fn voice_receiver(&self) -> VoiceReceiver {
         VoiceReceiver(self.conn.clone())
+    }
+
+    /// Отправка кадров демонстрации (вызывать внутри рантайма tokio).
+    pub fn video_sender(&self) -> VideoSender {
+        VideoSender::spawn(self.conn.clone())
+    }
+
+    pub fn video_receiver(&self) -> VideoReceiver {
+        VideoReceiver(self.conn.clone())
     }
 
     pub fn control(&self) -> Control {
