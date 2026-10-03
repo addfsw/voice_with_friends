@@ -121,6 +121,33 @@ struct Joined {
     server_code: String,
     input_device: String,
     output_device: String,
+    /// Сообщения чата, старые — первыми.
+    chat: Vec<ChatMessage>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ChatMessage {
+    id: u64,
+    from: PeerId,
+    name: String,
+    text: String,
+    /// Unix-время, мс. Как число JavaScript оно точное до 2^53 — с запасом.
+    time_ms: u64,
+}
+
+impl From<vwf_proto::ChatMessage> for ChatMessage {
+    fn from(m: vwf_proto::ChatMessage) -> Self {
+        // Номер сообщения сервер начинает со случайного u64; в JavaScript числа
+        // точны только до 2^53, поэтому для интерфейса берём младшие биты.
+        Self {
+            id: m.id & ((1 << 53) - 1),
+            from: m.from,
+            name: m.name,
+            text: m.text,
+            time_ms: m.time_ms,
+        }
+    }
 }
 
 #[derive(Serialize, Clone)]
@@ -246,6 +273,7 @@ async fn start_call(
                 CallEvent::PeerJoined(p) => events.emit("peer-joined", Peer::from(p)),
                 CallEvent::PeerLeft(id) => events.emit("peer-left", PeerLeft { id }),
                 CallEvent::PeerUpdated(p) => events.emit("peer-updated", Peer::from(p)),
+                CallEvent::Chat(m) => events.emit("chat-message", ChatMessage::from(m)),
                 CallEvent::Ended { reason, lost: true } => {
                     spawn_reconnect(events.clone(), generation, reason);
                     Ok(())
@@ -272,6 +300,7 @@ async fn start_call(
         server_code: vwf_proto::short_fingerprint(&call.fingerprint),
         input_device: call.audio.capture().device_name.clone(),
         output_device: call.audio.playback().device_name.clone(),
+        chat: call.chat().into_iter().map(ChatMessage::from).collect(),
     };
     let mut slot = state.call.lock().await;
     if state.generation.load(Ordering::SeqCst) != generation {
@@ -492,6 +521,28 @@ async fn shutdown(app: &AppHandle) {
 #[tauri::command]
 fn set_close_to_tray(state: State<'_, AppState>, enabled: bool) {
     state.close_to_tray.store(enabled, Ordering::Relaxed);
+}
+
+#[tauri::command]
+async fn send_chat(state: State<'_, AppState>, text: String) -> CmdResult<()> {
+    match state.call.lock().await.as_ref() {
+        Some(call) => {
+            call.send_chat(&text);
+            Ok(())
+        }
+        None => Err("нет связи с комнатой".into()),
+    }
+}
+
+/// Открывает ссылку из чата в браузере. Только http(s): ссылку прислал
+/// другой человек, и запускать по ней программы или файлы нельзя.
+#[tauri::command]
+fn open_url(url: String) -> CmdResult<()> {
+    let lower = url.to_ascii_lowercase();
+    if !(lower.starts_with("https://") || lower.starts_with("http://")) {
+        return Err("открываются только ссылки http и https".into());
+    }
+    tauri_plugin_opener::open_url(url, None::<&str>).map_err(err)
 }
 
 /// Только хост: заглушить участника для всех или вернуть ему голос.
@@ -719,6 +770,8 @@ fn main() {
             set_noise_suppression,
             set_cues,
             set_close_to_tray,
+            send_chat,
+            open_url,
             discover_servers,
             set_mode,
             set_ptt_key,

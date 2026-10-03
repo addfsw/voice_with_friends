@@ -757,16 +757,34 @@ button.leave.armed {
   line-height: 1.4;
 }
 
-/* Участники */
+/* Вкладки «Участники / Чат» */
 
-.people-head {
-  padding: 2px 4px 0;
+.tabs button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 }
 
 .count {
   color: var(--text-3);
   font-weight: 500;
 }
+
+.unread {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+
+/* Участники */
 
 .peers {
   list-style: none;
@@ -899,6 +917,143 @@ button.leave.armed {
   border: 1px dashed var(--border);
   border-radius: 12px;
   font-size: 13px;
+}
+
+/* Чат */
+
+.chat {
+  flex: 1;
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 4px 2px;
+}
+
+.chat-empty {
+  margin: auto;
+  color: var(--text-3);
+  font-size: 13px;
+  text-align: center;
+}
+
+.msg-group {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 6px 4px 2px;
+}
+
+.msg-group .avatar {
+  width: 30px;
+  height: 30px;
+  margin-top: 2px;
+  font-size: 13px;
+}
+
+.msg-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.msg-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.msg-name {
+  font-weight: 650;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.msg-time {
+  color: var(--text-3);
+  font-size: 11px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.msg-text {
+  margin: 1px 0;
+  font-size: 13.5px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.msg-text a {
+  color: var(--accent);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.msg-text a:hover {
+  text-decoration: underline;
+}
+
+.composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 6px 6px 6px 12px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  transition: border-color 120ms, box-shadow 120ms;
+}
+
+.composer:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.composer textarea {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  max-height: 120px;
+  padding: 6px 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13.5px;
+  line-height: 1.4;
+  outline: none;
+  user-select: text;
+}
+
+.composer textarea::placeholder {
+  color: var(--text-3);
+}
+
+.icon-btn.send {
+  color: var(--accent);
+  background: transparent;
+}
+
+.icon-btn.send:hover {
+  color: #fff;
+  background: var(--accent);
+}
+
+#room-view.reconnecting .chat {
+  opacity: 0.5;
+  pointer-events: none;
 }
 
 /* Всплывающие меню */

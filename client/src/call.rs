@@ -1,11 +1,11 @@
 //! Всё вместе: звуковые устройства, кодер, микшер и соединение с сервером.
 //! Этим пользуются и консольный клиент, и графический.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use vwf_proto::{ClientMsg, PeerId, PeerInfo, ServerMsg};
+use vwf_proto::{ChatMessage, ClientMsg, PeerId, PeerInfo, ServerMsg};
 
 use crate::audio::{self, Wakeup};
 use crate::cues::Cue;
@@ -198,6 +198,8 @@ pub enum CallEvent {
     PeerLeft(PeerId),
     /// Изменился статус участника или наш собственный (`id` совпадает с `Call::me`).
     PeerUpdated(PeerInfo),
+    /// Новое сообщение в чате (в том числе наше собственное, вернувшееся от сервера).
+    Chat(ChatMessage),
     /// Соединение закрылось не по нашей инициативе.
     Ended {
         reason: String,
@@ -211,7 +213,12 @@ pub enum CallEvent {
 struct Room {
     me: PeerInfo,
     peers: HashMap<PeerId, PeerInfo>,
+    /// Сообщения чата: история с сервера и всё, что пришло после.
+    chat: VecDeque<ChatMessage>,
 }
+
+/// Сколько сообщений чата держать в памяти.
+const CHAT_KEEP: usize = 500;
 
 /// Активный звонок.
 pub struct Call {
@@ -245,6 +252,7 @@ impl Call {
         let room = Arc::new(Mutex::new(Room {
             me: session.me.clone(),
             peers: session.peers.iter().map(|p| (p.id, p.clone())).collect(),
+            chat: session.chat.iter().cloned().collect(),
         }));
 
         let sender = session.voice_sender();
@@ -280,6 +288,19 @@ impl Call {
                             mixer.remove_speaker(id);
                             mixer.play_cue(Cue::PeerLeft);
                             on_event(CallEvent::PeerLeft(id));
+                        }
+                        Ok(Some(ServerMsg::Chat(message))) => {
+                            if message.from != my_id {
+                                mixer.play_cue(Cue::Message);
+                            }
+                            {
+                                let mut room = room.lock().unwrap();
+                                if room.chat.len() == CHAT_KEEP {
+                                    room.chat.pop_front();
+                                }
+                                room.chat.push_back(message.clone());
+                            }
+                            on_event(CallEvent::Chat(message));
                         }
                         Ok(Some(ServerMsg::PeerUpdated(peer))) => {
                             {
@@ -332,6 +353,20 @@ impl Call {
         let mut peers: Vec<PeerInfo> = self.room.lock().unwrap().peers.values().cloned().collect();
         peers.sort_by_key(|p| p.id);
         peers
+    }
+
+    /// Сообщения чата, старые — первыми.
+    pub fn chat(&self) -> Vec<ChatMessage> {
+        self.room.lock().unwrap().chat.iter().cloned().collect()
+    }
+
+    /// Отправляет сообщение в чат. Оно придёт обратно событием
+    /// [`CallEvent::Chat`], когда сервер разошлёт его всем.
+    pub fn send_chat(&self, text: &str) {
+        let text: String = text.trim().chars().take(vwf_proto::MAX_CHAT_CHARS).collect();
+        if !text.is_empty() {
+            self.control.send(ClientMsg::Chat { text });
+        }
     }
 
     pub fn mixer(&self) -> &Arc<Mixer> {

@@ -429,7 +429,7 @@ impl Mixer {
     /// о том, что кто-то пришёл или ушёл; отклик на свои кнопки остаётся.
     pub fn play_cue(&self, cue: Cue) {
         if !self.cues_enabled.load(Ordering::Relaxed)
-            || (self.deafened() && matches!(cue, Cue::PeerJoined | Cue::PeerLeft))
+            || (self.deafened() && matches!(cue, Cue::PeerJoined | Cue::PeerLeft | Cue::Message))
         {
             return;
         }

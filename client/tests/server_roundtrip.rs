@@ -317,3 +317,44 @@ async fn changed_server_certificate_is_detected() {
     // Явно ожидаемый отпечаток тоже проверяется.
     assert!(connect_with(&addr, "Алиса", None, Trust::Exact(&first_fp)).await.is_err());
 }
+
+#[tokio::test]
+async fn chat_reaches_everyone_and_newcomers_get_history() {
+    use vwf_proto::ClientMsg;
+
+    let addr = start_server(false).await.to_string();
+    let mut alice = vwf_client::net::connect(&addr, "Алиса").await.unwrap();
+    let mut bob = vwf_client::net::connect(&addr, "Боб").await.unwrap();
+    assert!(bob.chat.is_empty());
+
+    // Управляющие символы сервер вырезает, перенос строки оставляет.
+    alice
+        .control()
+        .send(ClientMsg::Chat { text: "  привет\u{7}\nкак дела?  ".into() });
+    let is_chat = |e: &ServerMsg| matches!(e, ServerMsg::Chat(_));
+    let ServerMsg::Chat(to_bob) = expect_event(&mut bob, is_chat).await else { unreachable!() };
+    assert_eq!((to_bob.from, to_bob.name.as_str()), (alice.me.id, "Алиса"));
+    assert_eq!(to_bob.text, "привет\nкак дела?");
+    // Отправитель тоже получает своё сообщение: так у всех одинаковый порядок.
+    let ServerMsg::Chat(to_alice) = expect_event(&mut alice, is_chat).await else { unreachable!() };
+    assert_eq!(to_alice, to_bob);
+
+    // Пустые сообщения не рассылаются, а флуд режется.
+    bob.control().send(ClientMsg::Chat { text: "   ".into() });
+    for i in 0..15 {
+        bob.control().send(ClientMsg::Chat { text: format!("спам {i}") });
+    }
+    let mut received = Vec::new();
+    while let Ok(Ok(Some(event))) = timeout(Duration::from_millis(500), alice.next_event()).await {
+        if let ServerMsg::Chat(m) = event {
+            received.push(m.text);
+        }
+    }
+    assert_eq!(received, (0..10).map(|i| format!("спам {i}")).collect::<Vec<_>>());
+
+    // Кто пришёл позже, видит историю: первое сообщение и пропущенный спам.
+    let carol = vwf_client::net::connect(&addr, "Кэрол").await.unwrap();
+    assert_eq!(carol.chat.len(), 11);
+    assert_eq!(carol.chat[0], to_bob);
+    assert!(carol.chat.windows(2).all(|w| w[0].id < w[1].id));
+}

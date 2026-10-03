@@ -30,3 +30,5 @@ tauri = { version = "2", features = ["custom-protocol", "tray-icon"] }
 tauri-plugin-global-shortcut = "2"
 # Второй запуск программы не открывает вторую копию, а показывает первую.
 tauri-plugin-single-instance = "2"
+# Ссылки из чата открываются в обычном браузере, а не в окне программы.
+tauri-plugin-opener = "2"

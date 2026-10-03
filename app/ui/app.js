@@ -31,6 +31,9 @@ const call = {
   me: null, // мы сами: { id, name, admin, muted, deafened, serverMuted }
   peers: new Map(), // id -> такие же сведения о собеседнике
   statusTimer: null,
+  chat: [], // сообщения чата: { id, from, name, text, timeMs }, старые — первыми
+  chatPending: [], // пришли, пока интерфейс ещё не вошёл в комнату
+  unread: 0,
 };
 
 // ---------------------------------------------------------------------------
@@ -54,6 +57,7 @@ const ICON_PATHS = {
   broadcast:
     "M12 11a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm6 2a6 6 0 1 0-9 5.19l1-1.74a4 4 0 1 1 4 0l1 1.74A6 6 0 0 0 18 13ZM12 3a10 10 0 0 0-5 18.66l1-1.73a8 8 0 1 1 8 0l1 1.73A10 10 0 0 0 12 3Z",
   copy: "M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1Zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 16H8V7h11v14Z",
+  send: "M2.01 21 23 12 2.01 3 2 10l15 2-15 2z",
 };
 
 // Иконка; `crossed` — перечёркнутая (выключено).
@@ -330,6 +334,9 @@ function enterRoom(server, name, joined) {
   applyJoined(joined);
   renderHostCard();
   disarmLeave();
+  const tab = store.get("roomTab", "people");
+  selectTab(tab);
+  showTab(tab);
   showView("room");
   stopLanSearch();
   clearInterval(call.statusTimer);
@@ -350,6 +357,10 @@ function applyJoined(joined) {
   $("server-code").textContent = joined.serverCode;
   showDevice("input", joined.inputDevice);
   showDevice("output", joined.outputDevice);
+  call.chat = [];
+  for (const message of [...joined.chat, ...call.chatPending]) addMessage(message, false);
+  call.chatPending = [];
+  renderChat(true);
   renderPeers();
   for (const [id, peer] of call.peers) applySavedVolume(id, peer.name);
 }
@@ -381,6 +392,9 @@ listen("call-reconnected", ({ payload }) => {
 
 function leaveRoom(reason) {
   setReconnecting(false);
+  call.chat = [];
+  call.chatPending = [];
+  setUnread(0);
   call.hosting = null;
   call.me = null;
   closeMenus();
@@ -720,6 +734,173 @@ listen("call-ended", async ({ payload }) => {
   await invoke("disconnect").catch(() => {});
   if (call.hosting) await invoke("stop_server").catch(() => {});
   leaveRoom(`Звонок завершён: ${payload.reason}`);
+});
+
+// ---------------------------------------------------------------------------
+// Вкладки и чат
+// ---------------------------------------------------------------------------
+
+let currentTab = "people";
+
+function showTab(tab) {
+  currentTab = tab;
+  store.set("roomTab", tab);
+  $("peers").hidden = tab !== "people";
+  $("chat").hidden = tab !== "chat";
+  if (tab === "chat") {
+    setUnread(0);
+    renderChat(true);
+    $("chat-input").focus();
+  }
+}
+
+const selectTab = segmented($("room-tabs"), "people", showTab);
+
+function setUnread(count) {
+  call.unread = count;
+  $("chat-unread").hidden = count === 0;
+  $("chat-unread").textContent = count > 99 ? "99+" : String(count);
+}
+
+// Добавляет сообщение в список (без повторов). true — если оно новое.
+function addMessage(message) {
+  if (call.chat.some((m) => m.id === message.id)) return false;
+  call.chat.push(message);
+  call.chat.sort((a, b) => a.id - b.id);
+  if (call.chat.length > 500) call.chat.shift();
+  return true;
+}
+
+listen("chat-message", ({ payload }) => {
+  if (!call.me) {
+    call.chatPending.push(payload);
+    return;
+  }
+  if (!addMessage(payload)) return;
+  const mine = payload.from === call.me.id;
+  if (!mine && (currentTab !== "chat" || document.hidden)) setUnread(call.unread + 1);
+  renderChat(mine);
+});
+
+// Прочитали, вернувшись в окно с открытым чатом.
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && currentTab === "chat") setUnread(0);
+});
+
+// Сообщения одного автора подряд (с паузой меньше 5 минут) — одной группой.
+const GROUP_GAP_MS = 5 * 60 * 1000;
+
+// forceBottom — прокрутить вниз в любом случае (своё сообщение, открытие
+// вкладки); иначе — только если пользователь и так был внизу.
+function renderChat(forceBottom) {
+  const log = $("chat-log");
+  if ($("chat").hidden) return;
+  const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+  log.innerHTML = "";
+  if (call.chat.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "chat-empty";
+    empty.textContent = "Сообщений пока нет. Напишите первым!";
+    log.append(empty);
+    return;
+  }
+  let body = null;
+  let last = null;
+  for (const message of call.chat) {
+    const continues =
+      last && last.from === message.from && last.name === message.name &&
+      message.timeMs - last.timeMs < GROUP_GAP_MS;
+    if (!continues) {
+      const group = document.createElement("div");
+      group.className = "msg-group";
+      const avatar = document.createElement("div");
+      avatar.className = "avatar";
+      avatar.style.background = avatarColor(message.name);
+      avatar.textContent = initial(message.name);
+      body = document.createElement("div");
+      body.className = "msg-body";
+      const head = document.createElement("div");
+      head.className = "msg-head";
+      const name = document.createElement("span");
+      name.className = "msg-name";
+      name.textContent = message.name;
+      const time = document.createElement("span");
+      time.className = "msg-time";
+      time.textContent = formatTime(message.timeMs);
+      head.append(name, time);
+      body.append(head);
+      group.append(avatar, body);
+      log.append(group);
+    }
+    const text = document.createElement("div");
+    text.className = "msg-text";
+    text.title = formatTime(message.timeMs, true);
+    text.append(...linkify(message.text));
+    body.append(text);
+    last = message;
+  }
+  if (forceBottom || atBottom) log.scrollTop = log.scrollHeight;
+}
+
+// «14:05», для вчерашних и старше — «3 окт., 14:05».
+function formatTime(ms, full = false) {
+  const date = new Date(ms);
+  const time = date.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+  if (!full && date.toDateString() === new Date().toDateString()) return time;
+  return `${date.toLocaleDateString("ru-RU", { day: "numeric", month: "short" })}, ${time}`;
+}
+
+// Текст с кликабельными ссылками. Только узлы DOM, никакого innerHTML:
+// текст прислал другой человек.
+const URL_RE = /https?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]}]/gi;
+
+function linkify(text) {
+  const nodes = [];
+  let pos = 0;
+  for (const match of text.matchAll(URL_RE)) {
+    if (match.index > pos) nodes.push(document.createTextNode(text.slice(pos, match.index)));
+    const link = document.createElement("a");
+    link.textContent = match[0];
+    link.title = "Открыть в браузере";
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      invoke("open_url", { url: match[0] }).catch((e) => toast(errorText(e)));
+    });
+    nodes.push(link);
+    pos = match.index + match[0].length;
+  }
+  if (pos < text.length) nodes.push(document.createTextNode(text.slice(pos)));
+  return nodes;
+}
+
+// Поле ввода растёт вместе с текстом (до 5 строк).
+function fitInput() {
+  const input = $("chat-input");
+  input.style.height = "auto";
+  input.style.height = `${Math.min(input.scrollHeight, 120)}px`;
+}
+
+$("chat-input").addEventListener("input", fitInput);
+
+$("chat-input").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+    event.preventDefault();
+    $("chat-form").requestSubmit();
+  }
+});
+
+$("chat-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const input = $("chat-input");
+  const text = input.value.trim();
+  if (!text) return;
+  try {
+    await invoke("send_chat", { text });
+    input.value = "";
+    fitInput();
+  } catch (e) {
+    toast(`Не отправилось: ${errorText(e)}`);
+  }
 });
 
 // ---------------------------------------------------------------------------

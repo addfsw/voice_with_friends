@@ -18,6 +18,8 @@ pub enum Cue {
     Unmuted,
     Deafened,
     Undeafened,
+    /// Новое сообщение в чате.
+    Message,
 }
 
 // Ноты, Гц.
@@ -25,6 +27,7 @@ const G4: f32 = 392.00;
 const C5: f32 = 523.25;
 const E5: f32 = 659.25;
 const G5: f32 = 783.99;
+const C6: f32 = 1046.50;
 
 /// Громкость звуков (полная шкала — 1.0): заметно, но тише голоса.
 const LEVEL: f32 = 0.18;
@@ -40,6 +43,7 @@ impl Cue {
             Cue::Unmuted => &[(E5, 90)],
             Cue::Deafened => &[(C5, 70), (G4, 110)],
             Cue::Undeafened => &[(G4, 70), (C5, 110)],
+            Cue::Message => &[(G5, 50), (C6, 90)],
         }
     }
 
@@ -79,6 +83,7 @@ mod tests {
             Cue::Unmuted,
             Cue::Deafened,
             Cue::Undeafened,
+            Cue::Message,
         ] {
             let samples = cue.render();
             let ms = samples.len() as u32 * 1000 / SAMPLE_RATE;

@@ -10,7 +10,7 @@ use quinn::crypto::rustls::QuicClientConfig;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, SignatureScheme};
-use vwf_proto::{ClientMsg, PROTOCOL_VERSION, PeerId, PeerInfo, ServerMsg};
+use vwf_proto::{ChatMessage, ClientMsg, PROTOCOL_VERSION, PeerId, PeerInfo, ServerMsg};
 
 use crate::known_servers::KnownServers;
 
@@ -31,6 +31,8 @@ pub struct Session {
     pub me: PeerInfo,
     /// Кто уже был в комнате в момент подключения.
     pub peers: Vec<PeerInfo>,
+    /// Последние сообщения чата на момент подключения.
+    pub chat: Vec<ChatMessage>,
 }
 
 /// Отправка управляющих сообщений серверу. Дешёво клонируется.
@@ -310,7 +312,7 @@ async fn handshake(
         .await
         .context("сервер не ответил на приветствие")??;
     match reply {
-        Some(ServerMsg::Welcome { you, peers }) => {
+        Some(ServerMsg::Welcome { you, peers, chat }) => {
             let (control_tx, mut control_rx) = tokio::sync::mpsc::unbounded_channel();
             tokio::spawn(async move {
                 while let Some(msg) = control_rx.recv().await {
@@ -337,6 +339,7 @@ async fn handshake(
                 fingerprint,
                 me: you,
                 peers,
+                chat,
             })
         }
         Some(ServerMsg::Rejected { reason }) => bail!("сервер отказал: {reason}"),

@@ -251,7 +251,16 @@ async fn connect(
         println!("В комнате: {}", list.join(", "));
     }
 
-    println!("{COMMANDS_HELP}\n");
+    let history = call.chat();
+    if !history.is_empty() {
+        println!("Последние сообщения в чате:");
+        for message in history.iter().skip(history.len().saturating_sub(10)) {
+            print_chat(message);
+        }
+    }
+
+    println!("{COMMANDS_HELP}");
+    println!("t текст — написать в чат.\n");
     let mut glitches = glitch_counters(&call.audio);
     let mut glitch_check = tokio::time::interval(GLITCH_REPORT_INTERVAL);
     let mut commands = spawn_stdin_reader();
@@ -278,12 +287,17 @@ async fn connect(
                     }
                 }
                 CallEvent::PeerUpdated(_) => {}
+                CallEvent::Chat(message) => print_chat(&message),
                 CallEvent::Ended { reason, .. } => {
                     println!("Звонок завершён: {reason}.");
                     break;
                 }
             },
             Some(cmd) = commands.recv() => {
+                if let Some(text) = cmd.strip_prefix("t ") {
+                    call.send_chat(text);
+                    continue;
+                }
                 handle_command(&cmd, &call.audio, &names);
                 call.sync_status();
             }
@@ -341,6 +355,10 @@ fn print_meter(state: &TxState) {
     };
     print!("\r{db:6.1} dBFS |{:<30}| {status:<20}", "#".repeat(filled));
     let _ = std::io::stdout().flush();
+}
+
+fn print_chat(message: &vwf_proto::ChatMessage) {
+    println!("💬 {}: {}", message.name, message.text.replace('\n', "\n   "));
 }
 
 const COMMANDS_HELP: &str = "Команды (+ Enter): m — выключить/включить микрофон, \

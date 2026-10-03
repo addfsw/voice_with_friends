@@ -14,7 +14,8 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 /// Версия протокола. Сервер отказывает клиентам с другой версией.
 /// 2 — `seq` голосовых пакетов растёт и в тишине (см. ниже).
 /// 3 — статус участников (микрофон/звук) и права хоста.
-pub const PROTOCOL_VERSION: u32 = 3;
+/// 4 — текстовый чат.
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// ALPN-идентификатор для TLS-рукопожатия QUIC.
 pub const ALPN: &[u8] = b"vwf/1";
@@ -41,7 +42,14 @@ pub const FRAME_MS: u32 = 20;
 pub const FRAME_SAMPLES: usize = (SAMPLE_RATE * FRAME_MS / 1000) as usize;
 
 /// Максимальный размер управляющего сообщения — защита от мусора в канале.
-const MAX_CONTROL_MSG: usize = 64 * 1024;
+/// Самое большое — `Welcome` с историей чата.
+const MAX_CONTROL_MSG: usize = 1024 * 1024;
+
+/// Максимальная длина сообщения в чате, символов.
+pub const MAX_CHAT_CHARS: usize = 2000;
+
+/// Сколько последних сообщений чата сервер помнит и показывает новичкам.
+pub const CHAT_HISTORY: usize = 100;
 
 /// Идентификатор участника, который выдаёт сервер.
 pub type PeerId = u32;
@@ -149,15 +157,32 @@ pub enum ClientMsg {
     SetServerMute { id: PeerId, muted: bool },
     /// Только хост: отключить участника от комнаты.
     Kick { id: PeerId },
+    /// Сообщение в чат (не длиннее [`MAX_CHAT_CHARS`]).
+    Chat { text: String },
+}
+
+/// Сообщение в чате комнаты.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatMessage {
+    /// Номер сообщения, уникальный в пределах работы сервера.
+    pub id: u64,
+    pub from: PeerId,
+    /// Имя автора на момент отправки: он мог уже уйти из комнаты.
+    pub name: String,
+    pub text: String,
+    /// Когда сервер получил сообщение: Unix-время в миллисекундах.
+    pub time_ms: u64,
 }
 
 /// Сообщения сервер → клиент.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ServerMsg {
-    /// Ответ на `Hello`: сведения о нас самих и список тех, кто уже в комнате.
+    /// Ответ на `Hello`: сведения о нас самих, кто уже в комнате и последние
+    /// сообщения чата (старые — первыми).
     Welcome {
         you: PeerInfo,
         peers: Vec<PeerInfo>,
+        chat: Vec<ChatMessage>,
     },
     PeerJoined(PeerInfo),
     PeerLeft {
@@ -165,6 +190,8 @@ pub enum ServerMsg {
     },
     /// У участника (возможно, у нас самих) изменился статус.
     PeerUpdated(PeerInfo),
+    /// Новое сообщение в чате (и наше собственное тоже).
+    Chat(ChatMessage),
     /// Сервер отказал в подключении (после этого соединение закрывается).
     Rejected {
         reason: String,
@@ -283,6 +310,13 @@ mod tests {
         let msg = ServerMsg::Welcome {
             you: PeerInfo::new(3, "Боб"),
             peers: vec![PeerInfo { admin: true, ..PeerInfo::new(1, "Алиса") }],
+            chat: vec![ChatMessage {
+                id: 7,
+                from: 1,
+                name: "Алиса".into(),
+                text: "привет 👋\nкак дела?".into(),
+                time_ms: 1_700_000_000_000,
+            }],
         };
         let mut buf = Vec::new();
         write_msg(&mut buf, &msg).await.unwrap();

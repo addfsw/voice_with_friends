@@ -5,12 +5,12 @@
 //! и Mumble, и SFU в WebRTC). Поэтому нагрузка на процессор почти нулевая,
 //! а качество звука определяется только клиентами.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use bytes::Bytes;
@@ -18,7 +18,9 @@ use quinn::crypto::rustls::QuicServerConfig;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use tokio::sync::mpsc;
 use tracing::{info, warn};
-use vwf_proto::{Announcement, ClientMsg, PROTOCOL_VERSION, PeerId, PeerInfo, ServerMsg};
+use vwf_proto::{
+    Announcement, ChatMessage, ClientMsg, PROTOCOL_VERSION, PeerId, PeerInfo, ServerMsg,
+};
 
 const MAX_NAME_CHARS: usize = 32;
 
@@ -128,7 +130,7 @@ impl Server {
     /// Принимает подключения, пока endpoint не закроют
     /// (`server.endpoint().close(...)` — так сервер и останавливают).
     pub async fn run(self) {
-        let room = Arc::new(Mutex::new(Room::default()));
+        let room = Arc::new(Mutex::new(Room::new()));
 
         let mut discovery_task = None;
         if let Some(socket) = self.discovery {
@@ -237,10 +239,12 @@ fn transport_config() -> quinn::TransportConfig {
     t
 }
 
-#[derive(Default)]
 struct Room {
     next_id: PeerId,
     peers: HashMap<PeerId, Peer>,
+    /// Последние сообщения чата (старые — первыми).
+    chat: VecDeque<ChatMessage>,
+    next_message_id: u64,
 }
 
 struct RoomSettings {
@@ -253,9 +257,65 @@ struct Peer {
     conn: quinn::Connection,
     /// Очередь управляющих сообщений этому участнику (пишет отдельная задача).
     control: mpsc::UnboundedSender<ServerMsg>,
+    /// Когда участник отправлял последние сообщения в чат — против флуда.
+    recent_chat: VecDeque<Instant>,
 }
 
+/// Не больше стольких сообщений в чат...
+const CHAT_BURST: usize = 10;
+/// ...за это время от одного участника. Лишние сервер молча отбрасывает.
+const CHAT_WINDOW: Duration = Duration::from_secs(10);
+
 impl Room {
+    fn new() -> Self {
+        Self {
+            next_id: 0,
+            peers: HashMap::new(),
+            chat: VecDeque::new(),
+            // Номера сообщений начинаются со случайного числа: если сервер
+            // перезапустят, новые сообщения не совпадут по номеру со старыми,
+            // которые остались у клиентов на экране.
+            next_message_id: random_u64() >> 16,
+        }
+    }
+
+    /// Принимает сообщение в чат от участника `from` и рассылает всем.
+    fn chat(&mut self, from: PeerId, text: &str) {
+        let Some(peer) = self.peers.get_mut(&from) else { return };
+        let text = sanitize_chat(text);
+        if text.is_empty() {
+            return;
+        }
+        let now = Instant::now();
+        while peer.recent_chat.front().is_some_and(|t| now - *t > CHAT_WINDOW) {
+            peer.recent_chat.pop_front();
+        }
+        if peer.recent_chat.len() >= CHAT_BURST {
+            warn!("id {from}: слишком много сообщений в чат, пропускаю");
+            return;
+        }
+        peer.recent_chat.push_back(now);
+
+        let message = ChatMessage {
+            id: self.next_message_id,
+            from,
+            name: peer.info.name.clone(),
+            text,
+            time_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_millis() as u64),
+        };
+        self.next_message_id += 1;
+        if self.chat.len() == vwf_proto::CHAT_HISTORY {
+            self.chat.pop_front();
+        }
+        self.chat.push_back(message.clone());
+        let msg = ServerMsg::Chat(message);
+        for peer in self.peers.values() {
+            let _ = peer.control.send(msg.clone());
+        }
+    }
+
     fn broadcast(&self, except: PeerId, msg: &ServerMsg) {
         for (id, peer) in &self.peers {
             if *id != except {
@@ -289,6 +349,7 @@ impl Room {
             ClientMsg::SetServerMute { id, muted } if from_admin => {
                 self.update(id, |p| p.server_muted = muted);
             }
+            ClientMsg::Chat { text } => self.chat(from, &text),
             ClientMsg::Kick { id } if from_admin && id != from => {
                 if let Some(peer) = self.peers.get(&id) {
                     info!("хост выгнал {} (id {id})", peer.info.name);
@@ -345,9 +406,13 @@ async fn handle_connection(
         peers.sort_by_key(|p| p.id);
         // Welcome кладём в очередь до того, как участник попадёт в комнату, —
         // так он гарантированно получит его раньше любых PeerJoined/PeerLeft.
-        let _ = control_tx.send(ServerMsg::Welcome { you: info.clone(), peers });
+        let chat = room.chat.iter().cloned().collect();
+        let _ = control_tx.send(ServerMsg::Welcome { you: info.clone(), peers, chat });
         room.broadcast(id, &ServerMsg::PeerJoined(info.clone()));
-        room.peers.insert(id, Peer { info, conn: conn.clone(), control: control_tx });
+        room.peers.insert(
+            id,
+            Peer { info, conn: conn.clone(), control: control_tx, recent_chat: VecDeque::new() },
+        );
         id
     };
     let role = if admin { ", хост" } else { "" };
@@ -409,6 +474,18 @@ async fn handle_connection(
     }
     info!("- {name} (id {id}): {reason}");
     Ok(())
+}
+
+/// Убирает управляющие символы (кроме переноса строки и табуляции), пустые
+/// строки по краям и обрезает слишком длинное сообщение.
+fn sanitize_chat(text: &str) -> String {
+    text.trim()
+        .chars()
+        .filter(|c| !c.is_control() || matches!(c, '\n' | '\t'))
+        .take(vwf_proto::MAX_CHAT_CHARS)
+        .collect::<String>()
+        .trim_end()
+        .to_string()
 }
 
 fn sanitize_name(name: &str) -> String {

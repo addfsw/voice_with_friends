@@ -131,11 +131,20 @@
         </div>
       </details>
 
-      <div class="section-head people-head">
-        <span>В комнате</span>
-        <span id="people-count" class="count"></span>
+      <div id="room-tabs" class="segmented tabs" role="tablist">
+        <button type="button" data-value="people">Участники <span id="people-count" class="count"></span></button>
+        <button type="button" data-value="chat">Чат <span id="chat-unread" class="unread" hidden></span></button>
       </div>
+
       <ul id="peers" class="peers"></ul>
+
+      <section id="chat" class="chat" hidden>
+        <div id="chat-log" class="chat-log" aria-live="polite"></div>
+        <form id="chat-form" class="composer" autocomplete="off">
+          <textarea id="chat-input" rows="1" maxlength="2000" placeholder="Сообщение… (Shift+Enter — новая строка)"></textarea>
+          <button type="submit" id="chat-send" class="icon-btn send" data-icon="send" aria-label="Отправить" title="Отправить (Enter)"></button>
+        </form>
+      </section>
 
       <section class="card dock">
         <div class="meter" title="Громкость микрофона и порог активации">
