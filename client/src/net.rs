@@ -66,6 +66,18 @@ impl Closer {
         })
     }
 
+    /// Сервер сам закрыл соединение (остановился, выгнал нас), а не связь
+    /// пропала. После такого переподключаться не нужно.
+    pub fn closed_by_server(&self) -> bool {
+        matches!(
+            self.conn.close_reason(),
+            Some(
+                quinn::ConnectionError::ApplicationClosed(_)
+                    | quinn::ConnectionError::ConnectionClosed(_)
+            )
+        )
+    }
+
     pub async fn close(&self) {
         self.conn.close(0u32.into(), b"bye");
         // Даём серверу узнать о закрытии, но не ждём вечно.

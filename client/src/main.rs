@@ -87,6 +87,9 @@ struct AudioArgs {
     /// сбои вывода (щелчки), увеличьте до 30–40.
     #[arg(long, default_value_t = 20)]
     playback_ms: u32,
+    /// Без звуков событий (кто-то вошёл или вышел).
+    #[arg(long)]
+    no_cues: bool,
 }
 
 impl AudioArgs {
@@ -100,6 +103,7 @@ impl AudioArgs {
                 None => Delay::default(),
             },
             playback_ms: self.playback_ms,
+            cues: !self.no_cues,
         }
     }
 
@@ -274,7 +278,7 @@ async fn connect(
                     }
                 }
                 CallEvent::PeerUpdated(_) => {}
-                CallEvent::Ended(reason) => {
+                CallEvent::Ended { reason, .. } => {
                     println!("Звонок завершён: {reason}.");
                     break;
                 }

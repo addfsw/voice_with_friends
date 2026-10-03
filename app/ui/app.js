@@ -325,6 +325,20 @@ $("host-btn").addEventListener("click", async () => {
 // ---------------------------------------------------------------------------
 
 function enterRoom(server, name, joined) {
+  call.server = server;
+  setReconnecting(false);
+  applyJoined(joined);
+  renderHostCard();
+  disarmLeave();
+  showView("room");
+  stopLanSearch();
+  clearInterval(call.statusTimer);
+  call.statusTimer = setInterval(refreshStatus, 100);
+}
+
+// Сведения о комнате после (пере)подключения.
+function applyJoined(joined) {
+  const server = call.server;
   call.me = joined.me;
   call.peers = new Map(joined.peers.map((p) => [p.id, p]));
   $("room-title").textContent = call.hosting?.name ?? "Комната";
@@ -336,17 +350,37 @@ function enterRoom(server, name, joined) {
   $("server-code").textContent = joined.serverCode;
   showDevice("input", joined.inputDevice);
   showDevice("output", joined.outputDevice);
-  renderHostCard();
-  disarmLeave();
   renderPeers();
   for (const [id, peer] of call.peers) applySavedVolume(id, peer.name);
-  showView("room");
-  stopLanSearch();
-  clearInterval(call.statusTimer);
-  call.statusTimer = setInterval(refreshStatus, 100);
 }
 
+// Связь пропала, программа пытается вернуться в комнату.
+function setReconnecting(on, attempt = 0) {
+  call.reconnecting = on;
+  $("room-view").classList.toggle("reconnecting", on);
+  $("reconnect-banner").hidden = !on;
+  if (on) {
+    $("reconnect-text").textContent =
+      attempt > 1
+        ? `Связь пропала. Возвращаюсь в комнату… (попытка ${attempt})`
+        : "Связь пропала. Возвращаюсь в комнату…";
+  }
+}
+
+listen("call-reconnecting", ({ payload }) => {
+  if (!call.me) return; // уже вышли из комнаты
+  setReconnecting(true, payload.attempt);
+});
+
+listen("call-reconnected", ({ payload }) => {
+  if (!call.reconnecting) return; // пока шло переподключение, нажали «Выйти»
+  setReconnecting(false);
+  applyJoined(payload);
+  toast("Связь восстановлена");
+});
+
 function leaveRoom(reason) {
+  setReconnecting(false);
   call.hosting = null;
   call.me = null;
   closeMenus();
@@ -673,6 +707,15 @@ listen("peer-updated", ({ payload }) => {
   renderPeers();
 });
 
+// Микрофон или звук переключили из меню в трее.
+listen("local-status", ({ payload }) => {
+  if (!call.me) return;
+  if (call.me.muted === payload.muted && call.me.deafened === payload.deafened) return;
+  call.me.muted = payload.muted;
+  call.me.deafened = payload.deafened;
+  renderPeers();
+});
+
 listen("call-ended", async ({ payload }) => {
   await invoke("disconnect").catch(() => {});
   if (call.hosting) await invoke("stop_server").catch(() => {});
@@ -821,6 +864,12 @@ function updateModeRows() {
   $("ptt-hint").hidden = mode !== "ptt";
   $("threshold-mark").hidden = mode !== "voice";
 }
+
+$("cues").addEventListener("change", () => {
+  const enabled = $("cues").checked;
+  store.set("cues", enabled);
+  invoke("set_cues", { enabled });
+});
 
 $("denoise").addEventListener("change", () => {
   const enabled = $("denoise").checked;
@@ -1013,6 +1062,85 @@ for (const kind of ["input", "output"]) {
 }
 
 // ---------------------------------------------------------------------------
+// Трей и обновления
+// ---------------------------------------------------------------------------
+
+$("close-to-tray").addEventListener("change", () => {
+  const enabled = $("close-to-tray").checked;
+  store.set("closeToTray", enabled);
+  invoke("set_close_to_tray", { enabled });
+});
+
+let availableUpdate = null;
+
+// Проверяет, есть ли новая версия. quiet — без сообщений, если её нет.
+async function checkUpdate(quiet) {
+  const status = $("update-status");
+  if (!quiet) status.textContent = "Проверяю…";
+  try {
+    const info = await invoke("check_update");
+    $("app-version").textContent = info.current;
+    if (!info.enabled) {
+      status.textContent = "Эта сборка не обновляется сама: она собрана вручную.";
+      $("update-check").hidden = true;
+      return;
+    }
+    availableUpdate = info.available;
+    if (info.available) {
+      status.textContent = `Доступна версия ${info.available}`;
+      showUpdateBar();
+    } else {
+      status.textContent = quiet ? "" : "У вас последняя версия.";
+    }
+  } catch (e) {
+    if (!quiet) status.textContent = errorText(e);
+  }
+}
+
+function showUpdateBar() {
+  if (!availableUpdate || store.get("dismissedUpdate", null) === availableUpdate) return;
+  $("update-bar-text").textContent = `Доступна новая версия ${availableUpdate}`;
+  $("update-bar").hidden = false;
+}
+
+$("update-check").addEventListener("click", async () => {
+  store.set("dismissedUpdate", null);
+  await checkUpdate(false);
+});
+
+$("update-dismiss").addEventListener("click", () => {
+  store.set("dismissedUpdate", availableUpdate);
+  $("update-bar").hidden = true;
+});
+
+$("update-install").addEventListener("click", async () => {
+  const button = $("update-install");
+  // Во время разговора — переспрашиваем: программа перезапустится.
+  if (call.me && !button.classList.contains("armed")) {
+    button.classList.add("armed");
+    button.textContent = "Звонок прервётся. Обновить?";
+    return;
+  }
+  button.disabled = true;
+  button.textContent = "Скачиваю…";
+  try {
+    await invoke("install_update");
+  } catch (e) {
+    toast(errorText(e));
+    button.disabled = false;
+    button.classList.remove("armed");
+    button.textContent = "Обновить";
+  }
+});
+
+listen("update-progress", ({ payload }) => {
+  const { downloaded, total } = payload;
+  $("update-install").textContent = total
+    ? `Скачиваю… ${Math.floor((downloaded / total) * 100)}%`
+    : `Скачиваю… ${(downloaded / 1048576).toFixed(1)} МБ`;
+});
+
+// ---------------------------------------------------------------------------
 // Запуск
 // ---------------------------------------------------------------------------
 
@@ -1024,6 +1152,10 @@ async function init() {
   const vad = store.get("vad", -45);
   const pttKey = store.get("pttKey", null);
   const denoise = store.get("denoise", true);
+  const cues = store.get("cues", true);
+  $("cues").checked = cues;
+  const closeToTray = store.get("closeToTray", true);
+  $("close-to-tray").checked = closeToTray;
   currentMode = mode;
   segmented($("mode"), mode, setMode);
   $("denoise").checked = denoise;
@@ -1036,6 +1168,8 @@ async function init() {
   await loadDevices();
   try {
     await invoke("set_noise_suppression", { enabled: denoise });
+    await invoke("set_cues", { enabled: cues });
+    await invoke("set_close_to_tray", { enabled: closeToTray });
     await invoke("set_vad_threshold", { db: vad });
     await invoke("set_ptt_key", { key: pttKey });
     await invoke("set_mode", { mode });
@@ -1045,3 +1179,4 @@ async function init() {
 }
 
 init();
+checkUpdate(true);

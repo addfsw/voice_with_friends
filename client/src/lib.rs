@@ -3,6 +3,7 @@
 
 pub mod audio;
 pub mod call;
+pub mod cues;
 pub mod discovery;
 pub mod jitter;
 pub mod known_servers;

@@ -8,7 +8,7 @@
 //! звука будит свой поток (`Wakeup`), поэтому кадр кодируется сразу, как только
 //! набрался, а микшер доливает звук сразу, как только карта его забрала.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -22,6 +22,7 @@ use vwf_proto::{FRAME_MS, FRAME_SAMPLES, PeerId, SAMPLE_RATE};
 use nnnoiseless::DenoiseState;
 
 use crate::audio::Wakeup;
+use crate::cues::Cue;
 use crate::jitter::{Delay, JitterBuffer, Pop};
 use crate::resample::Resampler;
 
@@ -397,6 +398,10 @@ pub struct Mixer {
     /// «Выключить звук»: ничего не выводить, но продолжать принимать пакеты.
     deafened: AtomicBool,
     delay: Delay,
+    /// Играть ли звуки событий.
+    cues_enabled: AtomicBool,
+    /// Ещё не сыгранная часть звуков событий.
+    cue: Mutex<VecDeque<f32>>,
 }
 
 impl Mixer {
@@ -407,6 +412,34 @@ impl Mixer {
             volumes: Mutex::new(HashMap::new()),
             deafened: AtomicBool::new(false),
             delay,
+            cues_enabled: AtomicBool::new(true),
+            cue: Mutex::new(VecDeque::new()),
+        }
+    }
+
+    /// Включает или выключает звуки событий.
+    pub fn set_cues_enabled(&self, enabled: bool) {
+        self.cues_enabled.store(enabled, Ordering::Relaxed);
+        if !enabled {
+            self.cue.lock().unwrap().clear();
+        }
+    }
+
+    /// Проигрывает звук события. Если звук выключен (deafen), молчат и звуки
+    /// о том, что кто-то пришёл или ушёл; отклик на свои кнопки остаётся.
+    pub fn play_cue(&self, cue: Cue) {
+        if !self.cues_enabled.load(Ordering::Relaxed)
+            || (self.deafened() && matches!(cue, Cue::PeerJoined | Cue::PeerLeft))
+        {
+            return;
+        }
+        let mut queue = self.cue.lock().unwrap();
+        // Если предыдущий звук ещё играет, новый накладывается на него.
+        for (i, s) in cue.render().into_iter().enumerate() {
+            match queue.get_mut(i) {
+                Some(q) => *q += s,
+                None => queue.push_back(s),
+            }
         }
     }
 
@@ -500,6 +533,12 @@ impl Mixer {
             for (o, v) in out.iter_mut().zip(voice.iter()) {
                 *o += v * volume;
             }
+        }
+        drop(speakers);
+        let mut cue = self.cue.lock().unwrap();
+        let n = cue.len().min(FRAME_SAMPLES);
+        for (o, s) in out.iter_mut().zip(cue.drain(..n)) {
+            *o += s;
         }
         // Если несколько человек кричат одновременно, сумма может выйти за [-1, 1].
         for s in out.iter_mut() {
@@ -641,6 +680,32 @@ mod tests {
         assert!(state.should_transmit(&mut vad, -90.0));
         state.set_muted(true);
         assert!(!state.should_transmit(&mut vad, -20.0));
+    }
+
+    #[test]
+    fn cues_are_mixed_and_respect_settings() {
+        let loud = |mixer: &Mixer| {
+            let mut out = [0f32; FRAME_SAMPLES];
+            mixer.mix_frame(&mut out);
+            level_db(&out) > -40.0
+        };
+        let mixer = Mixer::new(Delay::default());
+        assert!(!loud(&mixer), "без звуков — тишина");
+        mixer.play_cue(Cue::PeerJoined);
+        assert!(loud(&mixer));
+
+        // Звук выключен: о входе и выходе людей молчим, отклик на кнопки слышен.
+        let mixer = Mixer::new(Delay::default());
+        mixer.set_deafened(true);
+        mixer.play_cue(Cue::PeerJoined);
+        assert!(!loud(&mixer));
+        mixer.play_cue(Cue::Deafened);
+        assert!(loud(&mixer));
+
+        let mixer = Mixer::new(Delay::default());
+        mixer.set_cues_enabled(false);
+        mixer.play_cue(Cue::Muted);
+        assert!(!loud(&mixer));
     }
 
     /// После смены микрофона новый кодер продолжает нумерацию кадров старого:

@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use vwf_proto::{ClientMsg, PeerId, PeerInfo, ServerMsg};
 
 use crate::audio::{self, Wakeup};
+use crate::cues::Cue;
 use crate::jitter::Delay;
 use crate::net;
 use ringbuf::{HeapCons, HeapProd};
@@ -25,6 +26,8 @@ pub struct AudioSettings {
     pub jitter: Delay,
     /// Сколько звука держать готовым для звуковой карты, мс.
     pub playback_ms: u32,
+    /// Звуки событий: кто-то вошёл или вышел, выключен микрофон и т.п.
+    pub cues: bool,
 }
 
 impl Default for AudioSettings {
@@ -35,6 +38,7 @@ impl Default for AudioSettings {
             tx: TxSettings::default(),
             jitter: Delay::default(),
             playback_ms: 20,
+            cues: true,
         }
     }
 }
@@ -75,6 +79,7 @@ impl AudioEngine {
         send: impl Fn(u32, &[u8]) + Send + Sync + 'static,
     ) -> anyhow::Result<Self> {
         let mixer = Arc::new(Mixer::new(settings.jitter));
+        mixer.set_cues_enabled(settings.cues);
         let output = start_output(&mixer, settings, settings.output.as_deref())?;
         let send: SendVoice = Arc::new(send);
         let input = start_input(&tx_state, settings, &send, settings.input.as_deref(), 0)?;
@@ -194,7 +199,12 @@ pub enum CallEvent {
     /// Изменился статус участника или наш собственный (`id` совпадает с `Call::me`).
     PeerUpdated(PeerInfo),
     /// Соединение закрылось не по нашей инициативе.
-    Ended(String),
+    Ended {
+        reason: String,
+        /// Связь потерялась (а не сервер нас отключил или остановился):
+        /// имеет смысл переподключиться.
+        lost: bool,
+    },
 }
 
 /// Состояние комнаты, которое обновляет задача управляющего канала.
@@ -261,12 +271,14 @@ impl Call {
                 let reason = loop {
                     match session.next_event().await {
                         Ok(Some(ServerMsg::PeerJoined(peer))) => {
+                            mixer.play_cue(Cue::PeerJoined);
                             room.lock().unwrap().peers.insert(peer.id, peer.clone());
                             on_event(CallEvent::PeerJoined(peer));
                         }
                         Ok(Some(ServerMsg::PeerLeft { id })) => {
                             room.lock().unwrap().peers.remove(&id);
                             mixer.remove_speaker(id);
+                            mixer.play_cue(Cue::PeerLeft);
                             on_event(CallEvent::PeerLeft(id));
                         }
                         Ok(Some(ServerMsg::PeerUpdated(peer))) => {
@@ -287,9 +299,10 @@ impl Call {
                 };
                 // Если сервер сам назвал причину (например, «сервер остановлен»),
                 // она понятнее технического текста ошибки.
+                let lost = !closer.closed_by_server();
                 let reason = closer.close_reason().unwrap_or(reason);
                 if !hanging_up.load(Ordering::Relaxed) {
-                    on_event(CallEvent::Ended(reason));
+                    on_event(CallEvent::Ended { reason, lost });
                 }
             })
         };
@@ -305,6 +318,7 @@ impl Call {
             tasks: vec![voice_task, control_task],
         };
         call.sync_status();
+        call.audio.mixer.play_cue(Cue::Connected);
         Ok(call)
     }
 

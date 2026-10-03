@@ -1,0 +1,135 @@
+# Сборка установщика для Windows и публикация новой версии.
+#
+# Новая версия: создайте тег вида v0.2.0 и отправьте его на GitHub:
+#   git tag v0.2.0
+#   git push origin v0.2.0
+# Через ~15 минут на странице Releases появится установщик и latest.json,
+# по которому программы друзей узнают об обновлении.
+#
+# Что нужно настроить один раз (Settings → Secrets and variables → Actions),
+# подробно — в README, раздел «Выпуск новой версии»:
+#   секреты:    TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+#               RELEASE_TOKEN — только если релизы публикуются в другой репозиторий
+#   переменные: UPDATER_PUBKEY
+#               RELEASE_REPO — куда публиковать (owner/repo), если не сюда
+#
+# При изменении этого файла сборка запускается и без тега — проверить,
+# что всё собирается. Тогда ничего не публикуется, а установщик можно скачать
+# со страницы запуска (Artifacts).
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+    branches: ["**"]
+    paths: [".github/workflows/release.yml"]
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    env:
+      RELEASE_REPO: ${{ vars.RELEASE_REPO || github.repository }}
+      PUBLISH: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Версия и адрес обновлений
+        shell: bash
+        run: |
+          if [ "$PUBLISH" = true ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            # Проверочная сборка: версия только из цифр, как требует установщик.
+            VERSION="0.0.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          # Вшиваются в программу при сборке (см. app/src/update.rs).
+          echo "POIGRULKINY_UPDATE_URL=https://github.com/$RELEASE_REPO/releases/latest/download/latest.json" >> "$GITHUB_ENV"
+          echo "POIGRULKINY_UPDATER_PUBKEY=${{ vars.UPDATER_PUBKEY }}" >> "$GITHUB_ENV"
+
+      - name: Проверка ключа подписи
+        if: env.PUBLISH == 'true'
+        shell: bash
+        env:
+          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$KEY" ] || [ -z "$POIGRULKINY_UPDATER_PUBKEY" ]; then
+            echo "::error::Не настроены TAURI_SIGNING_PRIVATE_KEY и UPDATER_PUBKEY — см. README, «Выпуск новой версии»."
+            exit 1
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Установка tauri-cli
+        uses: taiki-e/install-action@v2
+        with:
+          tool: tauri-cli@2
+
+      - name: Сборка
+        shell: bash
+        working-directory: app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ "$PUBLISH" = true ]; then
+            # Подписанный установщик (.sig) — для автообновления.
+            CONFIG="{\"version\":\"$VERSION\",\"bundle\":{\"createUpdaterArtifacts\":true}}"
+          else
+            CONFIG="{\"version\":\"$VERSION\"}"
+          fi
+          cargo tauri build --config "$CONFIG"
+
+      - name: Файлы релиза
+        shell: bash
+        run: |
+          mkdir dist
+          # GitHub портит русские буквы в именах файлов — называем латиницей.
+          SETUP="Poigrulkiny_${VERSION}_x64-setup.exe"
+          cp target/release/bundle/nsis/*_x64-setup.exe "dist/$SETUP"
+          if [ "$PUBLISH" = true ]; then
+            cp target/release/bundle/nsis/*_x64-setup.exe.sig "dist/$SETUP.sig"
+            python - <<EOF
+          import json, datetime
+          sig = open("dist/$SETUP.sig").read().strip()
+          url = "https://github.com/$RELEASE_REPO/releases/download/v$VERSION/$SETUP"
+          now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+          latest = {
+              "version": "$VERSION",
+              "notes": "Поигрулькины $VERSION",
+              "pub_date": now,
+              "platforms": {"windows-x86_64": {"signature": sig, "url": url}},
+          }
+          json.dump(latest, open("dist/latest.json", "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+          EOF
+          fi
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Poigrulkiny-${{ env.VERSION }}
+          path: dist/
+
+      - name: Публикация
+        if: env.PUBLISH == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: ${{ env.RELEASE_REPO }}
+          token: ${{ secrets.RELEASE_TOKEN || github.token }}
+          tag_name: ${{ github.ref_name }}
+          name: Поигрулькины ${{ env.VERSION }}
+          body: |
+            Скачайте и запустите `Poigrulkiny_${{ env.VERSION }}_x64-setup.exe`.
+            Если Windows покажет «Система Windows защитила ваш компьютер» —
+            «Подробнее» → «Выполнить в любом случае» (у программы нет платной подписи).
+            Уже установленная программа обновится сама.
+          files: |
+            dist/Poigrulkiny_${{ env.VERSION }}_x64-setup.exe
+            dist/Poigrulkiny_${{ env.VERSION }}_x64-setup.exe.sig
+            dist/latest.json

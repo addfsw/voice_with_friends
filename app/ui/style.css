@@ -603,6 +603,41 @@ button.leave.armed {
   background: var(--danger);
 }
 
+/* Плашка «переподключаюсь» */
+
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--warning) 14%, transparent);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--warning) 35%, transparent);
+  border-top-color: var(--warning);
+  animation: spin 800ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+#room-view.reconnecting .peers,
+#room-view.reconnecting .dock {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
 /* Карточка хоста */
 
 .host-card {
@@ -1200,6 +1235,44 @@ button.key.listening {
 
 .swatches button.active {
   box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent);
+}
+
+.update-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+button.small-btn {
+  padding: 6px 12px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+/* Полоска «доступна новая версия» */
+
+.update-bar {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 8px 14px;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  box-shadow: var(--shadow-pop);
+  font-size: 13px;
+  animation: rise 200ms ease-out;
+}
+
+#update-bar-text {
+  flex: 1;
+  min-width: 0;
 }
 
 @keyframes fade {

@@ -8,8 +8,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod host;
+mod tray;
+mod update;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -17,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use vwf_client::call::{AudioSettings, Call, CallEvent};
+use vwf_client::cues::Cue;
 use vwf_client::known_servers::KnownServers;
 use vwf_client::net::{CertificateChanged, Trust};
 use vwf_client::pipeline::{TxMode, TxState};
@@ -37,6 +40,16 @@ struct AppState {
     host: tokio::sync::Mutex<Option<HostedServer>>,
     /// Запомненные сертификаты серверов (загружаются при запуске).
     known: Mutex<KnownServers>,
+    /// Номер текущего звонка. Растёт при каждом подключении и отключении;
+    /// по нему отбрасываются события и переподключения старых звонков.
+    generation: AtomicU64,
+    /// Параметры текущего звонка — для переподключения.
+    params: Mutex<Option<CallParams>>,
+    /// Звуки событий.
+    cues: AtomicBool,
+    /// Крестик окна сворачивает программу в трей (если значок в трее есть).
+    close_to_tray: AtomicBool,
+    tray_ready: AtomicBool,
 }
 
 /// Ошибки отдаём в интерфейс строкой — он покажет её пользователю.
@@ -100,7 +113,7 @@ impl From<PeerInfo> for Peer {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct Joined {
     me: Peer,
@@ -152,45 +165,95 @@ impl From<anyhow::Error> for ConnectError {
     }
 }
 
+/// С какими параметрами подключались: нужны, чтобы переподключиться.
+#[derive(Clone)]
+struct CallParams {
+    server: String,
+    name: String,
+    input: Option<String>,
+    output: Option<String>,
+}
+
 #[tauri::command]
 async fn connect(
     app: AppHandle,
     state: State<'_, AppState>,
     args: ConnectArgs,
 ) -> Result<Joined, ConnectError> {
-    let mut slot = state.call.lock().await;
-    if let Some(old) = slot.take() {
-        old.hang_up().await;
-    }
-
     let non_empty = |s: Option<String>| s.filter(|s| !s.trim().is_empty());
-    let settings = AudioSettings {
+    let params = CallParams {
+        server: args.server.trim().to_string(),
+        name: args.name.trim().to_string(),
         input: non_empty(args.input),
         output: non_empty(args.output),
+    };
+    // Новый звонок — новое поколение: события и переподключение старого
+    // звонка, если он ещё где-то в пути, больше ни на что не влияют.
+    let generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
+    *state.params.lock().unwrap() = Some(params.clone());
+    start_call(&app, &state, &params, generation).await
+}
+
+/// Подключается и кладёт звонок в `state.call`. Если за это время пользователь
+/// нажал «Выйти» или подключился заново (сменилось поколение), новый звонок
+/// сразу завершается.
+///
+/// Пока идёт подключение (до 20 с, если сервер не отвечает), `state.call` не
+/// заблокирован: иначе кнопки «Выйти», микрофона и т.п. ждали бы его.
+async fn start_call(
+    app: &AppHandle,
+    state: &AppState,
+    params: &CallParams,
+    generation: u64,
+) -> Result<Joined, ConnectError> {
+    let cancelled =
+        || ConnectError::Message { message: "подключение отменено".into() };
+    let old = state.call.lock().await.take();
+    if let Some(old) = old {
+        old.hang_up().await;
+    }
+    if state.generation.load(Ordering::SeqCst) != generation {
+        return Err(cancelled());
+    }
+
+    let settings = AudioSettings {
+        input: params.input.clone(),
+        output: params.output.clone(),
+        cues: state.cues.load(Ordering::Relaxed),
         ..AudioSettings::default()
     };
-    let server = args.server.trim();
     // К своему серверу подключаемся с секретом хоста и знаем его сертификат
     // точно. Для остальных — запоминаем при первом подключении и сверяем.
-    let own = state.host.lock().await.as_ref().and_then(|h| h.own(server));
+    let own = state.host.lock().await.as_ref().and_then(|h| h.own(&params.server));
     let (admin_token, trust) = match &own {
         Some((token, fingerprint)) => (Some(token.as_str()), Trust::Exact(fingerprint)),
         None => (None, Trust::Known(&state.known)),
     };
     let events = app.clone();
     let call = Call::start(
-        server,
-        args.name.trim(),
+        &params.server,
+        &params.name,
         admin_token,
         trust,
         &settings,
         state.tx.clone(),
         move |event| {
+            // События уже закончившегося звонка не нужны.
+            let state = events.state::<AppState>();
+            if state.generation.load(Ordering::SeqCst) != generation {
+                return;
+            }
             let _ = match event {
                 CallEvent::PeerJoined(p) => events.emit("peer-joined", Peer::from(p)),
                 CallEvent::PeerLeft(id) => events.emit("peer-left", PeerLeft { id }),
                 CallEvent::PeerUpdated(p) => events.emit("peer-updated", Peer::from(p)),
-                CallEvent::Ended(reason) => events.emit("call-ended", CallEnded { reason }),
+                CallEvent::Ended { reason, lost: true } => {
+                    spawn_reconnect(events.clone(), generation, reason);
+                    Ok(())
+                }
+                CallEvent::Ended { reason, lost: false } => {
+                    events.emit("call-ended", CallEnded { reason })
+                }
             };
         },
     )
@@ -211,8 +274,77 @@ async fn connect(
         input_device: call.audio.capture().device_name.clone(),
         output_device: call.audio.playback().device_name.clone(),
     };
-    *slot = Some(call);
+    let mut slot = state.call.lock().await;
+    if state.generation.load(Ordering::SeqCst) != generation {
+        drop(slot);
+        call.hang_up().await;
+        return Err(cancelled());
+    }
+    if let Some(other) = slot.replace(call) {
+        // Сюда можно попасть, только если два подключения одного поколения
+        // шли одновременно, — оставляем последнее.
+        drop(slot);
+        other.hang_up().await;
+    }
     Ok(joined)
+}
+
+/// Сколько пытаться вернуться в комнату после потери связи.
+const RECONNECT_FOR: Duration = Duration::from_secs(90);
+/// Пауза между попытками.
+const RECONNECT_PAUSE: Duration = Duration::from_secs(3);
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct Reconnecting {
+    reason: String,
+    attempt: u32,
+}
+
+/// Запускает [`reconnect`] в фоне. Отдельная функция (а не вызов прямо из
+/// `start_call`): иначе компилятор не может доказать, что future, который
+/// ссылается сам на себя через `start_call`, можно передавать между потоками.
+fn spawn_reconnect(app: AppHandle, generation: u64, reason: String) {
+    let task: std::pin::Pin<Box<dyn Future<Output = ()> + Send>> =
+        Box::pin(reconnect(app, generation, reason));
+    tauri::async_runtime::spawn(task);
+}
+
+/// Связь со звонком `generation` потерялась: пробуем вернуться в ту же комнату,
+/// пока пользователь не нажмёт «Выйти» или не выйдет время.
+async fn reconnect(app: AppHandle, generation: u64, reason: String) {
+    let state = app.state::<AppState>();
+    let current = || state.generation.load(Ordering::SeqCst) == generation;
+    let Some(params) = state.params.lock().unwrap().clone() else { return };
+    let deadline = tokio::time::Instant::now() + RECONNECT_FOR;
+    let mut last_error = reason.clone();
+    for attempt in 1.. {
+        if !current() {
+            return;
+        }
+        let _ = app.emit("call-reconnecting", Reconnecting { reason: reason.clone(), attempt });
+        match start_call(&app, &state, &params, generation).await {
+            Ok(joined) => {
+                if current() {
+                    let _ = app.emit("call-reconnected", joined);
+                }
+                return;
+            }
+            // Сертификат сменился — решать пользователю, а не программе.
+            Err(ConnectError::CertificateChanged { .. }) => {
+                last_error = "сертификат сервера изменился, подключитесь заново".into();
+                break;
+            }
+            Err(ConnectError::Message { message }) => last_error = message,
+        }
+        if tokio::time::Instant::now() + RECONNECT_PAUSE > deadline {
+            break;
+        }
+        tokio::time::sleep(RECONNECT_PAUSE).await;
+    }
+    if current() {
+        let _ = app.emit("call-ended", CallEnded { reason: last_error });
+    }
 }
 
 /// Пользователь подтвердил новый сертификат сервера.
@@ -223,6 +355,9 @@ fn trust_server(state: State<'_, AppState>, address: String, fingerprint: String
 
 #[tauri::command]
 async fn disconnect(state: State<'_, AppState>) -> CmdResult<()> {
+    // Сначала новое поколение: так остановится и переподключение, если оно идёт.
+    state.generation.fetch_add(1, Ordering::SeqCst);
+    *state.params.lock().unwrap() = None;
     if let Some(call) = state.call.lock().await.take() {
         call.hang_up().await;
     }
@@ -291,22 +426,73 @@ async fn stop_server(state: State<'_, AppState>) -> CmdResult<()> {
 }
 
 #[tauri::command]
-async fn set_muted(state: State<'_, AppState>, muted: bool) -> CmdResult<()> {
-    state.tx.set_muted(muted);
-    if let Some(call) = state.call.lock().await.as_ref() {
-        call.sync_status();
-    }
+async fn set_muted(app: AppHandle, muted: bool) -> CmdResult<()> {
+    apply_muted(&app, muted).await;
     Ok(())
 }
 
 #[tauri::command]
-async fn set_deafened(state: State<'_, AppState>, deafened: bool) -> CmdResult<()> {
+async fn set_deafened(app: AppHandle, deafened: bool) -> CmdResult<()> {
+    apply_deafened(&app, deafened).await;
+    Ok(())
+}
+
+#[derive(Serialize, Clone)]
+struct LocalStatus {
+    muted: bool,
+    deafened: bool,
+}
+
+/// Выключает или включает микрофон — по кнопке в окне или из меню трея.
+async fn apply_muted(app: &AppHandle, muted: bool) {
+    let state = app.state::<AppState>();
+    state.tx.set_muted(muted);
+    if let Some(call) = state.call.lock().await.as_ref() {
+        call.sync_status();
+        call.mixer().play_cue(if muted { Cue::Muted } else { Cue::Unmuted });
+    }
+    local_status_changed(app);
+}
+
+/// Выключает или включает звук собеседников.
+async fn apply_deafened(app: &AppHandle, deafened: bool) {
+    let state = app.state::<AppState>();
     state.deafened.store(deafened, Ordering::Relaxed);
     if let Some(call) = state.call.lock().await.as_ref() {
         call.mixer().set_deafened(deafened);
         call.sync_status();
+        call.mixer().play_cue(if deafened { Cue::Deafened } else { Cue::Undeafened });
     }
-    Ok(())
+    local_status_changed(app);
+}
+
+/// Сообщает окну и трею, выключены ли микрофон и звук.
+fn local_status_changed(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let status =
+        LocalStatus { muted: state.tx.muted(), deafened: state.deafened.load(Ordering::Relaxed) };
+    if let Some(tray) = app.try_state::<tray::TrayItems>() {
+        tray.show_status(status.muted, status.deafened);
+    }
+    let _ = app.emit("local-status", status);
+}
+
+/// Кладёт трубку и останавливает свою комнату — перед выходом из программы.
+async fn shutdown(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    state.generation.fetch_add(1, Ordering::SeqCst);
+    if let Some(call) = state.call.lock().await.take() {
+        call.hang_up().await;
+    }
+    if let Some(server) = state.host.lock().await.take() {
+        server.stop().await;
+    }
+}
+
+/// Сворачивать ли программу в трей по крестику окна.
+#[tauri::command]
+fn set_close_to_tray(state: State<'_, AppState>, enabled: bool) {
+    state.close_to_tray.store(enabled, Ordering::Relaxed);
 }
 
 /// Только хост: заглушить участника для всех или вернуть ему голос.
@@ -347,6 +533,9 @@ async fn set_input_device(
     let Some(call) = call.as_mut() else { return Ok(None) };
     let device = device.filter(|d| !d.is_empty());
     call.set_input(device.as_deref()).map_err(|e| format!("{e:#}"))?;
+    if let Some(params) = state.params.lock().unwrap().as_mut() {
+        params.input = device;
+    }
     Ok(Some(call.audio.capture().device_name.clone()))
 }
 
@@ -360,6 +549,9 @@ async fn set_output_device(
     let Some(call) = call.as_mut() else { return Ok(None) };
     let device = device.filter(|d| !d.is_empty());
     call.set_output(device.as_deref()).map_err(|e| format!("{e:#}"))?;
+    if let Some(params) = state.params.lock().unwrap().as_mut() {
+        params.output = device;
+    }
     Ok(Some(call.audio.playback().device_name.clone()))
 }
 
@@ -393,6 +585,16 @@ async fn discover_servers() -> CmdResult<Vec<LanServer>> {
             compatible: s.compatible,
         })
         .collect())
+}
+
+/// Звуки событий: вход и выход участников, кнопки микрофона и звука.
+#[tauri::command]
+async fn set_cues(state: State<'_, AppState>, enabled: bool) -> CmdResult<()> {
+    state.cues.store(enabled, Ordering::Relaxed);
+    if let Some(call) = state.call.lock().await.as_ref() {
+        call.mixer().set_cues_enabled(enabled);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -473,7 +675,10 @@ async fn status(state: State<'_, AppState>) -> CmdResult<Status> {
 
 fn main() {
     tauri::Builder::default()
+        // Первым: второй запуск программы просто показывает уже открытое окно.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| tray::show_window(app)))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState {
             tx: Arc::new(TxState::default()),
             call: tokio::sync::Mutex::new(None),
@@ -481,11 +686,25 @@ fn main() {
             ptt_key: Mutex::new(None),
             host: tokio::sync::Mutex::new(None),
             known: Mutex::new(KnownServers::in_memory()),
+            generation: AtomicU64::new(0),
+            params: Mutex::new(None),
+            cues: AtomicBool::new(true),
+            close_to_tray: AtomicBool::new(true),
+            tray_ready: AtomicBool::new(false),
         })
         .setup(|app| {
             // Файл с запомненными сертификатами — в папке данных программы.
             let path = app.path().app_data_dir()?.join("known_servers.txt");
             *app.state::<AppState>().known.lock().unwrap() = KnownServers::load(path);
+            // В Linux без библиотеки appindicator создание значка не ошибка,
+            // а паника внутри tauri — ловим и её.
+            let handle = app.handle().clone();
+            let create = std::panic::AssertUnwindSafe(move || tray::create(&handle));
+            match std::panic::catch_unwind(create) {
+                Ok(Ok(())) => app.state::<AppState>().tray_ready.store(true, Ordering::Relaxed),
+                Ok(Err(e)) => eprintln!("значок в трее недоступен: {e}"),
+                Err(_) => eprintln!("значок в трее недоступен"),
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -500,6 +719,10 @@ fn main() {
             set_output_device,
             set_vad_threshold,
             set_noise_suppression,
+            set_cues,
+            set_close_to_tray,
+            update::check_update,
+            update::install_update,
             discover_servers,
             set_mode,
             set_ptt_key,
@@ -513,17 +736,20 @@ fn main() {
             status,
         ])
         .on_window_event(|window, event| {
-            // Закрыли окно — аккуратно кладём трубку и останавливаем свой сервер,
-            // чтобы остальные сразу увидели, что мы ушли, а не ждали таймаута.
-            if let tauri::WindowEvent::CloseRequested { .. } = event {
-                let state = window.app_handle().state::<AppState>();
-                if let Some(call) = tauri::async_runtime::block_on(state.call.lock()).take() {
-                    tauri::async_runtime::block_on(call.hang_up());
-                }
-                if let Some(server) = tauri::async_runtime::block_on(state.host.lock()).take() {
-                    tauri::async_runtime::block_on(server.stop());
-                }
+            let tauri::WindowEvent::CloseRequested { api, .. } = event else { return };
+            let app = window.app_handle();
+            let state = app.state::<AppState>();
+            // Есть значок в трее — прячем окно, звонок продолжается.
+            if state.close_to_tray.load(Ordering::Relaxed)
+                && state.tray_ready.load(Ordering::Relaxed)
+            {
+                api.prevent_close();
+                let _ = window.hide();
+                return;
             }
+            // Иначе аккуратно кладём трубку и останавливаем свой сервер, чтобы
+            // остальные сразу увидели, что мы ушли, а не ждали таймаута.
+            tauri::async_runtime::block_on(shutdown(app));
         })
         .run(tauri::generate_context!())
         .expect("не удалось запустить приложение");

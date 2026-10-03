@@ -90,6 +90,11 @@
         <button type="button" id="leave-btn" class="leave" data-icon="logout"><span>Выйти</span></button>
       </header>
 
+      <div id="reconnect-banner" class="banner" hidden>
+        <span class="spinner" aria-hidden="true"></span>
+        <span id="reconnect-text">Связь пропала. Возвращаюсь в комнату…</span>
+      </div>
+
       <details id="host-card" class="card host-card" hidden>
         <summary>
           <span class="host-summary" data-icon="broadcast">Вы — сервер</span>
@@ -218,9 +223,34 @@
             <span>Шумоподавление</span>
             <input type="checkbox" id="denoise" class="switch" />
           </label>
+          <label class="switch-row" title="Короткий сигнал, когда кто-то вошёл или вышел, и при нажатии кнопок микрофона и звука">
+            <span>Звуки событий</span>
+            <input type="checkbox" id="cues" class="switch" />
+          </label>
           <p class="hint">Устройства можно менять и во время разговора — связь не прервётся.</p>
         </div>
+
+        <div class="group">
+          <div class="group-title">Программа</div>
+          <label class="switch-row" title="Крестик окна прячет программу в трей рядом с часами, разговор продолжается. Выйти — через меню значка в трее">
+            <span>Сворачивать в трей при закрытии</span>
+            <input type="checkbox" id="close-to-tray" class="switch" />
+          </label>
+          <div class="update-row">
+            <div>
+              <div>Версия <span id="app-version">—</span></div>
+              <div id="update-status" class="hint"></div>
+            </div>
+            <button type="button" id="update-check" class="small-btn">Проверить обновления</button>
+          </div>
+        </div>
       </section>
+    </div>
+
+    <div id="update-bar" class="update-bar" hidden>
+      <span id="update-bar-text"></span>
+      <button type="button" id="update-install" class="primary small-btn">Обновить</button>
+      <button type="button" id="update-dismiss" class="icon-btn ghost" data-icon="close" aria-label="Скрыть"></button>
     </div>
 
     <div id="toast" class="toast" hidden></div>
