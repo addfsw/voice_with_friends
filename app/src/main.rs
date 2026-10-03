@@ -295,8 +295,8 @@ async fn start_call(
                     events.emit("peer-updated", Peer::from(p))
                 }
                 CallEvent::Chat(m) => events.emit("chat-message", ChatMessage::from(m)),
-                CallEvent::ScreenFrame(frame) => {
-                    screen::on_frame(&events, frame);
+                CallEvent::ScreenPacket { from, header, data } => {
+                    screen::on_packet(&events, from, header, data);
                     Ok(())
                 }
                 CallEvent::Viewers(count) => events.emit("share-viewers", ShareViewers { count }),
@@ -318,6 +318,7 @@ async fn start_call(
     .await?;
     call.mixer().set_deafened(state.deafened.load(Ordering::Relaxed));
     call.sync_status();
+    screen::set_requester(app, call.keyframe_requester());
 
     // Сервер ещё не получил наш статус, поэтому mute/deafen берём свои.
     let me = Peer {
@@ -772,8 +773,7 @@ fn main() {
             close_to_tray: AtomicBool::new(true),
             tray_ready: AtomicBool::new(false),
         })
-        .manage(screen::Frames::default())
-        .manage(screen::FrameCounter::default())
+        .manage(screen::Screens::default())
         .setup(|app| {
             // Файл с запомненными сертификатами — в папке данных программы.
             let path = app.path().app_data_dir()?.join("known_servers.txt");
@@ -809,6 +809,8 @@ fn main() {
             screen::start_share,
             screen::stop_share,
             screen::open_viewer,
+            screen::subscribe_screen,
+            screen::request_keyframe,
             discover_servers,
             set_mode,
             set_ptt_key,

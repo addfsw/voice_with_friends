@@ -28,11 +28,12 @@ impl Default for ShareSettings {
 }
 
 impl ShareSettings {
-    /// Битрейт под размер и частоту кадров: около 0,07 бита на пиксель —
-    /// текст на экране читается, а 1080p при 30 к/с укладывается в ~4 Мбит/с.
+    /// Битрейт под размер и частоту кадров: около 0,1 бита на пиксель —
+    /// текст на экране читается, 720p при 30 к/с — ~2,8 Мбит/с,
+    /// 1080p — ~6 Мбит/с.
     fn bitrate(&self, width: u32, height: u32) -> u32 {
-        let bits = f64::from(width) * f64::from(height) * f64::from(self.fps) * 0.07;
-        (bits as u32).clamp(600_000, 6_000_000)
+        let bits = f64::from(width) * f64::from(height) * f64::from(self.fps) * 0.1;
+        (bits as u32).clamp(800_000, 8_000_000)
     }
 }
 
@@ -173,7 +174,12 @@ impl Loop {
             let changed = fresh.is_some();
             if let Some(image) = fresh {
                 let (w, h) = codec::fit(image.width, image.height, self.settings.max_height);
-                last = Some(codec::scale(&image, w, h));
+                // Размер подходит — без лишней копии кадра (8 МБ в 1080p).
+                last = Some(if (image.width, image.height) == (w, h) {
+                    image
+                } else {
+                    codec::scale(&image, w, h)
+                });
             }
             let want_key = self.keyframe.load(Ordering::Relaxed);
             let Some(image) = &last else { continue };

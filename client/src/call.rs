@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use vwf_proto::{ChatMessage, ClientMsg, PeerId, PeerInfo, ServerMsg};
+use vwf_proto::{ChatMessage, ClientMsg, PeerId, PeerInfo, ServerMsg, VideoHeader};
 
 use crate::audio::{self, Wakeup};
 use crate::cues::Cue;
@@ -14,7 +14,7 @@ use crate::net;
 use ringbuf::{HeapCons, HeapProd};
 
 use crate::pipeline::{Mixer, MixerOutput, Transmitter, TxSettings, TxState};
-use crate::screen::{ShareSettings, Sharer, Viewer, ViewerFrame};
+use crate::screen::{ShareSettings, Sharer};
 
 /// Параметры звука.
 #[derive(Clone, Debug)]
@@ -201,8 +201,13 @@ pub enum CallEvent {
     PeerUpdated(PeerInfo),
     /// Новое сообщение в чате (в том числе наше собственное, вернувшееся от сервера).
     Chat(ChatMessage),
-    /// Новый кадр экрана, который мы смотрим.
-    ScreenFrame(ViewerFrame),
+    /// Кадр (H.264) экрана, который мы смотрим. Декодировать его — дело
+    /// окна просмотра (или [`crate::screen::Viewer`]).
+    ScreenPacket {
+        from: PeerId,
+        header: VideoHeader,
+        data: Vec<u8>,
+    },
     /// Сколько человек смотрит наш экран.
     Viewers(u32),
     /// Наша демонстрация прервалась сама (например, закрыли показываемое окно).
@@ -242,12 +247,22 @@ pub struct Call {
     video: net::VideoSender,
     /// Наша демонстрация экрана, если идёт.
     sharer: Arc<Mutex<Option<Sharer>>>,
-    viewer: Arc<Viewer>,
     /// Чьи экраны мы смотрим.
     watching: Arc<Mutex<HashSet<PeerId>>>,
 }
 
 type OnEvent = Arc<dyn Fn(CallEvent) + Send + Sync>;
+
+/// Просит у показывающего опорный кадр: картинка сломалась (потерялся кадр)
+/// или окно просмотра только открылось. Дёшево клонируется.
+#[derive(Clone)]
+pub struct KeyframeRequester(net::Control);
+
+impl KeyframeRequester {
+    pub fn request(&self, id: PeerId) {
+        self.0.send(ClientMsg::RequestKeyframe { id });
+    }
+}
 
 impl Call {
     /// Подключается к серверу и запускает звук. События комнаты передаются в `on_event`.
@@ -292,26 +307,14 @@ impl Call {
         let video = session.video_sender();
         let sharer: Arc<Mutex<Option<Sharer>>> = Arc::default();
         let watching: Arc<Mutex<HashSet<PeerId>>> = Arc::default();
-        let viewer = Arc::new(Viewer::start(
-            {
-                let on_event = on_event.clone();
-                move |frame| on_event(CallEvent::ScreenFrame(frame))
-            },
-            {
-                let control = control.clone();
-                move |id| control.send(ClientMsg::RequestKeyframe { id })
-            },
-        )?);
         let video_task = {
             let receiver = session.video_receiver();
-            let viewer = viewer.clone();
             let watching = watching.clone();
+            let on_event = on_event.clone();
             tokio::spawn(async move {
                 while let Some((from, header, data)) = receiver.recv().await {
                     if watching.lock().unwrap().contains(&from) {
-                        // Не успел — выброшен; декодер заметит пропуск и сам
-                        // попросит опорный кадр.
-                        viewer.push(from, header, data);
+                        on_event(CallEvent::ScreenPacket { from, header, data });
                     }
                 }
             })
@@ -319,12 +322,9 @@ impl Call {
         let control_task = {
             let on_event = on_event.clone();
             let sharer = sharer.clone();
-            let viewer = viewer.clone();
             let watching = watching.clone();
             let stop_watching = move |id: PeerId| {
-                if watching.lock().unwrap().remove(&id) {
-                    viewer.forget(id);
-                }
+                watching.lock().unwrap().remove(&id);
             };
             let mixer = audio.mixer.clone();
             let room = room.clone();
@@ -410,7 +410,6 @@ impl Call {
             on_event,
             video,
             sharer,
-            viewer,
             watching,
         };
         call.sync_status();
@@ -513,7 +512,7 @@ impl Call {
     }
 
     /// Смотреть экран участника `id` (или перестать). Кадры приходят
-    /// событиями [`CallEvent::ScreenFrame`].
+    /// событиями [`CallEvent::ScreenPacket`].
     pub fn watch(&self, id: PeerId, watch: bool) {
         let changed = if watch {
             self.watching.lock().unwrap().insert(id)
@@ -521,11 +520,13 @@ impl Call {
             self.watching.lock().unwrap().remove(&id)
         };
         if changed {
-            if !watch {
-                self.viewer.forget(id);
-            }
             self.control.send(ClientMsg::Watch { id, watch });
         }
+    }
+
+    /// Кто может попросить у показывающего опорный кадр (из любого потока).
+    pub fn keyframe_requester(&self) -> KeyframeRequester {
+        KeyframeRequester(self.control.clone())
     }
 
     /// Завершает звонок.

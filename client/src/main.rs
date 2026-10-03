@@ -333,7 +333,7 @@ async fn connect(
                 CallEvent::Chat(message) => print_chat(&message),
                 CallEvent::Viewers(count) => println!("Ваш экран смотрят: {count}"),
                 CallEvent::ShareStopped(reason) => println!("Демонстрация прервалась: {reason}"),
-                CallEvent::ScreenFrame(_) => {}
+                CallEvent::ScreenPacket { .. } => {}
                 CallEvent::Ended { reason, .. } => {
                     println!("Звонок завершён: {reason}.");
                     break;

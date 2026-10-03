@@ -4,8 +4,8 @@ use anyhow::Context;
 use openh264::OpenH264API;
 use openh264::decoder::Decoder;
 use openh264::encoder::{
-    BitRate, Encoder, EncoderConfig, FrameRate, FrameType, IntraFramePeriod, RateControlMode,
-    UsageType,
+    BitRate, Complexity, Encoder, EncoderConfig, FrameRate, FrameType, IntraFramePeriod,
+    RateControlMode, UsageType,
 };
 use openh264::formats::{RgbaSliceU8, YUVBuffer, YUVSource};
 
@@ -25,41 +25,57 @@ pub fn fit(width: u32, height: u32, max_height: u32) -> (u32, u32) {
 }
 
 /// Масштабирует RGBA-кадр до `width`×`height` (билинейно).
+///
+/// Это на каждом кадре (например, 1440p → 1080p), поэтому: коэффициенты по
+/// горизонтали считаются один раз на кадр, арифметика целочисленная, а
+/// строки делятся между ядрами процессора.
 pub fn scale(src: &Image, width: u32, height: u32) -> Image {
     if (src.width, src.height) == (width, height) {
         return src.clone();
     }
     let (sw, sh) = (src.width as usize, src.height as usize);
     let (dw, dh) = (width as usize, height as usize);
-    let mut rgba = vec![0u8; dw * dh * 4];
-    // Координаты в 16.16 с фиксированной точкой: быстро и без плавающей.
+
+    // Для каждого столбца результата: левый пиксель источника и вес правого
+    // (0..=256). Координаты — с фиксированной точкой 16.16.
     let x_step = ((sw as u64) << 16) / dw as u64;
+    let columns: Vec<(usize, u32)> = (0..dw)
+        .map(|x| {
+            let fx = x as u64 * x_step;
+            (((fx >> 16) as usize).min(sw - 1), ((fx & 0xffff) >> 8) as u32)
+        })
+        .collect();
     let y_step = ((sh as u64) << 16) / dh as u64;
-    for y in 0..dh {
-        let fy = (y as u64 * y_step) as usize;
-        let y0 = (fy >> 16).min(sh - 1);
-        let y1 = (y0 + 1).min(sh - 1);
-        let wy = (fy & 0xffff) as u32;
-        let row0 = &src.rgba[y0 * sw * 4..][..sw * 4];
-        let row1 = &src.rgba[y1 * sw * 4..][..sw * 4];
-        let out = &mut rgba[y * dw * 4..][..dw * 4];
-        for x in 0..dw {
-            let fx = (x as u64 * x_step) as usize;
-            let x0 = (fx >> 16).min(sw - 1);
-            let x1 = (x0 + 1).min(sw - 1);
-            let wx = (fx & 0xffff) as u32;
-            for c in 0..4 {
-                let top =
-                    u32::from(row0[x0 * 4 + c]) * (0x10000 - wx) + u32::from(row0[x1 * 4 + c]) * wx;
-                let bottom =
-                    u32::from(row1[x0 * 4 + c]) * (0x10000 - wx) + u32::from(row1[x1 * 4 + c]) * wx;
-                let v = (u64::from(top >> 8) * u64::from(0x10000 - wy)
-                    + u64::from(bottom >> 8) * u64::from(wy))
-                    >> 24;
-                out[x * 4 + c] = v as u8;
-            }
+
+    let mut rgba = vec![0u8; dw * dh * 4];
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, 4);
+    let rows_per_thread = dh.div_ceil(threads);
+    std::thread::scope(|scope| {
+        for (chunk, out) in rgba.chunks_mut(rows_per_thread * dw * 4).enumerate() {
+            let columns = &columns;
+            scope.spawn(move || {
+                for (i, out) in out.chunks_exact_mut(dw * 4).enumerate() {
+                    let y = chunk * rows_per_thread + i;
+                    let fy = y as u64 * y_step;
+                    let y0 = ((fy >> 16) as usize).min(sh - 1);
+                    let y1 = (y0 + 1).min(sh - 1);
+                    let wy = ((fy & 0xffff) >> 8) as u32;
+                    let row0 = &src.rgba[y0 * sw * 4..][..sw * 4];
+                    let row1 = &src.rgba[y1 * sw * 4..][..sw * 4];
+                    for (px, &(x0, wx)) in out.chunks_exact_mut(4).zip(columns) {
+                        let x1 = (x0 + 1).min(sw - 1);
+                        let (a, b) = (&row0[x0 * 4..x0 * 4 + 4], &row0[x1 * 4..x1 * 4 + 4]);
+                        let (c, d) = (&row1[x0 * 4..x0 * 4 + 4], &row1[x1 * 4..x1 * 4 + 4]);
+                        for k in 0..4 {
+                            let top = u32::from(a[k]) * (256 - wx) + u32::from(b[k]) * wx;
+                            let bottom = u32::from(c[k]) * (256 - wx) + u32::from(d[k]) * wx;
+                            px[k] = ((top * (256 - wy) + bottom * wy) >> 16) as u8;
+                        }
+                    }
+                }
+            });
         }
-    }
+    });
     Image { width, height, rgba }
 }
 
@@ -73,15 +89,24 @@ pub struct H264Encoder {
 
 impl H264Encoder {
     pub fn new(width: u32, height: u32, fps: u32, bitrate: u32) -> anyhow::Result<Self> {
+        // Замеры (examples/screen_bench.rs): режим «экран» в 1,5–2 раза
+        // медленнее «камеры» и не держит битрейт — на подвижной картинке выдаёт
+        // в 4 раза больше заданного и забивает канал. Поэтому «камера»; а для
+        // кадров больше 720p ещё и упрощённый поиск движения (в 1,5 раза быстрее).
+        let complexity =
+            if width * height > 1280 * 720 { Complexity::Low } else { Complexity::Medium };
         let config = EncoderConfig::new()
-            .usage_type(UsageType::ScreenContentRealTime)
+            .usage_type(UsageType::CameraVideoRealTime)
+            .complexity(complexity)
             .rate_control_mode(RateControlMode::Bitrate)
             .bitrate(BitRate::from_bps(bitrate))
             .max_frame_rate(FrameRate::from_hz(fps as f32))
             // Опорный кадр раз в 10 секунд: даже если просьба о нём
             // потеряется, картинка у зрителя восстановится сама.
             .intra_frame_period(IntraFramePeriod::from_num_frames(fps * 10))
-            .skip_frames(true);
+            // Не пропускать кадры, чтобы уложиться в битрейт, — лучше
+            // чуть менее чёткая, но плавная картинка.
+            .skip_frames(false);
         let encoder = Encoder::with_api_config(OpenH264API::from_source(), config)
             .context("не удалось запустить кодер H.264")?;
         let yuv = YUVBuffer::new(width as usize, height as usize);

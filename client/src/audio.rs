@@ -91,8 +91,11 @@ pub fn list_devices() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Имя устройства, как его показывает Windows: «Микрофон (USB Audio Device)».
+/// Полное описание cpal дописывает к нему тип и подключение
+/// («[Microphone] via USB») — это лишнее.
 fn device_name(device: &Device) -> String {
-    device.description().map(|d| d.to_string()).unwrap_or_else(|_| "<без имени>".into())
+    device.description().map(|d| d.name().to_string()).unwrap_or_else(|_| "<без имени>".into())
 }
 
 /// Ищет устройство по точному имени, затем по части имени (без учёта регистра),
@@ -117,6 +120,8 @@ fn find_device(input: bool, name: Option<&str>) -> anyhow::Result<Device> {
         .iter()
         .position(|(name, _)| name == pattern)
         .or_else(|| devices.iter().position(|(name, _)| name.to_lowercase().contains(&lower)))
+        // Имя, сохранённое прежними версиями: «Имя [Microphone] via USB».
+        .or_else(|| devices.iter().position(|(name, _)| pattern.starts_with(&format!("{name} "))))
         .with_context(|| format!("не найдено устройство «{pattern}» (см. команду `devices`)"))?;
     Ok(devices.into_iter().nth(index).expect("индекс из того же списка").1)
 }

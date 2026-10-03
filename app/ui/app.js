@@ -146,7 +146,15 @@ function fillSelect(select, names, systemDefault, saved) {
     opt.textContent = name;
     select.append(opt);
   }
-  select.value = names.includes(saved) ? saved : "";
+  select.value = savedDevice(names, saved);
+}
+
+// Сохранённое устройство из списка. Прежние версии запоминали имя с
+// хвостом «[Microphone] via USB» — узнаём и такое.
+function savedDevice(names, saved) {
+  if (!saved) return "";
+  if (names.includes(saved)) return saved;
+  return names.find((name) => saved.startsWith(`${name} `)) ?? "";
 }
 
 // ---------------------------------------------------------------------------
@@ -1371,7 +1379,7 @@ async function openDeviceMenu(kind) {
   if (!devices) return;
   const names = kind === "input" ? devices.inputs : devices.outputs;
   const systemDefault = kind === "input" ? devices.defaultInput : devices.defaultOutput;
-  const current = store.get(kind, "");
+  const current = savedDevice(names, store.get(kind, ""));
 
   menu.innerHTML = "";
   const title = document.createElement("div");
