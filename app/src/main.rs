@@ -9,7 +9,6 @@
 
 mod host;
 mod tray;
-mod update;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -678,7 +677,6 @@ fn main() {
         // Первым: второй запуск программы просто показывает уже открытое окно.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| tray::show_window(app)))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState {
             tx: Arc::new(TxState::default()),
             call: tokio::sync::Mutex::new(None),
@@ -721,8 +719,6 @@ fn main() {
             set_noise_suppression,
             set_cues,
             set_close_to_tray,
-            update::check_update,
-            update::install_update,
             discover_servers,
             set_mode,
             set_ptt_key,

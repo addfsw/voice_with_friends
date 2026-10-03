@@ -1237,44 +1237,6 @@ button.key.listening {
   box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent);
 }
 
-.update-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-button.small-btn {
-  padding: 6px 12px;
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-/* Полоска «доступна новая версия» */
-
-.update-bar {
-  position: fixed;
-  left: 12px;
-  right: 12px;
-  bottom: 12px;
-  z-index: 15;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 8px 8px 14px;
-  border-radius: 12px;
-  background: var(--surface);
-  border: 1px solid var(--accent);
-  box-shadow: var(--shadow-pop);
-  font-size: 13px;
-  animation: rise 200ms ease-out;
-}
-
-#update-bar-text {
-  flex: 1;
-  min-width: 0;
-}
-
 @keyframes fade {
   from {
     opacity: 0;

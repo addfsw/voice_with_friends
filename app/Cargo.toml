@@ -22,8 +22,6 @@ vwf-nat.workspace = true
 anyhow.workspace = true
 quinn.workspace = true
 serde.workspace = true
-# Нужен макросу generate_context!, когда в tauri.conf.json есть настройки плагинов.
-serde_json.workspace = true
 tokio.workspace = true
 # custom-protocol: интерфейс встраивается в exe, и программа работает
 # после обычного `cargo build`, без отдельного dev-сервера и tauri-cli.
@@ -32,5 +30,3 @@ tauri = { version = "2", features = ["custom-protocol", "tray-icon"] }
 tauri-plugin-global-shortcut = "2"
 # Второй запуск программы не открывает вторую копию, а показывает первую.
 tauri-plugin-single-instance = "2"
-# Обновления с GitHub (см. src/update.rs).
-tauri-plugin-updater = "2"

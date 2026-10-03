@@ -1062,82 +1062,13 @@ for (const kind of ["input", "output"]) {
 }
 
 // ---------------------------------------------------------------------------
-// Трей и обновления
+// Трей
 // ---------------------------------------------------------------------------
 
 $("close-to-tray").addEventListener("change", () => {
   const enabled = $("close-to-tray").checked;
   store.set("closeToTray", enabled);
   invoke("set_close_to_tray", { enabled });
-});
-
-let availableUpdate = null;
-
-// Проверяет, есть ли новая версия. quiet — без сообщений, если её нет.
-async function checkUpdate(quiet) {
-  const status = $("update-status");
-  if (!quiet) status.textContent = "Проверяю…";
-  try {
-    const info = await invoke("check_update");
-    $("app-version").textContent = info.current;
-    if (!info.enabled) {
-      status.textContent = "Эта сборка не обновляется сама: она собрана вручную.";
-      $("update-check").hidden = true;
-      return;
-    }
-    availableUpdate = info.available;
-    if (info.available) {
-      status.textContent = `Доступна версия ${info.available}`;
-      showUpdateBar();
-    } else {
-      status.textContent = quiet ? "" : "У вас последняя версия.";
-    }
-  } catch (e) {
-    if (!quiet) status.textContent = errorText(e);
-  }
-}
-
-function showUpdateBar() {
-  if (!availableUpdate || store.get("dismissedUpdate", null) === availableUpdate) return;
-  $("update-bar-text").textContent = `Доступна новая версия ${availableUpdate}`;
-  $("update-bar").hidden = false;
-}
-
-$("update-check").addEventListener("click", async () => {
-  store.set("dismissedUpdate", null);
-  await checkUpdate(false);
-});
-
-$("update-dismiss").addEventListener("click", () => {
-  store.set("dismissedUpdate", availableUpdate);
-  $("update-bar").hidden = true;
-});
-
-$("update-install").addEventListener("click", async () => {
-  const button = $("update-install");
-  // Во время разговора — переспрашиваем: программа перезапустится.
-  if (call.me && !button.classList.contains("armed")) {
-    button.classList.add("armed");
-    button.textContent = "Звонок прервётся. Обновить?";
-    return;
-  }
-  button.disabled = true;
-  button.textContent = "Скачиваю…";
-  try {
-    await invoke("install_update");
-  } catch (e) {
-    toast(errorText(e));
-    button.disabled = false;
-    button.classList.remove("armed");
-    button.textContent = "Обновить";
-  }
-});
-
-listen("update-progress", ({ payload }) => {
-  const { downloaded, total } = payload;
-  $("update-install").textContent = total
-    ? `Скачиваю… ${Math.floor((downloaded / total) * 100)}%`
-    : `Скачиваю… ${(downloaded / 1048576).toFixed(1)} МБ`;
 });
 
 // ---------------------------------------------------------------------------
@@ -1179,4 +1110,3 @@ async function init() {
 }
 
 init();
-checkUpdate(true);
