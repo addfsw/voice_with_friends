@@ -146,65 +146,67 @@
         </form>
       </section>
 
+      <!-- Нижняя панель, как в Discord: кто вы и иконки управления. -->
       <section class="card dock">
-        <div class="meter" title="Громкость микрофона и порог активации">
-          <div id="level-bar" class="meter-fill"></div>
-          <div id="threshold-mark" class="meter-mark"></div>
+        <div id="me-avatar" class="avatar dock-avatar"></div>
+        <div class="me-info">
+          <div id="me-name" class="me-name"></div>
+          <div id="me-status" class="me-status"></div>
         </div>
 
-        <div id="mode" class="segmented" role="radiogroup" aria-label="Передача">
-          <button type="button" data-value="voice" title="Передача включается, когда вы говорите громче порога">Голосом</button>
-          <button type="button" data-value="always" title="Микрофон передаётся всегда">Всегда</button>
-          <button type="button" data-value="ptt" title="Передача, пока зажата клавиша">Рация</button>
-        </div>
-
-        <label id="vad-row" class="slider-row">
-          <span>Порог</span>
-          <input type="range" id="vad" min="-70" max="-10" step="1" />
-          <output id="vad-value"></output>
-        </label>
-
-        <div id="ptt-row" class="slider-row" hidden>
-          <span>Клавиша</span>
-          <button type="button" id="ptt-key" class="key">не назначена</button>
-        </div>
-        <p id="ptt-hint" class="hint" hidden>
-          Пока выбран режим рации, эта клавиша не работает в других программах.
-        </p>
-
-        <div class="voice-switches">
-          <label class="switch-row" title="Убирает гул, шум улицы и стук клавиатуры из вашего микрофона">
-            <span>Шумоподавление</span>
-            <input type="checkbox" id="denoise" class="switch" />
-          </label>
-          <label class="switch-row" title="Тихий голос подтягивается до нормальной громкости, слишком громкий не хрипит">
-            <span>Усиление голоса</span>
-            <input type="checkbox" id="agc" class="switch" />
-          </label>
-        </div>
-
-        <div class="devices">
-          <div class="menu-wrap">
-            <button type="button" id="input-pill" class="device-pill" title="Микрофон">
-              <span class="pill-icon" data-icon="mic"></span>
-              <span class="device-name">Микрофон</span>
-              <span class="pill-chevron" data-icon="chevron"></span>
-            </button>
-            <div id="input-menu" class="menu up" hidden></div>
+        <div class="dock-buttons">
+          <div class="menu-wrap split">
+            <button type="button" id="mic-btn" class="dock-btn" data-tip="Выключить микрофон"></button>
+            <button type="button" id="input-pill" class="dock-caret" data-tip="Микрофон" data-icon="chevron"></button>
+            <div id="input-menu" class="menu up right" hidden></div>
           </div>
-          <div class="menu-wrap">
-            <button type="button" id="output-pill" class="device-pill" title="Динамики или наушники">
-              <span class="pill-icon" data-icon="headphones"></span>
-              <span class="device-name">Вывод</span>
-              <span class="pill-chevron" data-icon="chevron"></span>
-            </button>
+          <div class="menu-wrap split">
+            <button type="button" id="sound-btn" class="dock-btn" data-tip="Выключить звук"></button>
+            <button type="button" id="output-pill" class="dock-caret" data-tip="Динамики / наушники" data-icon="chevron"></button>
             <div id="output-menu" class="menu up right" hidden></div>
           </div>
-        </div>
+          <button type="button" id="share-btn" class="dock-btn" data-tip="Показать экран" data-icon="screen"></button>
+          <div class="menu-wrap">
+            <button type="button" id="voice-btn" class="dock-btn tip-right" data-tip="Настройки голоса" data-icon="tune"></button>
 
-        <button type="button" id="share-btn" class="share-btn" data-icon="screen">
-          <span id="share-label">Показать экран</span>
-        </button>
+            <div id="voice-menu" class="menu up right voice-menu" hidden>
+              <div class="menu-title">Голос</div>
+              <div class="meter" title="Громкость микрофона и порог активации">
+                <div id="level-bar" class="meter-fill"></div>
+                <div id="threshold-mark" class="meter-mark"></div>
+              </div>
+
+              <div id="mode" class="segmented" role="radiogroup" aria-label="Передача">
+                <button type="button" data-value="voice" title="Передача включается, когда вы говорите громче порога">Голосом</button>
+                <button type="button" data-value="always" title="Микрофон передаётся всегда">Всегда</button>
+                <button type="button" data-value="ptt" title="Передача, пока зажата клавиша">Рация</button>
+              </div>
+
+              <label id="vad-row" class="slider-row">
+                <span>Порог</span>
+                <input type="range" id="vad" min="-70" max="-10" step="1" />
+                <output id="vad-value"></output>
+              </label>
+
+              <div id="ptt-row" class="slider-row" hidden>
+                <span>Клавиша</span>
+                <button type="button" id="ptt-key" class="key">не назначена</button>
+              </div>
+              <p id="ptt-hint" class="hint" hidden>
+                Пока выбран режим рации, эта клавиша не работает в других программах.
+              </p>
+
+              <label class="switch-row" title="Убирает гул, шум улицы и стук клавиатуры из вашего микрофона">
+                <span>Шумоподавление</span>
+                <input type="checkbox" id="denoise" class="switch" />
+              </label>
+              <label class="switch-row" title="Тихий голос подтягивается до нормальной громкости, слишком громкий не хрипит">
+                <span>Усиление голоса</span>
+                <input type="checkbox" id="agc" class="switch" />
+              </label>
+            </div>
+          </div>
+        </div>
       </section>
     </main>
 

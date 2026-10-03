@@ -60,6 +60,8 @@ const ICON_PATHS = {
     "M12 11a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm6 2a6 6 0 1 0-9 5.19l1-1.74a4 4 0 1 1 4 0l1 1.74A6 6 0 0 0 18 13ZM12 3a10 10 0 0 0-5 18.66l1-1.73a8 8 0 1 1 8 0l1 1.73A10 10 0 0 0 12 3Z",
   copy: "M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1Zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 16H8V7h11v14Z",
   send: "M2.01 21 23 12 2.01 3 2 10l15 2-15 2z",
+  tune:
+    "M3 17v2h6v-2H3ZM3 5v2h10V5H3Zm10 16v-2h8v-2h-8v-2h-2v6h2ZM7 9v2H3v2h4v2h2V9H7Zm14 4v-2H11v2h10Zm-6-4h2V7h4V5h-4V3h-2v6Z",
   screen:
     "M21 3H3a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h5v2h8v-2h5a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2Zm0 14H3V5h18v12Z",
   window: "M19 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2Zm0 14H5V8h14v10Z",
@@ -507,7 +509,64 @@ async function copyText(text) {
   toast(`Скопировано: ${text}`);
 }
 
+// Нижняя панель: кто вы, состояние и иконки управления.
+function renderDock() {
+  const me = call.me;
+  if (!me) return;
+  $("me-avatar").textContent = initial(me.name);
+  $("me-avatar").style.background = avatarColor(me.name);
+  $("me-name").textContent = me.name;
+
+  const status = $("me-status");
+  status.className = "me-status";
+  if (me.serverMuted) {
+    status.textContent = "заглушены хостом";
+    status.classList.add("off");
+  } else if (me.muted || me.deafened) {
+    status.textContent = me.deafened ? "звук выключен" : "микрофон выключен";
+    status.classList.add("off");
+  } else if (call.sharing) {
+    status.textContent = `показываете экран · смотрят: ${call.viewers}`;
+    status.classList.add("live");
+  } else {
+    const key = store.get("pttKey", null);
+    status.textContent = {
+      voice: "активация голосом",
+      always: "микрофон открыт",
+      ptt: key ? `рация: ${keyLabel(key)}` : "рация: клавиша не назначена",
+    }[currentMode];
+  }
+
+  const mic = $("mic-btn");
+  mic.replaceChildren(icon("mic", me.muted));
+  mic.classList.toggle("off", me.muted);
+  mic.dataset.tip = me.muted ? "Включить микрофон" : "Выключить микрофон";
+  const sound = $("sound-btn");
+  sound.replaceChildren(icon("headphones", me.deafened));
+  sound.classList.toggle("off", me.deafened);
+  sound.dataset.tip = me.deafened ? "Включить звук" : "Выключить звук";
+  const share = $("share-btn");
+  share.classList.toggle("active", call.sharing);
+  share.dataset.tip = call.sharing
+    ? `Остановить показ (смотрят: ${call.viewers})`
+    : "Показать экран";
+}
+
+$("mic-btn").addEventListener("click", () => setMuted(!call.me.muted));
+$("sound-btn").addEventListener("click", () => setDeafened(!call.me.deafened));
+
+// Окно «Голос»: режим, порог, клавиша рации, шумоподавление, усиление.
+$("voice-btn").addEventListener("click", (event) => {
+  event.stopPropagation();
+  const menu = $("voice-menu");
+  const open = !menu.hidden;
+  closeMenus();
+  menu.hidden = open;
+});
+$("voice-menu").addEventListener("click", (event) => event.stopPropagation());
+
 function renderPeers() {
+  renderDock();
   const list = $("peers");
   list.innerHTML = "";
   list.append(peerItem(call.me, true));
@@ -580,19 +639,10 @@ function peerItem(peer, isMe) {
   const side = document.createElement("div");
   side.className = "peer-side";
   if (peer.sharing) side.append(watchButton(peer, isMe));
-  if (isMe) {
-    side.append(
-      toggleButton("my-mic", icon("mic", peer.muted), peer.muted, "Выключить/включить микрофон", () =>
-        setMuted(!call.me.muted),
-      ),
-      toggleButton("my-sound", icon("headphones", peer.deafened), peer.deafened, "Выключить/включить звук", () =>
-        setDeafened(!call.me.deafened),
-      ),
-    );
-  } else {
-    // Статус собеседника — просто значки.
-    if (peer.muted) side.append(statusIcon(icon("mic", true), "Выключил микрофон"));
-    if (peer.deafened) side.append(statusIcon(icon("headphones", true), "Выключил звук"));
+  // Статус — просто значки; свои микрофон и звук переключаются внизу.
+  if (peer.muted) side.append(statusIcon(icon("mic", true), isMe ? "Микрофон выключен" : "Выключил микрофон"));
+  if (peer.deafened) side.append(statusIcon(icon("headphones", true), isMe ? "Звук выключен" : "Выключил звук"));
+  if (!isMe) {
     // Права хоста — в меню, чтобы не путать с значками статуса.
     if (call.me.admin) side.append(hostMenu(peer));
   }
@@ -949,10 +999,7 @@ function watchButton(peer, isMe) {
 function setSharing(on) {
   call.sharing = on;
   if (!on) call.viewers = 0;
-  $("share-btn").classList.toggle("active", on);
-  $("share-label").textContent = on
-    ? `Остановить показ · смотрят: ${call.viewers}`
-    : "Показать экран";
+  renderDock();
 }
 
 let shareSource = null;
@@ -1102,6 +1149,7 @@ async function refreshStatus() {
     const active = li.classList.contains("me") ? status.transmitting : speaking.has(id);
     li.classList.toggle("speaking", active);
   }
+  $("room-view").querySelector(".dock").classList.toggle("speaking", status.transmitting);
 }
 
 
@@ -1217,6 +1265,7 @@ function updateModeRows() {
   $("ptt-row").hidden = mode !== "ptt";
   $("ptt-hint").hidden = mode !== "ptt";
   $("threshold-mark").hidden = mode !== "voice";
+  renderDock();
 }
 
 $("cues").addEventListener("change", () => {
@@ -1287,8 +1336,13 @@ window.addEventListener("keydown", async (event) => {
 });
 
 // "Ctrl+KeyV" -> "Ctrl+V", "Digit1" -> "1"
+function keyLabel(key) {
+  return key.replace(/Key([A-Z])/, "$1").replace(/Digit(\d)/, "$1");
+}
+
 function showPttKey(key) {
-  $("ptt-key").textContent = key ? key.replace(/Key([A-Z])/, "$1").replace(/Digit(\d)/, "$1") : "не назначена";
+  $("ptt-key").textContent = key ? keyLabel(key) : "не назначена";
+  renderDock();
 }
 
 // ---------------------------------------------------------------------------
@@ -1421,9 +1475,7 @@ async function chooseDevice(kind, value) {
 }
 
 function showDevice(kind, name) {
-  const pill = $(`${kind}-pill`);
-  pill.querySelector(".device-name").textContent = name;
-  pill.title = `${kind === "input" ? "Микрофон" : "Вывод звука"}: ${name}`;
+  $(`${kind}-pill`).dataset.tip = `${kind === "input" ? "Микрофон" : "Вывод"}: ${name}`;
 }
 
 $("input").addEventListener("change", () => chooseDevice("input", $("input").value));
