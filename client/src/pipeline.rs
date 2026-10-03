@@ -23,7 +23,7 @@ use nnnoiseless::DenoiseState;
 
 use crate::audio::Wakeup;
 use crate::cues::Cue;
-use crate::jitter::{Delay, JitterBuffer, Pop};
+use crate::jitter::{Delay, JitterBuffer, JitterStats, Pop};
 use crate::resample::Resampler;
 
 /// Рабочие потоки просыпаются по сигналу из аудиоколбэка; этот таймаут —
@@ -155,10 +155,10 @@ impl TxState {
     }
 
     /// Решает, передавать ли кадр с громкостью `level_db`.
-    fn should_transmit(&self, vad: &mut Vad, level_db: f32) -> bool {
+    fn should_transmit(&self, vad: &mut Vad, speech: bool) -> bool {
         // Детектор речи обновляем всегда, чтобы при переключении режима
         // у него было актуальное состояние.
-        let voice = vad.is_active(level_db, self.vad_threshold_db());
+        let voice = vad.is_active(speech);
         if self.muted() {
             return false;
         }
@@ -200,22 +200,26 @@ impl NoiseSuppressor {
         }
     }
 
-    fn process(&mut self, frame: &mut [f32; FRAME_SAMPLES]) {
+    /// Убирает шум. Возвращает, насколько RNNoise уверен, что в кадре голос
+    /// (0..1): нейросеть узнаёт речь и тогда, когда она тихая.
+    fn process(&mut self, frame: &mut [f32; FRAME_SAMPLES]) -> f32 {
+        let mut voice = 0f32;
         for chunk in frame.chunks_exact_mut(DenoiseState::FRAME_SIZE) {
             // RNNoise ждёт сэмплы в масштабе 16-битного звука, а не [-1, 1].
             for (dst, s) in self.input.iter_mut().zip(chunk.iter()) {
                 *dst = s * 32768.0;
             }
-            self.state.process_frame(&mut self.output, &self.input);
+            voice = voice.max(self.state.process_frame(&mut self.output, &self.input));
             for (s, out) in chunk.iter_mut().zip(self.output.iter()) {
                 *s = out / 32768.0;
             }
         }
+        voice
     }
 }
 
-/// Простейший детектор речи по громкости с «хвостом»: после того как голос
-/// стих, передача продолжается ещё `HANGOVER_FRAMES` кадров, чтобы не обрезать
+/// Детектор речи по громкости с «хвостом»: после того как голос стих,
+/// передача продолжается ещё `HANGOVER_FRAMES` кадров, чтобы не обрезать
 /// окончания слов.
 #[derive(Default)]
 struct Vad {
@@ -224,9 +228,23 @@ struct Vad {
 
 const HANGOVER_FRAMES: u32 = 300 / FRAME_MS; // 300 мс
 
+/// Насколько тише порога может быть кадр, который RNNoise уверенно считает
+/// голосом, — и всё равно включить передачу. Тихий микрофон и тихие слоги
+/// часто чуть ниже порога; без этого начала и концы слов обрезались бы.
+const VOICE_BELOW_THRESHOLD_DB: f32 = 12.0;
+/// С какой уверенности RNNoise (0..1) считать кадр голосом.
+const VOICE_PROBABILITY: f32 = 0.7;
+
+/// Есть ли в кадре речь: громче порога, или чуть тише, но это точно голос.
+fn is_speech(level_db: f32, threshold_db: f32, voice_probability: f32) -> bool {
+    level_db >= threshold_db
+        || (voice_probability >= VOICE_PROBABILITY
+            && level_db >= threshold_db - VOICE_BELOW_THRESHOLD_DB)
+}
+
 impl Vad {
-    fn is_active(&mut self, level_db: f32, threshold_db: f32) -> bool {
-        if level_db >= threshold_db {
+    fn is_active(&mut self, speech: bool) -> bool {
+        if speech {
             self.hangover_left = HANGOVER_FRAMES;
             true
         } else if self.hangover_left > 0 {
@@ -360,12 +378,12 @@ impl Transmitter {
 
                 // Шум убираем до детектора речи: тогда гул комнаты не включает
                 // передачу, и индикатор громкости показывает то, что услышат другие.
-                if state.noise_suppression() {
-                    denoiser.process(&mut frame);
-                }
+                let voice_probability =
+                    if state.noise_suppression() { denoiser.process(&mut frame) } else { 0.0 };
                 let level = level_db(&frame);
                 state.level_db_bits.store(level.to_bits(), Ordering::Relaxed);
-                let active = state.should_transmit(&mut vad, level);
+                let speech = is_speech(level, state.vad_threshold_db(), voice_probability);
+                let active = state.should_transmit(&mut vad, speech);
                 state.transmitting.store(active, Ordering::Relaxed);
                 if !active {
                     continue;
@@ -373,7 +391,7 @@ impl Transmitter {
                 // Усиление — уже после детектора речи: порог и индикатор
                 // показывают громкость самого микрофона.
                 if state.agc() {
-                    agc.process(&mut frame, level, level > state.vad_threshold_db());
+                    agc.process(&mut frame, level, speech);
                 }
 
                 match encoder.encode_float(&frame, &mut packet) {
@@ -577,6 +595,12 @@ impl Mixer {
             .collect()
     }
 
+    /// Счётчики джиттер-буфера и его задержка, мс, — для диагностики.
+    pub fn stats(&self) -> Vec<(PeerId, JitterStats, f64)> {
+        let speakers = self.speakers.lock().unwrap();
+        speakers.iter().map(|(id, s)| (*id, s.jitter.stats(), s.jitter.delay_ms())).collect()
+    }
+
     /// Текущая задержка джиттер-буфера каждого собеседника, мс.
     pub fn delays_ms(&self) -> Vec<(PeerId, f64)> {
         let speakers = self.speakers.lock().unwrap();
@@ -701,12 +725,24 @@ mod tests {
     #[test]
     fn vad_holds_after_speech() {
         let mut vad = Vad::default();
-        assert!(!vad.is_active(-60.0, -40.0));
-        assert!(vad.is_active(-20.0, -40.0));
+        assert!(!vad.is_active(false));
+        assert!(vad.is_active(true));
         for _ in 0..HANGOVER_FRAMES {
-            assert!(vad.is_active(-60.0, -40.0));
+            assert!(vad.is_active(false));
         }
-        assert!(!vad.is_active(-60.0, -40.0));
+        assert!(!vad.is_active(false));
+    }
+
+    #[test]
+    fn quiet_voice_counts_as_speech() {
+        // Громче порога — речь всегда.
+        assert!(is_speech(-30.0, -40.0, 0.0));
+        // Чуть тише порога, но RNNoise уверен, что это голос, — тоже речь.
+        assert!(is_speech(-48.0, -40.0, 0.9));
+        // Тише порога и не голос (шум) — нет.
+        assert!(!is_speech(-48.0, -40.0, 0.2));
+        // Голос, но совсем тихо (далеко от порога) — нет: это кто-то на фоне.
+        assert!(!is_speech(-60.0, -40.0, 0.95));
     }
 
     #[test]
@@ -782,18 +818,18 @@ mod tests {
     fn transmit_modes() {
         let state = TxState::new(TxMode::Voice, -40.0);
         let mut vad = Vad::default();
-        assert!(!state.should_transmit(&mut vad, -60.0));
-        assert!(state.should_transmit(&mut vad, -20.0));
+        assert!(!state.should_transmit(&mut vad, false));
+        assert!(state.should_transmit(&mut vad, true));
 
         state.set_mode(TxMode::PushToTalk);
-        assert!(!state.should_transmit(&mut vad, -20.0));
+        assert!(!state.should_transmit(&mut vad, true));
         state.set_ptt_pressed(true);
-        assert!(state.should_transmit(&mut vad, -90.0));
+        assert!(state.should_transmit(&mut vad, false));
 
         state.set_mode(TxMode::Always);
-        assert!(state.should_transmit(&mut vad, -90.0));
+        assert!(state.should_transmit(&mut vad, false));
         state.set_muted(true);
-        assert!(!state.should_transmit(&mut vad, -20.0));
+        assert!(!state.should_transmit(&mut vad, true));
     }
 
     #[test]
@@ -901,12 +937,16 @@ mod tests {
                 _ => assert!(level > -20.0, "кадр {seq}: {level} dBFS"),
             }
         }
-        // Буфер доигрывает остаток и затухающий кадр, потом снова тишина.
-        for frame in 30..33 {
+        // Буфер доигрывает остаток (два кадра), потом до трёх кадров
+        // «досочиняет» на случай опоздавшего пакета и затухает. Дальше — тишина.
+        for frame in 30..32 {
             mixer.mix_frame_at(&mut out, at(frame));
             assert!(level_db(&out) > -40.0);
         }
-        mixer.mix_frame_at(&mut out, at(33));
+        for frame in 32..36 {
+            mixer.mix_frame_at(&mut out, at(frame));
+        }
+        mixer.mix_frame_at(&mut out, at(36));
         assert!(out.iter().all(|s| *s == 0.0), "после конца речи — тишина");
     }
 

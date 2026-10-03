@@ -30,6 +30,23 @@ const HISTORY: usize = 250;
 const MAX_DELAY_MS: f64 = 300.0;
 /// Какая доля недавних пакетов должна успевать вовремя.
 const ON_TIME_QUANTILE: f64 = 0.95;
+/// Если пакет следующего кадра не пришёл и дальше пусто, столько кадров
+/// (60 мс) «досочиняет» декодер, прежде чем считать, что человек замолчал.
+/// Опоздавший пакет так звучит почти незаметно, а не провалом с паузой.
+const BRIDGE_FRAMES: u32 = 3;
+
+/// Счётчики для диагностики.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct JitterStats {
+    /// Сколько пакетов пришло.
+    pub received: u64,
+    /// Пришли, когда их время уже прошло (выброшены).
+    pub late: u64,
+    /// Кадры, вместо которых звучала «досочинённая» замена: пакет потерян.
+    pub lost: u64,
+    /// Выброшены из переполненного буфера (пачка после затора, дрейф часов).
+    pub trimmed: u64,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Delay {
@@ -70,6 +87,9 @@ pub struct JitterBuffer {
     transit: VecDeque<f64>,
     /// `(минимум, 95-й процентиль)` по `transit`, пересчитывается при каждом пакете.
     transit_range: (f64, f64),
+    /// Сколько кадров подряд уже «досочинено» в ожидании опоздавшего пакета.
+    bridged: u32,
+    stats: JitterStats,
 }
 
 impl JitterBuffer {
@@ -83,7 +103,13 @@ impl JitterBuffer {
             epoch: now,
             transit: VecDeque::with_capacity(HISTORY),
             transit_range: (0.0, 0.0),
+            bridged: 0,
+            stats: JitterStats::default(),
         }
+    }
+
+    pub fn stats(&self) -> JitterStats {
+        self.stats
     }
 
     pub fn push(&mut self, seq: u32, packet: Vec<u8>, now: Instant) {
@@ -93,7 +119,9 @@ impl JitterBuffer {
         self.transit.push_back(self.ms_since_epoch(now) - seq_ms(seq));
         self.transit_range = quantile_range(&self.transit);
 
+        self.stats.received += 1;
         if self.last_played.is_some_and(|last| seq <= last) {
+            self.stats.late += 1;
             return; // опоздал: его время уже прошло
         }
         if self.packets.len() >= CAPACITY {
@@ -135,20 +163,31 @@ impl JitterBuffer {
         if self.packets.len() > max {
             while self.packets.len() > max {
                 self.packets.pop_first();
+                self.stats.trimmed += 1;
             }
             self.next_seq = self.next_seq.max(self.first_seq().expect("буфер не пуст"));
         }
 
         let seq = self.next_seq;
         if let Some(packet) = self.packets.remove(&seq) {
+            self.bridged = 0;
             self.mark_played(seq);
             return Pop::Packet(packet);
         }
 
         let Some(first) = self.first_seq() else {
-            // Пакеты кончились: человек замолчал или сеть надолго пропала.
+            // Пакеты кончились. Может, следующий просто опаздывает: пару кадров
+            // «досочинит» декодер (PLC) — это почти не слышно, в отличие от
+            // паузы с перезапуском фразы.
+            if self.bridged < BRIDGE_FRAMES {
+                self.bridged += 1;
+                self.mark_played(seq);
+                return Pop::Lost { next: None };
+            }
+            // Пакетов нет и дальше: человек замолчал или сеть надолго пропала.
             // Следующую фразу снова начнём с выдержки `delay_ms`.
             self.playing = false;
+            self.bridged = 0;
             return Pop::Idle;
         };
 
@@ -157,6 +196,8 @@ impl JitterBuffer {
             return self.pop(now);
         }
 
+        self.bridged = 0;
+        self.stats.lost += 1;
         self.mark_played(seq);
         Pop::Lost { next: self.packets.get(&(seq + 1)).cloned() }
     }
@@ -229,7 +270,25 @@ mod tests {
         assert_eq!(jb.pop(t.at(30)), Pop::Packet(p(0)));
         jb.push(1, p(1), t.at(20));
         assert_eq!(jb.pop(t.at(50)), Pop::Packet(p(1)));
-        assert_eq!(jb.pop(t.at(70)), Pop::Idle);
+        // Дальше пусто: три кадра «досочиняются», потом — тишина.
+        for ms in [70, 90, 110] {
+            assert_eq!(jb.pop(t.at(ms)), Pop::Lost { next: None });
+        }
+        assert_eq!(jb.pop(t.at(130)), Pop::Idle);
+    }
+
+    #[test]
+    fn late_packet_is_bridged_without_pause() {
+        let (mut jb, t) = setup(Delay::Fixed(0.0));
+        jb.push(0, p(0), t.at(0));
+        assert_eq!(jb.pop(t.at(0)), Pop::Packet(p(0)));
+        // Пакет 1 задержался в сети: вместо паузы — замена, и дальше без перерыва.
+        assert_eq!(jb.pop(t.at(20)), Pop::Lost { next: None });
+        jb.push(1, p(1), t.at(30));
+        jb.push(2, p(2), t.at(40));
+        assert_eq!(jb.pop(t.at(40)), Pop::Packet(p(2)));
+        let stats = jb.stats();
+        assert_eq!((stats.received, stats.late, stats.lost), (3, 1, 0));
     }
 
     #[test]
@@ -295,7 +354,7 @@ mod tests {
         assert_eq!(jb.pop(t.at(160)), Pop::Lost { next: Some(p(7)) });
         jb.push(6, p(6), t.at(170)); // опоздал
         assert_eq!(jb.pop(t.at(180)), Pop::Packet(p(7)));
-        assert_eq!(jb.pop(t.at(200)), Pop::Idle);
+        assert_eq!(jb.stats(), JitterStats { received: 3, late: 1, lost: 1, trimmed: 0 });
     }
 
     #[test]

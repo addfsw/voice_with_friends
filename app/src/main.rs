@@ -746,6 +746,62 @@ struct Status {
     speaking: Vec<PeerId>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PeerAudioStats {
+    id: PeerId,
+    /// Задержка джиттер-буфера, мс.
+    delay_ms: f64,
+    received: u64,
+    late: u64,
+    lost: u64,
+    trimmed: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AudioStats {
+    /// Сколько раз система теряла кусочки звука с микрофона.
+    capture_glitches: u64,
+    /// Сколько раз воспроизведению не хватило звука.
+    playback_glitches: u64,
+    capture_device: String,
+    capture_rate: u32,
+    playback_device: String,
+    playback_rate: u32,
+    peers: Vec<PeerAudioStats>,
+}
+
+/// Диагностика звука для настроек: сбои устройств и счётчики по собеседникам.
+#[tauri::command]
+async fn audio_stats(state: State<'_, AppState>) -> CmdResult<Option<AudioStats>> {
+    let call = state.call.lock().await;
+    let Some(call) = call.as_ref() else { return Ok(None) };
+    let (capture, playback) = (call.audio.capture(), call.audio.playback());
+    let peers = call
+        .mixer()
+        .stats()
+        .into_iter()
+        .map(|(id, s, delay_ms)| PeerAudioStats {
+            id,
+            delay_ms,
+            received: s.received,
+            late: s.late,
+            lost: s.lost,
+            trimmed: s.trimmed,
+        })
+        .collect();
+    Ok(Some(AudioStats {
+        capture_glitches: capture.glitches.load(Ordering::Relaxed),
+        playback_glitches: playback.glitches.load(Ordering::Relaxed),
+        capture_device: capture.device_name.clone(),
+        capture_rate: capture.config.sample_rate,
+        playback_device: playback.device_name.clone(),
+        playback_rate: playback.config.sample_rate,
+        peers,
+    }))
+}
+
 /// Интерфейс опрашивает это ~10 раз в секунду для индикаторов.
 #[tauri::command]
 async fn status(state: State<'_, AppState>) -> CmdResult<Status> {
@@ -808,6 +864,7 @@ fn main() {
             set_vad_threshold,
             set_noise_suppression,
             set_agc,
+            audio_stats,
             set_cues,
             set_close_to_tray,
             send_chat,

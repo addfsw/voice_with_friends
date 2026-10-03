@@ -1299,10 +1299,64 @@ function openSettings() {
   closeMenus();
   $("settings").hidden = false;
   loadDevices();
+  refreshDiagnostics();
+  clearInterval(diagTimer);
+  diagTimer = setInterval(refreshDiagnostics, 1000);
 }
 
 function closeSettings() {
   $("settings").hidden = true;
+  clearInterval(diagTimer);
+  diagTimer = null;
+}
+
+// Диагностика звука (только в комнате).
+let diagTimer = null;
+
+async function refreshDiagnostics() {
+  let stats = null;
+  try {
+    stats = call.me ? await invoke("audio_stats") : null;
+  } catch {
+    stats = null;
+  }
+  $("diag").hidden = !stats;
+  if (!stats) return;
+  const list = $("diag-list");
+  list.innerHTML = "";
+  const row = (who, nums, bad, stacked = false) => {
+    const li = document.createElement("li");
+    li.classList.toggle("stacked", stacked);
+    const name = document.createElement("span");
+    name.className = "who";
+    name.textContent = who;
+    name.title = who;
+    const value = document.createElement("span");
+    value.className = "nums";
+    value.classList.toggle("bad", bad);
+    value.textContent = nums;
+    li.append(name, value);
+    list.append(li);
+  };
+  const khz = (rate) => `${(rate / 1000).toFixed(rate % 1000 ? 1 : 0)} кГц`;
+  row(`Микрофон: ${stats.captureDevice}`, `${khz(stats.captureRate)} · сбоев ${stats.captureGlitches}`, stats.captureGlitches > 0);
+  row(`Вывод: ${stats.playbackDevice}`, `${khz(stats.playbackRate)} · сбоев ${stats.playbackGlitches}`, stats.playbackGlitches > 0);
+  for (const peer of stats.peers) {
+    const name = call.peers.get(peer.id)?.name ?? (peer.id === call.me?.id ? "вы (эхо)" : `#${peer.id}`);
+    const lostPct = peer.received ? (100 * peer.lost) / peer.received : 0;
+    row(
+      name,
+      `задержка ${Math.round(peer.delayMs)} мс · потери ${lostPct.toFixed(1)}% · опоздали ${peer.late} · лишние ${peer.trimmed}`,
+      lostPct > 2 || peer.late > 20,
+      true,
+    );
+  }
+  if (stats.peers.length === 0) {
+    const li = document.createElement("li");
+    li.className = "hint";
+    li.textContent = "Собеседники появятся здесь, когда заговорят.";
+    list.append(li);
+  }
 }
 
 for (const button of document.querySelectorAll(".open-settings")) {
