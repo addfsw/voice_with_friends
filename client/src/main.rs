@@ -92,13 +92,16 @@ struct AudioArgs {
     /// Отключить шумоподавление.
     #[arg(long)]
     no_denoise: bool,
+    /// Без автоусиления тихого голоса.
+    #[arg(long)]
+    no_agc: bool,
     /// Постоянная задержка джиттер-буфера, мс. По умолчанию подстраивается под сеть
     /// сама: в локальной сети это ~10 мс, в плохом Wi-Fi больше.
     #[arg(long)]
     jitter_ms: Option<u32>,
     /// Сколько звука держать готовым для звуковой карты, мс. Если появляются
     /// сбои вывода (щелчки), увеличьте до 30–40.
-    #[arg(long, default_value_t = 20)]
+    #[arg(long, default_value_t = 30)]
     playback_ms: u32,
     /// Без звуков событий (кто-то вошёл или вышел).
     #[arg(long)]
@@ -124,6 +127,7 @@ impl AudioArgs {
         let mode = if self.no_vad { TxMode::Always } else { TxMode::Voice };
         let state = TxState::new(mode, self.vad_db);
         state.set_noise_suppression(!self.no_denoise);
+        state.set_agc(!self.no_agc);
         Arc::new(state)
     }
 }

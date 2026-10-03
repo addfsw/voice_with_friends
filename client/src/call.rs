@@ -38,7 +38,9 @@ impl Default for AudioSettings {
             output: None,
             tx: TxSettings::default(),
             jitter: Delay::default(),
-            playback_ms: 20,
+            // 20 мс хватает, пока процессор свободен; 30 — запас на случай,
+            // если поток микшера проснётся с опозданием (нагрузка, демонстрация).
+            playback_ms: 30,
             cues: true,
         }
     }

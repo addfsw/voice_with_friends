@@ -54,6 +54,7 @@ pub fn scale(src: &Image, width: u32, height: u32) -> Image {
         for (chunk, out) in rgba.chunks_mut(rows_per_thread * dw * 4).enumerate() {
             let columns = &columns;
             scope.spawn(move || {
+                crate::audio::lower_thread_priority();
                 for (i, out) in out.chunks_exact_mut(dw * 4).enumerate() {
                     let y = chunk * rows_per_thread + i;
                     let fy = y as u64 * y_step;

@@ -80,6 +80,8 @@ pub struct TxState {
     vad_threshold_db_bits: AtomicU32,
     ptt_pressed: AtomicBool,
     noise_suppression: AtomicBool,
+    /// Автоусиление тихого голоса.
+    agc: AtomicBool,
     /// Идёт ли сейчас передача (для индикатора).
     transmitting: AtomicBool,
     /// Громкость последнего кадра с микрофона, dBFS.
@@ -94,6 +96,7 @@ impl TxState {
             vad_threshold_db_bits: AtomicU32::new(vad_threshold_db.to_bits()),
             ptt_pressed: AtomicBool::new(false),
             noise_suppression: AtomicBool::new(true),
+            agc: AtomicBool::new(true),
             transmitting: AtomicBool::new(false),
             level_db_bits: AtomicU32::new((-120f32).to_bits()),
         }
@@ -133,6 +136,14 @@ impl TxState {
 
     pub fn set_noise_suppression(&self, enabled: bool) {
         self.noise_suppression.store(enabled, Ordering::Relaxed);
+    }
+
+    pub fn agc(&self) -> bool {
+        self.agc.load(Ordering::Relaxed)
+    }
+
+    pub fn set_agc(&self, enabled: bool) {
+        self.agc.store(enabled, Ordering::Relaxed);
     }
 
     pub fn transmitting(&self) -> bool {
@@ -232,6 +243,65 @@ fn level_db(frame: &[f32]) -> f32 {
     10.0 * mean_square.max(1e-12).log10()
 }
 
+/// Автоусиление голоса (AGC): тихий микрофон подтягивается к нормальной
+/// громкости, громкий — не перегружается.
+///
+/// Усиление подстраивается только по кадрам с речью (громче порога), иначе в
+/// паузах оно разгоняло бы шум. Растёт медленно (5 дБ/с), чтобы не «качать»
+/// громкость между словами, а падает быстро. Ограничитель не даёт пикам
+/// выйти за −1 дБ полной шкалы — вместо хрипа звук чуть прижимается.
+#[derive(Default)]
+pub struct Agc {
+    gain_db: f32,
+}
+
+/// К этой громкости (RMS кадра) подтягивается речь, dBFS.
+const AGC_TARGET_DB: f32 = -20.0;
+const AGC_MAX_GAIN_DB: f32 = 20.0;
+const AGC_MIN_GAIN_DB: f32 = -10.0;
+/// На сколько усиление может вырасти или упасть за кадр (20 мс).
+const AGC_UP_DB: f32 = 0.1;
+const AGC_DOWN_DB: f32 = 1.0;
+/// Потолок пиков после усиления: −1 dBFS.
+const AGC_LIMIT: f32 = 0.89;
+
+impl Agc {
+    /// Текущее усиление, дБ.
+    pub fn gain_db(&self) -> f32 {
+        self.gain_db
+    }
+
+    /// Усиливает кадр. `level_db` — его громкость до усиления, `speech` —
+    /// есть ли в нём речь (только по таким кадрам подстраивается усиление).
+    pub fn process(&mut self, frame: &mut [f32; FRAME_SAMPLES], level_db: f32, speech: bool) {
+        let start = self.gain_db;
+        if speech {
+            let want = (AGC_TARGET_DB - level_db).clamp(AGC_MIN_GAIN_DB, AGC_MAX_GAIN_DB);
+            self.gain_db = if want > self.gain_db {
+                (self.gain_db + AGC_UP_DB).min(want)
+            } else {
+                (self.gain_db - AGC_DOWN_DB).max(want)
+            };
+        }
+        let peak = frame.iter().fold(0f32, |m, s| m.max(s.abs()));
+        if peak > 0.0 {
+            let limit_db = 20.0 * (AGC_LIMIT / peak).log10();
+            self.gain_db = self.gain_db.min(limit_db);
+        }
+        // Внутри кадра усиление меняется плавно — без щелчков на стыках.
+        let (from, to) = (db_to_gain(start), db_to_gain(self.gain_db));
+        let n = frame.len() as f32;
+        for (i, s) in frame.iter_mut().enumerate() {
+            let gain = from + (to - from) * (i as f32 / n);
+            *s = (*s * gain).clamp(-1.0, 1.0);
+        }
+    }
+}
+
+fn db_to_gain(db: f32) -> f32 {
+    10f32.powf(db / 20.0)
+}
+
 pub struct Transmitter {
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
@@ -271,9 +341,11 @@ impl Transmitter {
         let thread = thread::Builder::new().name("vwf-encoder".into()).spawn(move || {
             let mut vad = Vad::default();
             let mut denoiser = NoiseSuppressor::new();
+            let mut agc = Agc::default();
             let mut frame = [0f32; FRAME_SAMPLES];
             let mut packet = [0u8; MAX_PACKET];
             let next_seq = thread_next_seq;
+            crate::audio::raise_thread_priority();
             wakeup.register();
             // Пока запускались вывод и микшер, микрофон уже что-то записал.
             // Это старый звук: отправлять его — значит начать разговор с задержкой.
@@ -297,6 +369,11 @@ impl Transmitter {
                 state.transmitting.store(active, Ordering::Relaxed);
                 if !active {
                     continue;
+                }
+                // Усиление — уже после детектора речи: порог и индикатор
+                // показывают громкость самого микрофона.
+                if state.agc() {
+                    agc.process(&mut frame, level, level > state.vad_threshold_db());
                 }
 
                 match encoder.encode_float(&frame, &mut packet) {
@@ -570,6 +647,7 @@ impl Mixer {
         let thread = thread::Builder::new().name("vwf-mixer".into()).spawn(move || {
             let mut resampler = Resampler::new(SAMPLE_RATE, device_rate);
             let mut frame = [0f32; FRAME_SAMPLES];
+            crate::audio::raise_thread_priority();
             wakeup.register();
             while !thread_stop.load(Ordering::Relaxed) {
                 while playback.occupied_len() < lead {
@@ -662,6 +740,42 @@ mod tests {
         let avg = |v: &[f32]| v.iter().sum::<f32>() / v.len() as f32;
         let reduction = avg(&before) - avg(&after);
         assert!(reduction > 20.0, "шум ослаблен всего на {reduction:.1} дБ");
+    }
+
+    #[test]
+    fn agc_raises_quiet_speech_and_limits_peaks() {
+        let mut agc = Agc::default();
+        // Тихий голос: около −38 dBFS (у sine_frame амплитуда 0,5). За 5 секунд
+        // речи кадр подтягивается к −20 dBFS.
+        let quiet: Vec<f32> = sine_frame(0).iter().map(|s| s * 0.035).collect();
+        let mut out = [0f32; FRAME_SAMPLES];
+        for _ in 0..250 {
+            out.copy_from_slice(&quiet);
+            let level = level_db(&out);
+            agc.process(&mut out, level, true);
+        }
+        assert!((15.0..=20.0).contains(&agc.gain_db()), "усиление {}", agc.gain_db());
+        assert!((level_db(&out) + 20.0).abs() < 0.5, "уровень {}", level_db(&out));
+
+        // Внезапно громко: пики не выходят за потолок, усиление сразу падает.
+        let loud: Vec<f32> = sine_frame(0).iter().map(|s| s * 1.8).collect();
+        for _ in 0..3 {
+            out.copy_from_slice(&loud);
+            let level = level_db(&out);
+            agc.process(&mut out, level, true);
+        }
+        assert!(out.iter().all(|s| s.abs() <= AGC_LIMIT + 1e-4), "пик выше потолка");
+        assert!(agc.gain_db() < 0.0);
+
+        // В паузах (нет речи) усиление не растёт и шум не разгоняется.
+        let before = agc.gain_db();
+        let noise: Vec<f32> = sine_frame(0).iter().map(|s| s * 0.001).collect();
+        for _ in 0..100 {
+            out.copy_from_slice(&noise);
+            let level = level_db(&out);
+            agc.process(&mut out, level, false);
+        }
+        assert!(agc.gain_db() <= before);
     }
 
     #[test]

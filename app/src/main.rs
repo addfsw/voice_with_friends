@@ -679,6 +679,12 @@ async fn set_cues(state: State<'_, AppState>, enabled: bool) -> CmdResult<()> {
     Ok(())
 }
 
+/// Автоусиление тихого голоса.
+#[tauri::command]
+fn set_agc(state: State<'_, AppState>, enabled: bool) {
+    state.tx.set_agc(enabled);
+}
+
 #[tauri::command]
 fn set_noise_suppression(state: State<'_, AppState>, enabled: bool) {
     state.tx.set_noise_suppression(enabled);
@@ -801,6 +807,7 @@ fn main() {
             set_output_device,
             set_vad_threshold,
             set_noise_suppression,
+            set_agc,
             set_cues,
             set_close_to_tray,
             send_chat,

@@ -57,6 +57,20 @@ pub struct DeviceList {
     pub default_output: Option<String>,
 }
 
+/// Повышает приоритет текущего потока: для потоков, которые обрабатывают
+/// звук. Если они опоздают хотя бы на 20 мс (например, процессор занят
+/// сжатием видео для демонстрации экрана), в звуке будет щелчок или провал.
+/// Не получилось (в Linux нужны права) — не страшно.
+pub(crate) fn raise_thread_priority() {
+    let _ = thread_priority::set_current_thread_priority(thread_priority::ThreadPriority::Max);
+}
+
+/// Понижает приоритет текущего потока: для тяжёлой фоновой работы
+/// (демонстрация экрана), чтобы она не отнимала время у звука.
+pub(crate) fn lower_thread_priority() {
+    let _ = thread_priority::set_current_thread_priority(thread_priority::ThreadPriority::Min);
+}
+
 pub fn device_list() -> anyhow::Result<DeviceList> {
     let host = cpal::default_host();
     Ok(DeviceList {

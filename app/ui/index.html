@@ -172,6 +172,17 @@
           Пока выбран режим рации, эта клавиша не работает в других программах.
         </p>
 
+        <div class="voice-switches">
+          <label class="switch-row" title="Убирает гул, шум улицы и стук клавиатуры из вашего микрофона">
+            <span>Шумоподавление</span>
+            <input type="checkbox" id="denoise" class="switch" />
+          </label>
+          <label class="switch-row" title="Тихий голос подтягивается до нормальной громкости, слишком громкий не хрипит">
+            <span>Усиление голоса</span>
+            <input type="checkbox" id="agc" class="switch" />
+          </label>
+        </div>
+
         <div class="devices">
           <div class="menu-wrap">
             <button type="button" id="input-pill" class="device-pill" title="Микрофон">
@@ -231,10 +242,6 @@
           <label class="field">
             <span>Динамики / наушники</span>
             <select id="output"></select>
-          </label>
-          <label class="switch-row" title="Убирает гул, шум улицы и стук клавиатуры из вашего микрофона">
-            <span>Шумоподавление</span>
-            <input type="checkbox" id="denoise" class="switch" />
           </label>
           <label class="switch-row" title="Короткий сигнал, когда кто-то вошёл или вышел, и при нажатии кнопок микрофона и звука">
             <span>Звуки событий</span>

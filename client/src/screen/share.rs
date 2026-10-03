@@ -77,6 +77,7 @@ impl Sharer {
         let thread = {
             let (stop, keyframe, viewers) = (stop.clone(), keyframe.clone(), viewers.clone());
             thread::Builder::new().name("vwf-screen-share".into()).spawn(move || {
+                crate::audio::lower_thread_priority();
                 let source = match open() {
                     Ok(source) => {
                         let _ = opened_tx.send(Ok(()));

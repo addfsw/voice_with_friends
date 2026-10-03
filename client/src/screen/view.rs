@@ -55,6 +55,7 @@ impl Viewer {
     ) -> anyhow::Result<Self> {
         let (tx, rx) = sync_channel::<Command>(QUEUE);
         let thread = thread::Builder::new().name("vwf-screen-view".into()).spawn(move || {
+            crate::audio::lower_thread_priority();
             let mut streams: HashMap<PeerId, Stream> = HashMap::new();
             let mut ask = |stream: &mut Stream, from: PeerId| {
                 stream.waiting_keyframe = true;
