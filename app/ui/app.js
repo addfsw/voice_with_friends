@@ -43,6 +43,17 @@ const ICON_PATHS = {
     "M12 3a9 9 0 0 0-9 9v7a2 2 0 0 0 2 2h3v-8H5v-1a7 7 0 0 1 14 0v1h-3v8h3a2 2 0 0 0 2-2v-7a9 9 0 0 0-9-9Z",
   crown: "M5 16 3 5l5.5 5L12 4l3.5 6L21 5l-2 11H5Zm14 3a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-1h14v1Z",
   more: "M12 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm0 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm0 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z",
+  gear:
+    "M19.14 12.94c.04-.31.06-.62.06-.94s-.02-.63-.06-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96a7.03 7.03 0 0 0-1.62-.94l-.36-2.54A.48.48 0 0 0 13.93 2h-3.84a.48.48 0 0 0-.48.41l-.36 2.54c-.59.24-1.13.56-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.73 8.47a.48.48 0 0 0 .12.61l2.03 1.58c-.04.31-.07.63-.07.94s.02.63.06.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.48.48 0 0 0-.12-.61l-2.01-1.58ZM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2Z",
+  chevron: "M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41Z",
+  close:
+    "M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41Z",
+  check: "M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17Z",
+  logout:
+    "M10.09 15.59 11.5 17l5-5-5-5-1.41 1.41L12.67 11H3v2h9.67l-2.58 2.59ZM19 3H5a2 2 0 0 0-2 2v4h2V5h14v14H5v-4H3v4a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2Z",
+  broadcast:
+    "M12 11a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm6 2a6 6 0 1 0-9 5.19l1-1.74a4 4 0 1 1 4 0l1 1.74A6 6 0 0 0 18 13ZM12 3a10 10 0 0 0-5 18.66l1-1.73a8 8 0 1 1 8 0l1 1.73A10 10 0 0 0 12 3Z",
+  copy: "M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1Zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 16H8V7h11v14Z",
 };
 
 // Иконка; `crossed` — перечёркнутая (выключено).
@@ -63,6 +74,9 @@ function icon(name, crossed = false) {
   }
   return svg;
 }
+
+// Значки в разметке: <span data-icon="gear"></span>.
+for (const el of document.querySelectorAll("[data-icon]")) el.prepend(icon(el.dataset.icon));
 
 // ---------------------------------------------------------------------------
 // Общее
@@ -86,7 +100,7 @@ function showView(name) {
 function avatarColor(name) {
   let hash = 0;
   for (const ch of name) hash = (hash * 31 + ch.codePointAt(0)) >>> 0;
-  const palette = ["#5865f2", "#eb459e", "#3ba55d", "#faa61a", "#ed4245", "#9b59b6", "#1abc9c", "#e67e22"];
+  const palette = ["#5b5bd6", "#d6409f", "#2f9e6e", "#e08a00", "#e5484d", "#8b5cf6", "#0b8fd8", "#e5622c"];
   return palette[hash % palette.length];
 }
 
@@ -98,9 +112,12 @@ function initial(name) {
 // Экран подключения
 // ---------------------------------------------------------------------------
 
+// Списки устройств: { inputs, outputs, defaultInput, defaultOutput }.
+let devices = null;
+
 async function loadDevices() {
   try {
-    const devices = await invoke("list_devices");
+    devices = await invoke("list_devices");
     fillSelect($("input"), devices.inputs, devices.defaultInput, store.get("input", ""));
     fillSelect($("output"), devices.outputs, devices.defaultOutput, store.get("output", ""));
   } catch (e) {
@@ -292,7 +309,7 @@ $("host-btn").addEventListener("click", async () => {
       args: { server: hosted.localAddress, name, input, output },
     });
     call.hosting = hosted.info;
-    enterRoom("Ваш сервер", name, joined);
+    enterRoom(hosted.localAddress, name, joined);
   } catch (e) {
     if (hosted) await invoke("stop_server").catch(() => {});
     error.textContent = errorText(e);
@@ -310,8 +327,15 @@ $("host-btn").addEventListener("click", async () => {
 function enterRoom(server, name, joined) {
   call.me = joined.me;
   call.peers = new Map(joined.peers.map((p) => [p.id, p]));
-  $("server-label").textContent = isInvite(server) ? "Через интернет по коду приглашения" : server;
-  $("server-code").textContent = `код ${joined.serverCode}`;
+  $("room-title").textContent = call.hosting?.name ?? "Комната";
+  $("server-label").textContent = call.hosting
+    ? "ваш сервер"
+    : isInvite(server)
+      ? "через интернет"
+      : server;
+  $("server-code").textContent = joined.serverCode;
+  showDevice("input", joined.inputDevice);
+  showDevice("output", joined.outputDevice);
   renderHostCard();
   disarmLeave();
   renderPeers();
@@ -324,6 +348,8 @@ function enterRoom(server, name, joined) {
 
 function leaveRoom(reason) {
   call.hosting = null;
+  call.me = null;
+  closeMenus();
   stopInternetPolling();
   clearInterval(call.statusTimer);
   call.statusTimer = null;
@@ -340,14 +366,15 @@ function disarmLeave() {
   clearTimeout(leaveArmTimer);
   const button = $("leave-btn");
   button.classList.remove("armed");
-  button.textContent = call.hosting ? "Закрыть комнату" : "Отключиться";
+  button.querySelector("span").textContent = call.hosting ? "Закрыть" : "Выйти";
+  button.title = call.hosting ? "Закрыть комнату: все отключатся" : "Отключиться";
 }
 
 $("leave-btn").addEventListener("click", async () => {
   const button = $("leave-btn");
   if (call.hosting && !button.classList.contains("armed")) {
     button.classList.add("armed");
-    button.textContent = "Все отключатся. Ещё раз?";
+    button.querySelector("span").textContent = "Все отключатся. Точно?";
     leaveArmTimer = setTimeout(disarmLeave, 4000);
     return;
   }
@@ -384,15 +411,17 @@ function renderHostCard() {
     addr.textContent = address;
     const copy = document.createElement("button");
     copy.type = "button";
-    copy.className = "link";
-    copy.textContent = "копировать";
+    copy.className = "icon-btn ghost";
+    copy.title = "Скопировать адрес";
+    copy.setAttribute("aria-label", "Скопировать адрес");
+    copy.append(icon("copy"));
     copy.addEventListener("click", () => copyText(address));
     li.append(name, addr, copy);
     list.append(li);
   }
   if (call.hosting.addresses.length === 0) {
     const li = document.createElement("li");
-    li.className = "subtle small-text";
+    li.className = "hint";
     li.textContent = "Компьютер не подключён к сети.";
     list.append(li);
   }
@@ -420,10 +449,13 @@ function renderPeers() {
   for (const peer of [...call.peers.values()].sort((a, b) => a.id - b.id)) {
     list.append(peerItem(peer, false));
   }
+  $("people-count").textContent = String(call.peers.size + 1);
   if (call.peers.size === 0) {
     const empty = document.createElement("li");
     empty.className = "empty";
-    empty.textContent = "Пока никого нет. Позовите друзей!";
+    empty.textContent = call.hosting
+      ? "Пока никого. Отправьте друзьям код приглашения из карточки выше."
+      : "Пока никого нет. Позовите друзей!";
     list.append(empty);
   }
 }
@@ -451,11 +483,14 @@ function peerItem(peer, isMe) {
     }));
     title.append(crown);
   }
-  title.append(document.createTextNode(peer.name));
+  const nameEl = document.createElement("span");
+  nameEl.className = "name";
+  nameEl.textContent = peer.name;
+  title.append(nameEl);
   if (isMe) {
     const you = document.createElement("span");
     you.className = "you";
-    you.textContent = " (вы)";
+    you.textContent = "вы";
     title.append(you);
   }
   main.append(title);
@@ -746,8 +781,30 @@ $("echo").addEventListener("change", () => {
   invoke("set_echo", { enabled: $("echo").checked });
 });
 
-$("mode").addEventListener("change", async () => {
-  const mode = $("mode").value;
+// Переключатель из нескольких кнопок (режим передачи, тема).
+function segmented(el, value, onChange) {
+  const select = (v) => {
+    for (const button of el.querySelectorAll("button")) {
+      const active = button.dataset.value === v;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-checked", active);
+    }
+  };
+  for (const button of el.querySelectorAll("button")) {
+    button.setAttribute("role", "radio");
+    button.addEventListener("click", () => {
+      select(button.dataset.value);
+      onChange(button.dataset.value);
+    });
+  }
+  select(value);
+  return select;
+}
+
+let currentMode = "voice";
+
+async function setMode(mode) {
+  currentMode = mode;
   store.set("mode", mode);
   updateModeRows();
   try {
@@ -755,10 +812,10 @@ $("mode").addEventListener("change", async () => {
   } catch (e) {
     toast(String(e));
   }
-});
+}
 
 function updateModeRows() {
-  const mode = $("mode").value;
+  const mode = currentMode;
   $("vad-row").hidden = mode !== "voice";
   $("ptt-row").hidden = mode !== "ptt";
   $("ptt-hint").hidden = mode !== "ptt";
@@ -826,6 +883,136 @@ function showPttKey(key) {
 }
 
 // ---------------------------------------------------------------------------
+// Настройки: тема, цвет, устройства
+// ---------------------------------------------------------------------------
+
+function openSettings() {
+  closeMenus();
+  $("settings").hidden = false;
+  loadDevices();
+}
+
+function closeSettings() {
+  $("settings").hidden = true;
+}
+
+for (const button of document.querySelectorAll(".open-settings")) {
+  button.addEventListener("click", openSettings);
+}
+$("settings-close").addEventListener("click", closeSettings);
+$("settings").addEventListener("click", (event) => {
+  if (event.target === $("settings")) closeSettings();
+});
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !capturingKey) {
+    closeSettings();
+    closeMenus();
+  }
+});
+
+// Тема: system — как в Windows; light/dark — всегда такая.
+function applyTheme(theme) {
+  store.set("theme", theme);
+  if (theme === "system") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = theme;
+}
+
+function applyAccent(accent) {
+  store.set("accent", accent);
+  document.documentElement.dataset.accent = accent;
+  for (const button of $("accent").querySelectorAll("button")) {
+    button.classList.toggle("active", button.dataset.value === accent);
+  }
+}
+
+segmented($("theme"), store.get("theme", "system"), applyTheme);
+for (const button of $("accent").querySelectorAll("button")) {
+  button.setAttribute("aria-label", button.title);
+  button.addEventListener("click", () => applyAccent(button.dataset.value));
+}
+applyAccent(store.get("accent", "indigo"));
+
+// Устройства. kind — "input" (микрофон) или "output" (динамики/наушники);
+// value — имя устройства, "" — системное по умолчанию.
+const DEVICE_COMMAND = { input: "set_input_device", output: "set_output_device" };
+
+async function chooseDevice(kind, value) {
+  const previous = store.get(kind, "");
+  store.set(kind, value);
+  $(kind).value = value;
+  if (!call.me) return; // не в комнате: устройство откроется при подключении
+  const pill = $(`${kind}-pill`);
+  pill.classList.add("busy");
+  try {
+    const opened = await invoke(DEVICE_COMMAND[kind], { device: value || null });
+    if (opened) showDevice(kind, opened);
+  } catch (e) {
+    // Новое устройство не открылось — остаётся прежнее.
+    store.set(kind, previous);
+    $(kind).value = previous;
+    toast(`Не удалось переключить устройство: ${errorText(e)}`);
+  } finally {
+    pill.classList.remove("busy");
+  }
+}
+
+function showDevice(kind, name) {
+  const pill = $(`${kind}-pill`);
+  pill.querySelector(".device-name").textContent = name;
+  pill.title = `${kind === "input" ? "Микрофон" : "Вывод звука"}: ${name}`;
+}
+
+$("input").addEventListener("change", () => chooseDevice("input", $("input").value));
+$("output").addEventListener("change", () => chooseDevice("output", $("output").value));
+
+// Быстрый выбор устройства прямо в комнате.
+async function openDeviceMenu(kind) {
+  const menu = $(`${kind}-menu`);
+  const wasOpen = !menu.hidden;
+  closeMenus();
+  if (wasOpen) return;
+  await loadDevices(); // список мог измениться: подключили наушники
+  if (!devices) return;
+  const names = kind === "input" ? devices.inputs : devices.outputs;
+  const systemDefault = kind === "input" ? devices.defaultInput : devices.defaultOutput;
+  const current = store.get(kind, "");
+
+  menu.innerHTML = "";
+  const title = document.createElement("div");
+  title.className = "menu-title";
+  title.textContent = kind === "input" ? "Микрофон" : "Динамики / наушники";
+  menu.append(title);
+  const options = [["", systemDefault ? `По умолчанию (${systemDefault})` : "По умолчанию"]];
+  for (const name of names) options.push([name, name]);
+  for (const [value, label] of options) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.classList.toggle("current", value === current || (value === "" && !names.includes(current)));
+    const check = icon("check");
+    check.classList.add("check");
+    const text = document.createElement("span");
+    text.className = "label";
+    text.textContent = label;
+    item.title = label;
+    item.append(check, text);
+    item.addEventListener("click", () => {
+      closeMenus();
+      chooseDevice(kind, value);
+    });
+    menu.append(item);
+  }
+  menu.hidden = false;
+}
+
+for (const kind of ["input", "output"]) {
+  $(`${kind}-pill`).addEventListener("click", (event) => {
+    event.stopPropagation();
+    openDeviceMenu(kind);
+  });
+  $(`${kind}-menu`).addEventListener("click", (event) => event.stopPropagation());
+}
+
+// ---------------------------------------------------------------------------
 // Запуск
 // ---------------------------------------------------------------------------
 
@@ -837,7 +1024,8 @@ async function init() {
   const vad = store.get("vad", -45);
   const pttKey = store.get("pttKey", null);
   const denoise = store.get("denoise", true);
-  $("mode").value = mode;
+  currentMode = mode;
+  segmented($("mode"), mode, setMode);
   $("denoise").checked = denoise;
   $("vad").value = vad;
   showVad(vad);

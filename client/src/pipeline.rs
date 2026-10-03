@@ -234,6 +234,9 @@ fn level_db(frame: &[f32]) -> f32 {
 pub struct Transmitter {
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
+    /// Номер следующего кадра — чтобы новый кодер (после смены микрофона)
+    /// продолжил нумерацию, а не начал с нуля.
+    next_seq: Arc<AtomicU32>,
 }
 
 impl Transmitter {
@@ -241,12 +244,14 @@ impl Transmitter {
     /// готового пакета. `seq` — номер 20-мс кадра: он растёт с каждым кадром
     /// с микрофона, даже если кадр не отправлен (тишина, mute). Так получатель
     /// по номеру знает, когда кадр был записан, и может измерять джиттер.
-    /// `wakeup` — тот же, что передан в `audio::start_capture`.
+    /// `wakeup` — тот же, что передан в `audio::start_capture`; `first_seq` —
+    /// номер первого кадра.
     pub fn spawn(
         mut capture: HeapCons<f32>,
         wakeup: Arc<Wakeup>,
         state: Arc<TxState>,
         settings: TxSettings,
+        first_seq: u32,
         mut send: impl FnMut(u32, &[u8]) + Send + 'static,
     ) -> anyhow::Result<Self> {
         let mut encoder =
@@ -260,12 +265,14 @@ impl Transmitter {
 
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = stop.clone();
+        let next_seq = Arc::new(AtomicU32::new(first_seq));
+        let thread_next_seq = next_seq.clone();
         let thread = thread::Builder::new().name("vwf-encoder".into()).spawn(move || {
             let mut vad = Vad::default();
             let mut denoiser = NoiseSuppressor::new();
             let mut frame = [0f32; FRAME_SAMPLES];
             let mut packet = [0u8; MAX_PACKET];
-            let mut next_seq = 0u32;
+            let next_seq = thread_next_seq;
             wakeup.register();
             // Пока запускались вывод и микшер, микрофон уже что-то записал.
             // Это старый звук: отправлять его — значит начать разговор с задержкой.
@@ -276,8 +283,7 @@ impl Transmitter {
                     continue;
                 }
                 capture.pop_slice(&mut frame);
-                let seq = next_seq;
-                next_seq = next_seq.wrapping_add(1);
+                let seq = next_seq.fetch_add(1, Ordering::Relaxed);
 
                 // Шум убираем до детектора речи: тогда гул комнаты не включает
                 // передачу, и индикатор громкости показывает то, что услышат другие.
@@ -299,16 +305,22 @@ impl Transmitter {
             }
             state.transmitting.store(false, Ordering::Relaxed);
         })?;
-        Ok(Self { stop, thread: Some(thread) })
+        Ok(Self { stop, thread: Some(thread), next_seq })
+    }
+
+    /// Останавливает кодер и возвращает номер кадра, который был бы следующим.
+    pub fn stop(&mut self) -> u32 {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+        self.next_seq.load(Ordering::Relaxed)
     }
 }
 
 impl Drop for Transmitter {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        if let Some(t) = self.thread.take() {
-            let _ = t.join();
-        }
+        self.stop();
     }
 }
 
@@ -542,12 +554,19 @@ pub struct MixerOutput {
     thread: Option<JoinHandle<()>>,
 }
 
-impl Drop for MixerOutput {
-    fn drop(&mut self) {
+impl MixerOutput {
+    /// Останавливает поток микшера (повторный вызов ничего не делает).
+    pub fn stop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         if let Some(t) = self.thread.take() {
             let _ = t.join();
         }
+    }
+}
+
+impl Drop for MixerOutput {
+    fn drop(&mut self) {
+        self.stop();
     }
 }
 
@@ -622,6 +641,49 @@ mod tests {
         assert!(state.should_transmit(&mut vad, -90.0));
         state.set_muted(true);
         assert!(!state.should_transmit(&mut vad, -20.0));
+    }
+
+    /// После смены микрофона новый кодер продолжает нумерацию кадров старого:
+    /// с нуля собеседники отбросили бы все пакеты как давно сыгранные.
+    #[test]
+    fn transmitter_continues_frame_numbers() {
+        use ringbuf::HeapRb;
+        use ringbuf::traits::Split;
+
+        let state = Arc::new(TxState::new(TxMode::Always, -40.0));
+        state.set_noise_suppression(false);
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let mut first_seq = 0;
+        for round in 0..2 {
+            let (mut mic, capture) = HeapRb::<f32>::new(FRAME_SAMPLES * 8).split();
+            let wakeup = Arc::new(Wakeup::default());
+            let log = sent.clone();
+            let mut tx = Transmitter::spawn(
+                capture,
+                wakeup.clone(),
+                state.clone(),
+                TxSettings::default(),
+                first_seq,
+                move |seq, _| log.lock().unwrap().push(seq),
+            )
+            .unwrap();
+            // Кодер при запуске выбрасывает накопившийся звук, поэтому кадры
+            // подаём, когда он уже работает.
+            let want = (round + 1) * 3;
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while sent.lock().unwrap().len() < want {
+                assert!(Instant::now() < deadline, "кодер не отправил кадры");
+                if mic.occupied_len() < FRAME_SAMPLES {
+                    mic.push_slice(&sine_frame(0));
+                    wakeup.wake();
+                }
+                thread::sleep(Duration::from_millis(5));
+            }
+            first_seq = tx.stop();
+            assert_eq!(first_seq as usize, sent.lock().unwrap().len());
+        }
+        let sent = sent.lock().unwrap();
+        assert_eq!(*sent, (0..sent.len() as u32).collect::<Vec<_>>());
     }
 
     #[test]

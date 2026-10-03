@@ -208,8 +208,8 @@ async fn connect(
         me,
         peers: call.peers().into_iter().map(Peer::from).collect(),
         server_code: vwf_proto::short_fingerprint(&call.fingerprint),
-        input_device: call.audio.capture.device_name.clone(),
-        output_device: call.audio.playback.device_name.clone(),
+        input_device: call.audio.capture().device_name.clone(),
+        output_device: call.audio.playback().device_name.clone(),
     };
     *slot = Some(call);
     Ok(joined)
@@ -333,6 +333,34 @@ async fn set_volume(state: State<'_, AppState>, id: PeerId, volume: f32) -> CmdR
         call.mixer().set_volume(id, volume);
     }
     Ok(())
+}
+
+/// Переключает микрофон во время звонка, не прерывая его. Возвращает имя
+/// открытого устройства; без звонка — `None` (устройство возьмётся из
+/// настроек при подключении).
+#[tauri::command]
+async fn set_input_device(
+    state: State<'_, AppState>,
+    device: Option<String>,
+) -> CmdResult<Option<String>> {
+    let mut call = state.call.lock().await;
+    let Some(call) = call.as_mut() else { return Ok(None) };
+    let device = device.filter(|d| !d.is_empty());
+    call.set_input(device.as_deref()).map_err(|e| format!("{e:#}"))?;
+    Ok(Some(call.audio.capture().device_name.clone()))
+}
+
+/// То же для динамиков или наушников.
+#[tauri::command]
+async fn set_output_device(
+    state: State<'_, AppState>,
+    device: Option<String>,
+) -> CmdResult<Option<String>> {
+    let mut call = state.call.lock().await;
+    let Some(call) = call.as_mut() else { return Ok(None) };
+    let device = device.filter(|d| !d.is_empty());
+    call.set_output(device.as_deref()).map_err(|e| format!("{e:#}"))?;
+    Ok(Some(call.audio.playback().device_name.clone()))
 }
 
 #[derive(Serialize)]
@@ -468,6 +496,8 @@ fn main() {
             set_muted,
             set_deafened,
             set_volume,
+            set_input_device,
+            set_output_device,
             set_vad_threshold,
             set_noise_suppression,
             discover_servers,

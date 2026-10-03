@@ -296,8 +296,8 @@ const GLITCH_REPORT_INTERVAL: Duration = Duration::from_secs(5);
 
 fn glitch_counters(audio: &AudioEngine) -> [GlitchCounter; 2] {
     [
-        GlitchCounter::new("микрофон", audio.capture.glitches.clone()),
-        GlitchCounter::new("вывод", audio.playback.glitches.clone()),
+        GlitchCounter::new("микрофон", audio.capture().glitches.clone()),
+        GlitchCounter::new("вывод", audio.playback().glitches.clone()),
     ]
 }
 
@@ -314,7 +314,7 @@ fn report_glitches(counters: &mut [GlitchCounter], after_meter: bool) {
 }
 
 fn print_devices(audio: &AudioEngine) {
-    let (capture, playback) = (&audio.capture, &audio.playback);
+    let (capture, playback) = (audio.capture(), audio.playback());
     println!(
         "Микрофон: {} ({} Гц, каналов: {})",
         capture.device_name, capture.config.sample_rate, capture.config.channels
@@ -394,7 +394,7 @@ struct SimulatedNetwork {
     queue: mpsc::Sender<(Instant, u32, Vec<u8>)>,
     loss: f32,
     jitter_ms: u32,
-    rng: std::cell::Cell<u64>,
+    rng: std::sync::atomic::AtomicU64,
 }
 
 impl SimulatedNetwork {
@@ -428,16 +428,21 @@ impl SimulatedNetwork {
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(1, |d| d.as_nanos() as u64);
-        Self { queue, loss: loss_percent / 100.0, jitter_ms, rng: std::cell::Cell::new(seed | 1) }
+        Self {
+            queue,
+            loss: loss_percent / 100.0,
+            jitter_ms,
+            rng: std::sync::atomic::AtomicU64::new(seed | 1),
+        }
     }
 
     /// Псевдослучайное число от 0 до 1 (xorshift — для имитации хватает).
     fn random(&self) -> f32 {
-        let mut x = self.rng.get();
+        let mut x = self.rng.load(std::sync::atomic::Ordering::Relaxed);
         x ^= x << 13;
         x ^= x >> 7;
         x ^= x << 17;
-        self.rng.set(x);
+        self.rng.store(x, std::sync::atomic::Ordering::Relaxed);
         (x >> 40) as f32 / (1u64 << 24) as f32
     }
 

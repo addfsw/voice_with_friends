@@ -4,63 +4,59 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Поигрулькины</title>
+    <!-- Тему применяем до первой отрисовки, чтобы окно не мигало светлым. -->
+    <script src="theme.js"></script>
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
     <!-- Экран подключения -->
     <main id="connect-view" class="view">
+      <div class="topbar">
+        <button type="button" class="icon-btn ghost open-settings" data-icon="gear" aria-label="Настройки" title="Настройки"></button>
+      </div>
+
       <div class="brand">
         <div class="logo" aria-hidden="true">
           <svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/></svg>
         </div>
         <h1>Поигрулькины</h1>
+        <p class="tagline">Голосовая комната для своих</p>
       </div>
 
-      <form id="connect-form" class="card" autocomplete="off">
+      <form id="connect-form" class="card stack" autocomplete="off">
+        <label class="field">
+          <span>Ваше имя</span>
+          <input id="name" maxlength="32" required placeholder="Как вас называть" />
+        </label>
+
         <label class="field">
           <span>Сервер или код приглашения</span>
-          <input id="server" placeholder="192.168.1.10, 100.x.y.z или poi-…" required spellcheck="false" />
+          <input id="server" placeholder="192.168.1.10 или poi-…" required spellcheck="false" />
         </label>
 
         <div class="lan">
-          <div class="lan-head">
+          <div class="section-head">
             <span>В локальной сети</span>
             <button type="button" id="lan-refresh" class="link">обновить</button>
           </div>
           <ul id="lan-list" class="lan-list"></ul>
-          <p id="lan-status" class="subtle small-text">Ищу серверы…</p>
+          <p id="lan-status" class="hint">Ищу серверы…</p>
         </div>
-        <label class="field">
-          <span>Ваше имя</span>
-          <input id="name" maxlength="32" required />
-        </label>
-
-        <details id="audio-settings">
-          <summary>Звуковые устройства</summary>
-          <label class="field">
-            <span>Микрофон</span>
-            <select id="input"></select>
-          </label>
-          <label class="field">
-            <span>Динамики / наушники</span>
-            <select id="output"></select>
-          </label>
-        </details>
 
         <div id="cert-warning" class="cert-warning" hidden>
           <div class="cert-title">Сертификат сервера изменился</div>
-          <p class="small-text">
+          <p class="hint">
             Сервер <b id="cert-address"></b> раньше предъявлял другой сертификат.
             Так бывает, если хост переустановил программу. Но так же выглядит
             и подмена сервера кем-то посередине.
           </p>
-          <p class="small-text">
+          <p class="hint">
             Спросите у хоста код сервера (он виден в его карточке «Вы — сервер»
             или в окне сервера):
           </p>
           <div class="cert-codes">
-            <span class="subtle">было</span> <code id="cert-known"></code>
-            <span class="subtle">стало</span> <code id="cert-presented"></code>
+            <span class="hint">было</span> <code id="cert-known"></code>
+            <span class="hint">стало</span> <code id="cert-presented"></code>
           </div>
           <div class="cert-actions">
             <button type="button" id="cert-cancel">Отмена</button>
@@ -73,9 +69,8 @@
 
         <div class="divider"><span>или</span></div>
         <button type="button" id="host-btn">Создать комнату на этом компьютере</button>
-        <p class="subtle small-text">
-          Сервер запустится прямо в программе, и друзья подключатся к вам.
-          Адрес сервера вводить не нужно.
+        <p class="hint center">
+          Сервер запустится прямо в программе — адрес вводить не нужно.
         </p>
       </form>
     </main>
@@ -83,85 +78,150 @@
     <!-- Комната -->
     <main id="room-view" class="view" hidden>
       <header class="room-header">
-        <div>
-          <div class="room-title">Комната</div>
-          <div id="server-label" class="subtle"></div>
-          <div id="server-code" class="subtle small-text"
-               title="Код сертификата сервера: его можно сверить с хостом"></div>
+        <div class="room-titles">
+          <div id="room-title" class="room-title">Комната</div>
+          <div class="room-sub">
+            <span id="server-label"></span>
+            <span id="server-code" class="mono"
+                  title="Код сертификата сервера: его можно сверить с хостом"></span>
+          </div>
         </div>
-        <button id="leave-btn" class="danger small">Отключиться</button>
+        <button type="button" class="icon-btn ghost open-settings" data-icon="gear" aria-label="Настройки" title="Настройки"></button>
+        <button type="button" id="leave-btn" class="leave" data-icon="logout"><span>Выйти</span></button>
       </header>
 
       <details id="host-card" class="card host-card" hidden>
-        <summary>Вы — сервер <span class="subtle">· адреса для друзей</span></summary>
-        <p class="subtle small-text">
-          Друзья из вашей локальной сети увидят комнату в списке сами.
-          Остальным — код приглашения (галочка ниже) или адрес Tailscale:
-        </p>
-        <ul id="host-addresses" class="host-addresses"></ul>
-        <p class="subtle small-text">
-          Код сервера: <code id="host-code"></code>. Если у друга программа
-          предупредит, что сертификат изменился, он сверит этот код.
-        </p>
-        <label class="check" title="Сервер возвращает каждому его собственный голос">
-          <input type="checkbox" id="echo" />
-          <span>Эхо: каждый слышит себя (проверка связи)</span>
-        </label>
-        <label class="check" title="Друзья смогут подключиться по коду приглашения без Tailscale и белого IP">
-          <input type="checkbox" id="internet" />
-          <span>Доступ через интернет по коду приглашения</span>
-        </label>
-        <div id="internet-info" class="internet-info" hidden>
-          <p id="internet-state" class="subtle small-text"></p>
-          <div class="invite-row">
-            <code id="invite-code"></code>
-            <button type="button" id="invite-copy" class="link">копировать</button>
+        <summary>
+          <span class="host-summary" data-icon="broadcast">Вы — сервер</span>
+          <span class="hint">адреса и приглашение</span>
+          <span class="chevron" data-icon="chevron"></span>
+        </summary>
+        <div class="host-body">
+          <label class="switch-row" title="Друзья смогут подключиться по коду приглашения без Tailscale и белого IP">
+            <span>Доступ через интернет</span>
+            <input type="checkbox" id="internet" class="switch" />
+          </label>
+          <div id="internet-info" class="internet-info" hidden>
+            <p id="internet-state" class="hint"></p>
+            <div class="invite">
+              <code id="invite-code"></code>
+              <button type="button" id="invite-copy" class="icon-btn" data-icon="copy" title="Скопировать код" aria-label="Скопировать код"></button>
+            </div>
+            <p class="hint">Друг вставляет код в поле «Сервер». Код постоянный — отправьте его один раз.</p>
           </div>
-          <p class="subtle small-text">
-            Друг вставляет этот код в поле «Сервер». Код постоянный: отправьте его один раз.
+
+          <div class="section-head"><span>Локальная сеть и Tailscale</span></div>
+          <ul id="host-addresses" class="host-addresses"></ul>
+          <p class="hint">Друзья из вашей сети увидят комнату в списке сами.</p>
+
+          <label class="switch-row" title="Сервер возвращает каждому его собственный голос">
+            <span>Эхо: каждый слышит себя</span>
+            <input type="checkbox" id="echo" class="switch" />
+          </label>
+
+          <p class="hint">
+            Код сервера <code id="host-code"></code> — для сверки, если программа
+            друга предупредит о смене сертификата. Закроете комнату — все отключатся.
           </p>
         </div>
-        <p class="subtle small-text">Закроете комнату или программу — все отключатся.</p>
       </details>
 
+      <div class="section-head people-head">
+        <span>В комнате</span>
+        <span id="people-count" class="count"></span>
+      </div>
       <ul id="peers" class="peers"></ul>
 
-      <section class="card controls">
+      <section class="card dock">
         <div class="meter" title="Громкость микрофона и порог активации">
           <div id="level-bar" class="meter-fill"></div>
           <div id="threshold-mark" class="meter-mark"></div>
         </div>
 
-        <label class="field inline">
-          <span>Передача</span>
-          <select id="mode">
-            <option value="voice">Голосом</option>
-            <option value="always">Всегда</option>
-            <option value="ptt">Рация (по клавише)</option>
-          </select>
-        </label>
+        <div id="mode" class="segmented" role="radiogroup" aria-label="Передача">
+          <button type="button" data-value="voice" title="Передача включается, когда вы говорите громче порога">Голосом</button>
+          <button type="button" data-value="always" title="Микрофон передаётся всегда">Всегда</button>
+          <button type="button" data-value="ptt" title="Передача, пока зажата клавиша">Рация</button>
+        </div>
 
-        <label id="vad-row" class="field inline">
+        <label id="vad-row" class="slider-row">
           <span>Порог</span>
           <input type="range" id="vad" min="-70" max="-10" step="1" />
           <output id="vad-value"></output>
         </label>
 
-        <div id="ptt-row" class="field inline" hidden>
+        <div id="ptt-row" class="slider-row" hidden>
           <span>Клавиша</span>
-          <button id="ptt-key" class="small">не назначена</button>
+          <button type="button" id="ptt-key" class="key">не назначена</button>
         </div>
-        <p id="ptt-hint" class="subtle small-text" hidden>
+        <p id="ptt-hint" class="hint" hidden>
           Пока выбран режим рации, эта клавиша не работает в других программах.
         </p>
 
-        <label class="check" title="Убирает гул, шум улицы и стук клавиатуры из вашего микрофона">
-          <input type="checkbox" id="denoise" />
-          <span>Шумоподавление</span>
-        </label>
-
+        <div class="devices">
+          <div class="menu-wrap">
+            <button type="button" id="input-pill" class="device-pill" title="Микрофон">
+              <span class="pill-icon" data-icon="mic"></span>
+              <span class="device-name">Микрофон</span>
+              <span class="pill-chevron" data-icon="chevron"></span>
+            </button>
+            <div id="input-menu" class="menu up" hidden></div>
+          </div>
+          <div class="menu-wrap">
+            <button type="button" id="output-pill" class="device-pill" title="Динамики или наушники">
+              <span class="pill-icon" data-icon="headphones"></span>
+              <span class="device-name">Вывод</span>
+              <span class="pill-chevron" data-icon="chevron"></span>
+            </button>
+            <div id="output-menu" class="menu up right" hidden></div>
+          </div>
+        </div>
       </section>
     </main>
+
+    <!-- Настройки -->
+    <div id="settings" class="sheet-backdrop" hidden>
+      <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+        <header class="sheet-head">
+          <h2 id="settings-title">Настройки</h2>
+          <button type="button" id="settings-close" class="icon-btn ghost" data-icon="close" aria-label="Закрыть"></button>
+        </header>
+
+        <div class="group">
+          <div class="group-title">Оформление</div>
+          <div id="theme" class="segmented" role="radiogroup" aria-label="Тема">
+            <button type="button" data-value="system">Как в системе</button>
+            <button type="button" data-value="light">Светлая</button>
+            <button type="button" data-value="dark">Тёмная</button>
+          </div>
+          <div class="swatches" id="accent" role="radiogroup" aria-label="Цвет">
+            <button type="button" data-value="indigo" title="Индиго"></button>
+            <button type="button" data-value="violet" title="Сирень"></button>
+            <button type="button" data-value="sky" title="Небо"></button>
+            <button type="button" data-value="mint" title="Мята"></button>
+            <button type="button" data-value="amber" title="Янтарь"></button>
+            <button type="button" data-value="rose" title="Малина"></button>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="group-title">Звук</div>
+          <label class="field">
+            <span>Микрофон</span>
+            <select id="input"></select>
+          </label>
+          <label class="field">
+            <span>Динамики / наушники</span>
+            <select id="output"></select>
+          </label>
+          <label class="switch-row" title="Убирает гул, шум улицы и стук клавиатуры из вашего микрофона">
+            <span>Шумоподавление</span>
+            <input type="checkbox" id="denoise" class="switch" />
+          </label>
+          <p class="hint">Устройства можно менять и во время разговора — связь не прервётся.</p>
+        </div>
+      </section>
+    </div>
 
     <div id="toast" class="toast" hidden></div>
 

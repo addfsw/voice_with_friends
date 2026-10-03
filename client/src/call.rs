@@ -10,6 +10,8 @@ use vwf_proto::{ClientMsg, PeerId, PeerInfo, ServerMsg};
 use crate::audio::{self, Wakeup};
 use crate::jitter::Delay;
 use crate::net;
+use ringbuf::{HeapCons, HeapProd};
+
 use crate::pipeline::{Mixer, MixerOutput, Transmitter, TxSettings, TxState};
 
 /// Параметры звука.
@@ -37,15 +39,32 @@ impl Default for AudioSettings {
     }
 }
 
-/// Запущенные микрофон, динамики, микшер и кодер.
+/// Куда кодер отдаёт готовые пакеты: `(seq, opus)`.
+type SendVoice = Arc<dyn Fn(u32, &[u8]) + Send + Sync>;
+
+/// Микрофон и кодер.
+struct Input {
+    // Порядок полей важен: сначала останавливаем поток, потом устройство.
+    tx: Transmitter,
+    capture: audio::Capture,
+}
+
+/// Динамики и поток микшера.
+struct Output {
+    thread: MixerOutput,
+    playback: audio::Playback,
+}
+
+/// Запущенные микрофон, динамики, микшер и кодер. Устройства можно менять
+/// на ходу ([`AudioEngine::set_input`], [`AudioEngine::set_output`]):
+/// звонок при этом не прерывается, а микшер сохраняет громкости и буферы.
 pub struct AudioEngine {
-    pub capture: audio::Capture,
-    pub playback: audio::Playback,
     pub mixer: Arc<Mixer>,
     pub tx_state: Arc<TxState>,
-    // Порядок полей важен: сначала останавливаем потоки, потом устройства.
-    _tx: Transmitter,
-    _output: MixerOutput,
+    settings: AudioSettings,
+    send: SendVoice,
+    input: Input,
+    output: Output,
 }
 
 impl AudioEngine {
@@ -53,24 +72,118 @@ impl AudioEngine {
     pub fn start(
         settings: &AudioSettings,
         tx_state: Arc<TxState>,
-        send: impl FnMut(u32, &[u8]) + Send + 'static,
+        send: impl Fn(u32, &[u8]) + Send + Sync + 'static,
     ) -> anyhow::Result<Self> {
-        let mic_wakeup = Arc::new(Wakeup::default());
-        let speaker_wakeup = Arc::new(Wakeup::default());
-        let (capture, mic) = audio::start_capture(settings.input.as_deref(), mic_wakeup.clone())?;
-        let (playback, speakers) =
-            audio::start_playback(settings.output.as_deref(), speaker_wakeup.clone())?;
-
         let mixer = Arc::new(Mixer::new(settings.jitter));
-        let output = mixer.spawn_output(
+        let output = start_output(&mixer, settings, settings.output.as_deref())?;
+        let send: SendVoice = Arc::new(send);
+        let input = start_input(&tx_state, settings, &send, settings.input.as_deref(), 0)?;
+        Ok(Self { mixer, tx_state, settings: settings.clone(), send, input, output })
+    }
+
+    /// Открытый микрофон.
+    pub fn capture(&self) -> &audio::Capture {
+        &self.input.capture
+    }
+
+    /// Открытое устройство вывода.
+    pub fn playback(&self) -> &audio::Playback {
+        &self.output.playback
+    }
+
+    /// Переключает микрофон (часть имени; `None` — системный по умолчанию).
+    /// Если новое устройство не открылось, остаётся старое.
+    pub fn set_input(&mut self, device: Option<&str>) -> anyhow::Result<()> {
+        // Новое устройство открываем, пока старое ещё работает: так ошибка
+        // ничего не ломает, а пауза в передаче — только на перезапуск кодера.
+        let (capture, mic, wakeup) = open_input(device)?;
+        // Номер кадра — время записи (см. `Transmitter::spawn`), поэтому новый
+        // кодер продолжает нумерацию старого, а не начинает с нуля.
+        let next_seq = self.input.tx.stop();
+        let tx = spawn_tx(&self.tx_state, &self.settings, &self.send, mic, wakeup, next_seq)?;
+        self.input = Input { tx, capture };
+        self.settings.input = device.map(str::to_string);
+        Ok(())
+    }
+
+    /// Переключает устройство вывода (часть имени; `None` — системное по
+    /// умолчанию). Если новое устройство не открылось, остаётся старое.
+    pub fn set_output(&mut self, device: Option<&str>) -> anyhow::Result<()> {
+        let (playback, speakers, wakeup) = open_output(device)?;
+        // Два потока микшера не должны забирать кадры одновременно.
+        self.output.thread.stop();
+        let thread = self.mixer.spawn_output(
             speakers,
             playback.config.sample_rate,
-            speaker_wakeup,
-            settings.playback_ms.clamp(5, 200),
+            wakeup,
+            self.settings.playback_ms.clamp(5, 200),
         )?;
-        let tx = Transmitter::spawn(mic, mic_wakeup, tx_state.clone(), settings.tx.clone(), send)?;
-        Ok(Self { capture, playback, mixer, tx_state, _tx: tx, _output: output })
+        self.output = Output { thread, playback };
+        self.settings.output = device.map(str::to_string);
+        Ok(())
     }
+}
+
+fn open_input(
+    device: Option<&str>,
+) -> anyhow::Result<(audio::Capture, HeapCons<f32>, Arc<Wakeup>)> {
+    let wakeup = Arc::new(Wakeup::default());
+    let (capture, mic) = audio::start_capture(device, wakeup.clone())?;
+    Ok((capture, mic, wakeup))
+}
+
+fn open_output(
+    device: Option<&str>,
+) -> anyhow::Result<(audio::Playback, HeapProd<f32>, Arc<Wakeup>)> {
+    let wakeup = Arc::new(Wakeup::default());
+    let (playback, speakers) = audio::start_playback(device, wakeup.clone())?;
+    Ok((playback, speakers, wakeup))
+}
+
+fn spawn_tx(
+    tx_state: &Arc<TxState>,
+    settings: &AudioSettings,
+    send: &SendVoice,
+    mic: HeapCons<f32>,
+    wakeup: Arc<Wakeup>,
+    first_seq: u32,
+) -> anyhow::Result<Transmitter> {
+    let send = send.clone();
+    Transmitter::spawn(
+        mic,
+        wakeup,
+        tx_state.clone(),
+        settings.tx.clone(),
+        first_seq,
+        move |seq, opus| send(seq, opus),
+    )
+}
+
+fn start_input(
+    tx_state: &Arc<TxState>,
+    settings: &AudioSettings,
+    send: &SendVoice,
+    device: Option<&str>,
+    first_seq: u32,
+) -> anyhow::Result<Input> {
+    let (capture, mic, wakeup) = open_input(device)?;
+    let tx = spawn_tx(tx_state, settings, send, mic, wakeup, first_seq)?;
+    Ok(Input { tx, capture })
+}
+
+fn start_output(
+    mixer: &Arc<Mixer>,
+    settings: &AudioSettings,
+    device: Option<&str>,
+) -> anyhow::Result<Output> {
+    let (playback, speakers, wakeup) = open_output(device)?;
+    let thread = mixer.spawn_output(
+        speakers,
+        playback.config.sample_rate,
+        wakeup,
+        settings.playback_ms.clamp(5, 200),
+    )?;
+    Ok(Output { thread, playback })
 }
 
 /// Что происходит в комнате.
@@ -209,6 +322,16 @@ impl Call {
 
     pub fn mixer(&self) -> &Arc<Mixer> {
         &self.audio.mixer
+    }
+
+    /// Переключает микрофон, не прерывая звонок.
+    pub fn set_input(&mut self, device: Option<&str>) -> anyhow::Result<()> {
+        self.audio.set_input(device)
+    }
+
+    /// Переключает динамики или наушники, не прерывая звонок.
+    pub fn set_output(&mut self, device: Option<&str>) -> anyhow::Result<()> {
+        self.audio.set_output(device)
     }
 
     /// Сообщает остальным, выключены ли у нас микрофон и звук.
