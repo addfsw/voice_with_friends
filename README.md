@@ -30,8 +30,11 @@
    winget install NASM.NASM
    setx NASM "C:\Program Files\NASM\nasm.exe"
    ```
-   Затем — новое окно терминала. Если программа уже собиралась без NASM,
-   пересоберите кодек: `cargo clean -p openh264-sys2`.
+   Без прав администратора установщик кладёт NASM не в `Program Files`, а в
+   `%LOCALAPPDATA%\bin\NASM` — тогда в `setx` укажите этот путь (сборка сама
+   подскажет, где нашла `nasm.exe`). Затем — новое окно терминала. Если
+   программа уже собиралась без NASM, пересоберите кодек:
+   `cargo clean -p openh264-sys2`.
 
 ## Сборка
 
