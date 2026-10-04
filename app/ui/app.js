@@ -125,6 +125,27 @@ function avatarColor(name) {
   return palette[hash % palette.length];
 }
 
+// Аватарки участников: id → data:-адрес картинки. Своя — отдельно, она
+// есть и до подключения.
+const avatars = new Map();
+let myAvatar = null;
+
+function avatarOf(id) {
+  return call.me && id === call.me.id ? myAvatar : avatars.get(id) ?? null;
+}
+
+// Аватар: картинка, если есть, иначе первая буква имени на цветном круге.
+function paintAvatar(el, name, url) {
+  el.classList.toggle("has-image", Boolean(url));
+  if (url) {
+    el.textContent = "";
+    el.style.background = `center / cover no-repeat url("${url}")`;
+  } else {
+    el.textContent = initial(name);
+    el.style.background = avatarColor(name);
+  }
+}
+
 function initial(name) {
   return (name.trim()[0] || "?").toUpperCase();
 }
@@ -268,6 +289,7 @@ $("connect-form").addEventListener("submit", async (event) => {
   error.hidden = true;
   $("cert-warning").hidden = true;
   try {
+    avatars.clear();
     const joined = await invoke("connect", { args: { server, name, input, output } });
     enterRoom(server, name, joined);
   } catch (e) {
@@ -520,6 +542,7 @@ async function openRoom(room) {
   let hosted = null;
   try {
     hosted = await invoke("start_server", { roomId: room.id });
+    avatars.clear();
     const joined = await invoke("connect", {
       args: { server: hosted.localAddress, name, input, output },
     });
@@ -800,8 +823,7 @@ async function copyText(text) {
 function renderDock() {
   const me = call.me;
   if (!me) return;
-  $("me-avatar").textContent = initial(me.name);
-  $("me-avatar").style.background = avatarColor(me.name);
+  paintAvatar($("me-avatar"), me.name, myAvatar);
   $("me-name").textContent = me.name;
 
   const status = $("me-status");
@@ -879,8 +901,7 @@ function peerItem(peer, isMe) {
 
   const avatar = document.createElement("div");
   avatar.className = "avatar";
-  avatar.style.background = avatarColor(peer.name);
-  avatar.textContent = initial(peer.name);
+  paintAvatar(avatar, peer.name, isMe ? myAvatar : avatars.get(peer.id));
 
   const main = document.createElement("div");
   main.className = "peer-main";
@@ -1067,6 +1088,7 @@ listen("peer-joined", ({ payload }) => {
 
 listen("peer-left", ({ payload }) => {
   call.peers.delete(payload.id);
+  avatars.delete(payload.id);
   renderPeers();
 });
 
@@ -1188,8 +1210,7 @@ function renderChat(forceBottom) {
       group.className = "msg-group";
       const avatar = document.createElement("div");
       avatar.className = "avatar";
-      avatar.style.background = avatarColor(message.name);
-      avatar.textContent = initial(message.name);
+      paintAvatar(avatar, message.name, avatarOf(message.from));
       body = document.createElement("div");
       body.className = "msg-body";
       const head = document.createElement("div");
@@ -1657,6 +1678,7 @@ function showPttKey(key) {
 
 function openSettings() {
   closeMenus();
+  renderProfile();
   $("settings").hidden = false;
   loadDevices();
   refreshDiagnostics();
@@ -1735,6 +1757,91 @@ window.addEventListener("keydown", (event) => {
     closeMenus();
   }
 });
+
+// ---------------------------------------------------------------------------
+// Аватарка
+// ---------------------------------------------------------------------------
+
+// Аватарки других участников приходят от сервера (и после переподключения).
+listen("peer-avatar", ({ payload }) => {
+  if (payload.url) avatars.set(payload.id, payload.url);
+  else avatars.delete(payload.id);
+  if (!call.me) return;
+  renderPeers();
+  if (currentTab === "chat") renderChat(false);
+});
+
+function renderProfile() {
+  paintAvatar($("profile-avatar"), $("name").value.trim() || "?", myAvatar);
+  $("avatar-remove").hidden = !myAvatar;
+}
+
+const AVATAR_SIZE = 160;
+
+// Картинку обрезаем до квадрата по центру и уменьшаем до 160×160 JPEG
+// (5–20 КБ): так она быстро доходит до всех и не раздувает трафик.
+async function makeAvatar(file) {
+  const bitmap = await createImageBitmap(file);
+  const side = Math.min(bitmap.width, bitmap.height);
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = AVATAR_SIZE;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#262a33"; // под прозрачные места PNG: в JPEG прозрачности нет
+  ctx.fillRect(0, 0, AVATAR_SIZE, AVATAR_SIZE);
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(
+    bitmap,
+    (bitmap.width - side) / 2,
+    (bitmap.height - side) / 2,
+    side,
+    side,
+    0,
+    0,
+    AVATAR_SIZE,
+    AVATAR_SIZE,
+  );
+  bitmap.close();
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
+  if (!blob) throw new Error("не получилось сжать картинку");
+  return Array.from(new Uint8Array(await blob.arrayBuffer()));
+}
+
+async function setAvatar(data) {
+  try {
+    myAvatar = await invoke("set_avatar", { data });
+  } catch (e) {
+    toast(errorText(e));
+    return;
+  }
+  renderProfile();
+  if (call.me) {
+    renderPeers();
+    if (currentTab === "chat") renderChat(false);
+  }
+}
+
+$("avatar-file").addEventListener("change", async () => {
+  const file = $("avatar-file").files[0];
+  $("avatar-file").value = ""; // чтобы та же картинка выбиралась снова
+  if (!file) return;
+  try {
+    await setAvatar(await makeAvatar(file));
+  } catch (e) {
+    toast(`Не удалось открыть картинку: ${errorText(e)}`);
+  }
+});
+
+$("avatar-pick").addEventListener("click", () => $("avatar-file").click());
+$("me-avatar").addEventListener("click", () => $("avatar-file").click());
+$("avatar-remove").addEventListener("click", () => setAvatar([]));
+
+invoke("get_avatar")
+  .then((url) => {
+    myAvatar = url;
+    renderProfile();
+    if (call.me) renderPeers();
+  })
+  .catch(() => {});
 
 // Тема: system — как в Windows; light/dark — всегда такая.
 function applyTheme(theme) {

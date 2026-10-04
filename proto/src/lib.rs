@@ -19,7 +19,8 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 /// 3 — статус участников (микрофон/звук) и права хоста.
 /// 4 — текстовый чат.
 /// 5 — демонстрация экрана.
-pub const PROTOCOL_VERSION: u32 = 5;
+/// 6 — аватарки.
+pub const PROTOCOL_VERSION: u32 = 6;
 
 /// ALPN-идентификатор для TLS-рукопожатия QUIC.
 pub const ALPN: &[u8] = b"vwf/1";
@@ -54,6 +55,10 @@ const MAX_CONTROL_MSG: usize = 1024 * 1024;
 
 /// Максимальная длина сообщения в чате, символов.
 pub const MAX_CHAT_CHARS: usize = 2000;
+
+/// Наибольший размер аватарки (картинка JPEG, PNG или WebP). Программа
+/// сжимает выбранную картинку до 160×160 — это 5–20 КБ.
+pub const MAX_AVATAR_BYTES: usize = 64 * 1024;
 
 /// Сколько последних сообщений чата сервер помнит и показывает новичкам.
 pub const CHAT_HISTORY: usize = 100;
@@ -176,6 +181,8 @@ pub enum ClientMsg {
     Watch { id: PeerId, watch: bool },
     /// Картинка от `id` сломалась (потерялся кадр): попросить у него опорный кадр.
     RequestKeyframe { id: PeerId },
+    /// Своя аватарка (не больше [`MAX_AVATAR_BYTES`]); пустая — убрать.
+    SetAvatar { data: Vec<u8> },
 }
 
 /// Сообщение в чате комнаты.
@@ -225,6 +232,12 @@ pub enum ServerMsg {
     /// Тому, кто показывает экран: сколько человек сейчас смотрят.
     Viewers {
         count: u32,
+    },
+    /// Аватарка участника `id` (пустая — убрал). Новичок получает аватарки
+    /// всех, кто уже в комнате, сразу после `Welcome`.
+    Avatar {
+        id: PeerId,
+        data: Vec<u8>,
     },
 }
 

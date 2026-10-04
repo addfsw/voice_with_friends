@@ -1422,9 +1422,47 @@ button.leave:hover {
 }
 
 .dock-avatar {
+  position: relative;
   width: 34px;
   height: 34px;
+  padding: 0;
+  border: 0;
   font-size: 14px;
+}
+
+.dock-avatar:hover {
+  filter: brightness(1.12);
+}
+
+/* Подсказка у аватарки внизу слева — прижата к левому краю. */
+[data-tip].tip-left:hover::after {
+  left: 0;
+  transform: none;
+}
+
+/* Аватарка-картинка: буква не нужна. */
+.avatar.has-image {
+  color: transparent;
+}
+
+/* --- Аватарка в настройках --- */
+
+.profile-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.profile-avatar {
+  width: 64px;
+  height: 64px;
+  font-size: 24px;
+}
+
+.profile-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .dock.speaking .dock-avatar {

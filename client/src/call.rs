@@ -214,6 +214,12 @@ pub enum CallEvent {
     Viewers(u32),
     /// Наша демонстрация прервалась сама (например, закрыли показываемое окно).
     ShareStopped(String),
+    /// Аватарка участника: тип картинки и данные. `None` — убрал аватарку
+    /// (или прислал не картинку).
+    Avatar {
+        id: PeerId,
+        image: Option<(&'static str, Vec<u8>)>,
+    },
     /// Соединение закрылось не по нашей инициативе.
     Ended {
         reason: String,
@@ -360,6 +366,10 @@ impl Call {
                             }
                             on_event(CallEvent::Chat(message));
                         }
+                        Ok(Some(ServerMsg::Avatar { id, data })) => {
+                            let image = image_type(&data).map(|mime| (mime, data));
+                            on_event(CallEvent::Avatar { id, image });
+                        }
                         Ok(Some(ServerMsg::KeyframeNeeded)) => {
                             if let Some(sharer) = sharer.lock().unwrap().as_ref() {
                                 sharer.request_keyframe();
@@ -438,6 +448,14 @@ impl Call {
 
     /// Отправляет сообщение в чат. Оно придёт обратно событием
     /// [`CallEvent::Chat`], когда сервер разошлёт его всем.
+    /// Своя аватарка для остальных (пустая — убрать). Картинка должна быть
+    /// JPEG, PNG или WebP не больше [`vwf_proto::MAX_AVATAR_BYTES`].
+    pub fn set_avatar(&self, data: Vec<u8>) {
+        if data.is_empty() || image_type(&data).is_some() {
+            self.control.send(ClientMsg::SetAvatar { data });
+        }
+    }
+
     pub fn send_chat(&self, text: &str) {
         let text: String = text.trim().chars().take(vwf_proto::MAX_CHAT_CHARS).collect();
         if !text.is_empty() {
@@ -548,3 +566,36 @@ const _: fn() = || {
     fn assert_send<T: Send>() {}
     assert_send::<Call>();
 };
+
+/// Тип картинки по первым байтам: аватарки показываются только если это
+/// действительно JPEG, PNG или WebP разумного размера.
+pub fn image_type(data: &[u8]) -> Option<&'static str> {
+    if data.len() > vwf_proto::MAX_AVATAR_BYTES {
+        return None;
+    }
+    if data.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some("image/jpeg")
+    } else if data.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if data.len() >= 12 && &data[..4] == b"RIFF" && &data[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod avatar_tests {
+    use super::image_type;
+
+    #[test]
+    fn only_real_images_are_avatars() {
+        assert_eq!(image_type(&[0xFF, 0xD8, 0xFF, 0xE0, 1, 2]), Some("image/jpeg"));
+        assert_eq!(image_type(b"\x89PNG\r\n\x1a\n...."), Some("image/png"));
+        assert_eq!(image_type(b"RIFF\0\0\0\0WEBPVP8 "), Some("image/webp"));
+        assert_eq!(image_type(b"<svg onload=alert(1)>"), None);
+        assert_eq!(image_type(&[]), None);
+        let huge = [&[0xFF, 0xD8, 0xFF][..], &vec![0; vwf_proto::MAX_AVATAR_BYTES]].concat();
+        assert_eq!(image_type(&huge), None);
+    }
+}

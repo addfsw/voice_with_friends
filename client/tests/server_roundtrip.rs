@@ -501,3 +501,32 @@ async fn locked_room_lets_in_only_host_and_returning_members() {
         .unwrap();
     assert!(found.is_empty(), "{found:?}");
 }
+
+#[tokio::test]
+async fn avatars_reach_everyone_and_newcomers() {
+    use vwf_proto::ClientMsg;
+
+    let addr = start_server(false).await.to_string();
+    let alice = vwf_client::net::connect(&addr, "Алиса").await.unwrap();
+    let mut bob = vwf_client::net::connect(&addr, "Боб").await.unwrap();
+    let jpeg = [&[0xFF, 0xD8, 0xFF, 0xE0][..], &[7; 100]].concat();
+
+    // Алиса ставит аватарку — Боб получает её.
+    alice.control().send(ClientMsg::SetAvatar { data: jpeg.clone() });
+    let is_avatar = |e: &ServerMsg| matches!(e, ServerMsg::Avatar { .. });
+    let got = expect_event(&mut bob, is_avatar).await;
+    assert_eq!(got, ServerMsg::Avatar { id: alice.me.id, data: jpeg.clone() });
+
+    // Слишком большую сервер не принимает и не рассылает.
+    alice.control().send(ClientMsg::SetAvatar { data: vec![0; vwf_proto::MAX_AVATAR_BYTES + 1] });
+
+    // Новичок получает аватарки тех, кто уже в комнате, сразу после Welcome.
+    let mut carol = vwf_client::net::connect(&addr, "Кэрол").await.unwrap();
+    let got = expect_event(&mut carol, is_avatar).await;
+    assert_eq!(got, ServerMsg::Avatar { id: alice.me.id, data: jpeg.clone() });
+
+    // Убрала аватарку — у остальных она тоже пропадает.
+    alice.control().send(ClientMsg::SetAvatar { data: Vec::new() });
+    let got = expect_event(&mut bob, is_avatar).await;
+    assert_eq!(got, ServerMsg::Avatar { id: alice.me.id, data: Vec::new() });
+}

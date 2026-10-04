@@ -306,6 +306,8 @@ struct Peer {
     keyframe_asked: Option<Instant>,
     /// Его выгнал хост: в закрытую комнату он не вернётся.
     kicked: bool,
+    /// Аватарка (пустая — нет).
+    avatar: Vec<u8>,
 }
 
 /// Сколько кадров демонстрации может ждать отправки одному зрителю. Больше —
@@ -504,6 +506,13 @@ impl Room {
                 }
             }
             ClientMsg::Watch { id, watch } => self.watch(from, id, watch),
+            ClientMsg::SetAvatar { data } if data.len() <= vwf_proto::MAX_AVATAR_BYTES => {
+                let Some(peer) = self.peers.get_mut(&from) else { return };
+                if peer.avatar != data {
+                    peer.avatar = data.clone();
+                    self.broadcast(from, &ServerMsg::Avatar { id: from, data });
+                }
+            }
             ClientMsg::RequestKeyframe { id } => {
                 if self.peers.get(&from).is_some_and(|p| p.watching.contains(&id)) {
                     self.ask_keyframe(id);
@@ -577,6 +586,12 @@ async fn handle_connection(
         // так он гарантированно получит его раньше любых PeerJoined/PeerLeft.
         let chat = room.chat.iter().cloned().collect();
         let _ = control_tx.send(ServerMsg::Welcome { you: info.clone(), peers, chat });
+        for (&peer_id, peer) in &room.peers {
+            if !peer.avatar.is_empty() {
+                let _ =
+                    control_tx.send(ServerMsg::Avatar { id: peer_id, data: peer.avatar.clone() });
+            }
+        }
         room.broadcast(id, &ServerMsg::PeerJoined(info.clone()));
         room.peers.insert(
             id,
@@ -590,6 +605,7 @@ async fn handle_connection(
                 video: video_tx,
                 keyframe_asked: None,
                 kicked: false,
+                avatar: Vec::new(),
             },
         );
         id

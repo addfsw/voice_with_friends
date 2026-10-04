@@ -132,7 +132,7 @@
 
       <!-- Нижняя панель, как в Discord: кто вы и иконки управления. -->
       <section class="card dock">
-        <div id="me-avatar" class="avatar dock-avatar"></div>
+        <button type="button" id="me-avatar" class="avatar dock-avatar tip-left" aria-label="Сменить аватарку" data-tip="Сменить аватарку"></button>
         <div class="me-info">
           <div id="me-name" class="me-name"></div>
           <div id="me-status" class="me-status"></div>
@@ -201,6 +201,19 @@
           <h2 id="settings-title">Настройки</h2>
           <button type="button" id="settings-close" class="icon-btn ghost" data-icon="close" aria-label="Закрыть"></button>
         </header>
+
+        <div class="group">
+          <div class="group-title">Аватарка</div>
+          <div class="profile-row">
+            <div id="profile-avatar" class="avatar profile-avatar" aria-hidden="true"></div>
+            <div class="profile-actions">
+              <button type="button" id="avatar-pick" class="primary">Выбрать картинку…</button>
+              <button type="button" id="avatar-remove">Убрать</button>
+            </div>
+          </div>
+          <p class="hint">Её увидят все в комнате. Картинка обрежется до квадрата.</p>
+          <input type="file" id="avatar-file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" hidden />
+        </div>
 
         <div class="group">
           <div class="group-title">Оформление</div>

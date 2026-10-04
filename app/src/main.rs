@@ -42,6 +42,9 @@ struct AppState {
     host: tokio::sync::Mutex<Option<HostedServer>>,
     /// Свои комнаты (загружаются при запуске).
     rooms: Mutex<Option<rooms::Rooms>>,
+    /// Своя аватарка (JPEG от окна, пустая — нет) и файл, где она хранится.
+    avatar: Mutex<Vec<u8>>,
+    avatar_file: Mutex<Option<std::path::PathBuf>>,
     /// Запомненные сертификаты серверов (загружаются при запуске).
     known: Mutex<KnownServers>,
     /// Номер текущего звонка. Растёт при каждом подключении и отключении;
@@ -170,6 +173,19 @@ struct CallEnded {
 #[derive(Serialize, Clone)]
 struct ShareViewers {
     count: u32,
+}
+
+#[derive(Serialize, Clone)]
+struct PeerAvatar {
+    id: PeerId,
+    /// `data:`-адрес картинки; `None` — аватарки нет.
+    url: Option<String>,
+}
+
+/// Картинка как `data:`-адрес — его можно сразу поставить в `<img src>`.
+fn data_url(mime: &str, data: &[u8]) -> String {
+    use base64::Engine;
+    format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(data))
 }
 
 #[derive(Serialize, Clone)]
@@ -304,6 +320,10 @@ async fn start_call(
                     Ok(())
                 }
                 CallEvent::Viewers(count) => events.emit("share-viewers", ShareViewers { count }),
+                CallEvent::Avatar { id, image } => {
+                    let url = image.map(|(mime, data)| data_url(mime, &data));
+                    events.emit("peer-avatar", PeerAvatar { id, url })
+                }
                 CallEvent::ShareStopped(reason) => {
                     events.emit("share-stopped", ShareStopped { reason })
                 }
@@ -322,6 +342,10 @@ async fn start_call(
     .await?;
     call.mixer().set_deafened(state.deafened.load(Ordering::Relaxed));
     call.sync_status();
+    let avatar = state.avatar.lock().unwrap().clone();
+    if !avatar.is_empty() {
+        call.set_avatar(avatar);
+    }
     screen::set_requester(app, call.keyframe_requester());
 
     // Сервер ещё не получил наш статус, поэтому mute/deafen берём свои.
@@ -630,6 +654,43 @@ fn set_close_to_tray(state: State<'_, AppState>, enabled: bool) {
     state.close_to_tray.store(enabled, Ordering::Relaxed);
 }
 
+/// Своя аватарка как `data:`-адрес (для окна), если она есть.
+#[tauri::command]
+fn get_avatar(state: State<'_, AppState>) -> Option<String> {
+    let avatar = state.avatar.lock().unwrap();
+    vwf_client::call::image_type(&avatar).map(|mime| data_url(mime, &avatar))
+}
+
+/// Ставит свою аватарку (картинку уже уменьшило окно); пустая — убрать.
+/// Запоминается и сразу видна остальным, если идёт звонок.
+#[tauri::command]
+async fn set_avatar(state: State<'_, AppState>, data: Vec<u8>) -> CmdResult<Option<String>> {
+    let url = if data.is_empty() {
+        None
+    } else {
+        let mime = vwf_client::call::image_type(&data)
+            .ok_or("картинка слишком большая или в неизвестном формате")?;
+        Some(data_url(mime, &data))
+    };
+    if let Some(file) = state.avatar_file.lock().unwrap().as_ref() {
+        let saved = if data.is_empty() {
+            std::fs::remove_file(file).or_else(|e| match e.kind() {
+                std::io::ErrorKind::NotFound => Ok(()),
+                _ => Err(e),
+            })
+        } else {
+            std::fs::create_dir_all(file.parent().expect("файл в папке"))
+                .and_then(|()| std::fs::write(file, &data))
+        };
+        saved.map_err(|e| format!("не удалось сохранить аватарку: {e}"))?;
+    }
+    *state.avatar.lock().unwrap() = data.clone();
+    if let Some(call) = state.call.lock().await.as_ref() {
+        call.set_avatar(data);
+    }
+    Ok(url)
+}
+
 #[tauri::command]
 async fn send_chat(state: State<'_, AppState>, text: String) -> CmdResult<()> {
     match state.call.lock().await.as_ref() {
@@ -915,6 +976,8 @@ fn main() {
             ptt_key: Mutex::new(None),
             host: tokio::sync::Mutex::new(None),
             rooms: Mutex::new(None),
+            avatar: Mutex::new(Vec::new()),
+            avatar_file: Mutex::new(None),
             known: Mutex::new(KnownServers::in_memory()),
             generation: AtomicU64::new(0),
             params: Mutex::new(None),
@@ -929,6 +992,12 @@ fn main() {
             let state = app.state::<AppState>();
             *state.known.lock().unwrap() = KnownServers::load(data_dir.join("known_servers.txt"));
             *state.rooms.lock().unwrap() = Some(rooms::Rooms::load(&data_dir, "Моя комната"));
+            let avatar_file = data_dir.join("avatar.img");
+            *state.avatar.lock().unwrap() = std::fs::read(&avatar_file)
+                .ok()
+                .filter(|data| vwf_client::call::image_type(data).is_some())
+                .unwrap_or_default();
+            *state.avatar_file.lock().unwrap() = Some(avatar_file);
             // В Linux без библиотеки appindicator создание значка не ошибка,
             // а паника внутри tauri — ловим и её.
             let handle = app.handle().clone();
@@ -957,6 +1026,8 @@ fn main() {
             set_cues,
             set_close_to_tray,
             send_chat,
+            get_avatar,
+            set_avatar,
             open_url,
             screen::screen_sources,
             screen::start_share,
