@@ -19,6 +19,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
+      # Сборка под две архитектуры и эмулятор не помещаются на диск раннера
+      # вместе с предустановленными .NET, Haskell и т.п. — они нам не нужны.
+      - name: Место на диске
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost \
+            /opt/hostedtoolcache/CodeQL /usr/share/swift /usr/local/share/powershell
+          df -h /
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-java@v4
@@ -110,4 +118,5 @@ jobs:
           arch: x86_64
           target: google_apis
           disable-animations: true
+          disk-size: 3000M
           script: ./scripts/android-smoke.sh
