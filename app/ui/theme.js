@@ -10,7 +10,7 @@
     }
   };
   const root = document.documentElement;
-  const theme = read("theme", "system");
+  const theme = read("theme", "dark");
   if (theme === "light" || theme === "dark") root.dataset.theme = theme;
   root.dataset.accent = read("accent", "indigo");
 })();

@@ -69,6 +69,9 @@ const ICON_PATHS = {
   plus: "M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2Z",
   "lock-open":
     "M12 17a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm6-9h-1V6A5 5 0 0 0 7 6h1.9a3.1 3.1 0 0 1 6.2 0v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2Zm0 12H6V10h12v10Z",
+  "view-list": "M3 13h2v-2H3v2Zm0 4h2v-2H3v2Zm0-8h2V7H3v2Zm4 4h14v-2H7v2Zm0 4h14v-2H7v2ZM7 7v2h14V7H7Z",
+  "view-grid":
+    "M3 3v8h8V3H3Zm6 6H5V5h4v4Zm-6 4v8h8v-8H3Zm6 6H5v-4h4v4Zm4-16v8h8V3h-8Zm6 6h-4V5h4v4Zm-6 4v8h8v-8h-8Zm6 6h-4v-4h4v4Z",
   "person-add":
     "M15 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-9-2V7H4v3H1v2h3v3h2v-3h3v-2H6Zm9 4c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4Z",
   window: "M19 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2Zm0 14H5V8h14v10Z",
@@ -197,6 +200,8 @@ function renderLan(servers) {
     button.classList.toggle("selected", $("server").value.trim() === server.address);
     button.disabled = !server.compatible;
 
+    const dot = document.createElement("span");
+    dot.className = "lan-dot";
     const name = document.createElement("span");
     name.className = "lan-name";
     name.textContent = server.name;
@@ -205,7 +210,7 @@ function renderLan(servers) {
     meta.textContent = server.compatible
       ? `${server.host} · ${server.users} чел.`
       : `${server.host} · другая версия программы`;
-    button.append(name, meta);
+    button.append(dot, name, meta);
 
     button.addEventListener("click", () => {
       $("server").value = server.address;
@@ -348,13 +353,19 @@ function renderRooms(busyId = null) {
     open.type = "button";
     open.className = "lan-item";
     open.disabled = roomsBusy;
+    const badge = document.createElement("span");
+    badge.className = "room-badge";
+    badge.textContent = initial(room.name);
+    const text = document.createElement("span");
+    text.className = "lan-text";
     const name = document.createElement("span");
     name.className = "lan-name";
     name.textContent = room.name;
     const meta = document.createElement("span");
     meta.className = "lan-meta";
     meta.textContent = room.id === busyId ? "Запуск сервера…" : roomMeta(room);
-    open.append(name, meta);
+    text.append(name, meta);
+    open.append(badge, text);
     open.addEventListener("click", () => openRoom(room));
     li.append(open, roomMenu(room, li));
     list.append(li);
@@ -905,10 +916,11 @@ function peerItem(peer, isMe) {
     main.append(badge);
   }
   if (peer.sharing) {
-    const badge = document.createElement("div");
+    const badge = document.createElement("span");
     badge.className = "badge live";
-    badge.textContent = isMe ? "показываете экран" : "показывает экран";
-    main.append(badge);
+    badge.textContent = "в эфире";
+    badge.title = isMe ? "Вы показываете экран" : "Показывает экран";
+    title.append(badge);
   }
   if (!isMe) main.append(volumeControl(peer.id, peer.name));
 
@@ -1098,6 +1110,7 @@ function showTab(tab) {
   store.set("roomTab", tab);
   $("peers").hidden = tab !== "people";
   $("chat").hidden = tab !== "chat";
+  $("peer-layout").hidden = tab !== "people";
   if (tab === "chat") {
     setUnread(0);
     renderChat(true);
@@ -1106,6 +1119,15 @@ function showTab(tab) {
 }
 
 const selectTab = segmented($("room-tabs"), "people", showTab);
+
+// Участники списком или плитками; выбор запоминается.
+function setPeerLayout(layout) {
+  store.set("peerLayout", layout);
+  $("peers").classList.toggle("tiles", layout === "tiles");
+}
+
+segmented($("peer-layout"), store.get("peerLayout", "list"), setPeerLayout);
+setPeerLayout(store.get("peerLayout", "list"));
 
 function setUnread(count) {
   call.unread = count;
@@ -1729,7 +1751,7 @@ function applyAccent(accent) {
   }
 }
 
-segmented($("theme"), store.get("theme", "system"), applyTheme);
+segmented($("theme"), store.get("theme", "dark"), applyTheme);
 for (const button of $("accent").querySelectorAll("button")) {
   button.setAttribute("aria-label", button.title);
   button.addEventListener("click", () => applyAccent(button.dataset.value));

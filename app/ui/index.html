@@ -11,19 +11,18 @@
   <body>
     <!-- Экран подключения -->
     <main id="connect-view" class="view">
-      <div class="topbar">
-        <button type="button" class="icon-btn ghost open-settings" data-icon="gear" aria-label="Настройки" title="Настройки"></button>
-      </div>
-
-      <div class="brand">
+      <header class="brand">
         <div class="logo" aria-hidden="true">
           <svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/></svg>
         </div>
-        <h1>Поигрулькины</h1>
-        <p class="tagline">Голосовая комната для своих</p>
-      </div>
+        <div class="brand-titles">
+          <h1>Поигрулькины</h1>
+          <p class="tagline">Голосовая комната для своих</p>
+        </div>
+        <button type="button" class="icon-btn head-btn open-settings tip-right" data-icon="gear" aria-label="Настройки" data-tip="Настройки"></button>
+      </header>
 
-      <form id="connect-form" class="card stack" autocomplete="off">
+      <form id="connect-form" class="stack connect-form" autocomplete="off">
         <label class="field">
           <span>Ваше имя</span>
           <input id="name" maxlength="32" required placeholder="Как вас называть" />
@@ -33,15 +32,6 @@
           <span>Сервер или код приглашения</span>
           <input id="server" placeholder="192.168.1.10 или poi-…" required spellcheck="false" />
         </label>
-
-        <div class="lan">
-          <div class="section-head">
-            <span>В локальной сети</span>
-            <button type="button" id="lan-refresh" class="link">обновить</button>
-          </div>
-          <ul id="lan-list" class="lan-list"></ul>
-          <p id="lan-status" class="hint">Ищу серверы…</p>
-        </div>
 
         <div id="cert-warning" class="cert-warning" hidden>
           <div class="cert-title">Сертификат сервера изменился</div>
@@ -64,19 +54,33 @@
           </div>
         </div>
 
-        <button type="submit" id="connect-btn" class="primary">Подключиться</button>
+        <button type="submit" id="connect-btn" class="primary big">Подключиться</button>
         <p id="connect-error" class="error" hidden></p>
 
-        <div class="divider"><span>или откройте свою комнату</span></div>
-        <ul id="my-rooms" class="lan-list my-rooms"></ul>
-        <div id="new-room" class="room-edit" hidden>
-          <input id="new-room-name" maxlength="40" placeholder="Например, «Игры с Саней»" />
-          <button type="button" id="new-room-create" class="primary">Создать</button>
-          <button type="button" id="new-room-cancel" class="icon-btn ghost" data-icon="close" title="Отмена" aria-label="Отмена"></button>
+        <div class="lan">
+          <div class="section-head">
+            <span>В локальной сети</span>
+            <button type="button" id="lan-refresh" class="link">обновить</button>
+          </div>
+          <ul id="lan-list" class="lan-list"></ul>
+          <p id="lan-status" class="hint">Ищу серверы…</p>
         </div>
-        <button type="button" id="new-room-btn" class="link add-room" data-icon="plus">Новая комната</button>
-        <p class="hint center">
-          Сервер запустится прямо в программе. У каждой комнаты свой код
+
+        <div class="lan">
+          <div class="section-head">
+            <span>Мои комнаты</span>
+            <button type="button" id="new-room-btn" class="link add-room" data-icon="plus">Новая</button>
+          </div>
+          <ul id="my-rooms" class="lan-list my-rooms"></ul>
+          <div id="new-room" class="room-edit" hidden>
+            <input id="new-room-name" maxlength="40" placeholder="Например, «Игры с Саней»" />
+            <button type="button" id="new-room-create" class="primary">Создать</button>
+            <button type="button" id="new-room-cancel" class="icon-btn ghost" data-icon="close" title="Отмена" aria-label="Отмена"></button>
+          </div>
+        </div>
+
+        <p class="hint center footnote">
+          Своя комната запускается прямо в программе. У каждой комнаты свой код
           приглашения — друзья из разных компаний не попадут друг к другу.
         </p>
       </form>
@@ -94,9 +98,9 @@
                   title="Код сертификата сервера: его можно сверить с хостом"></span>
           </div>
         </div>
-        <button type="button" id="lock-btn" class="icon-btn ghost head-btn" aria-pressed="false" aria-label="Никого больше не пускать" data-tip="Никого больше не пускать" hidden></button>
+        <button type="button" id="lock-btn" class="icon-btn head-btn" aria-pressed="false" aria-label="Никого больше не пускать" data-tip="Никого больше не пускать" hidden></button>
         <button type="button" id="invite-btn" class="icon-btn head-btn invite-btn" data-icon="person-add" aria-label="Пригласить друзей" data-tip="Пригласить друзей" hidden></button>
-        <button type="button" class="icon-btn ghost head-btn open-settings" data-icon="gear" aria-label="Настройки" data-tip="Настройки"></button>
+        <button type="button" class="icon-btn head-btn open-settings" data-icon="gear" aria-label="Настройки" data-tip="Настройки"></button>
         <button type="button" id="leave-btn" class="icon-btn head-btn leave tip-right" data-icon="logout" aria-label="Выйти" data-tip="Выйти"></button>
       </header>
 
@@ -105,9 +109,15 @@
         <span id="reconnect-text">Связь пропала. Возвращаюсь в комнату…</span>
       </div>
 
-      <div id="room-tabs" class="segmented tabs" role="tablist">
-        <button type="button" data-value="people">Участники <span id="people-count" class="count"></span></button>
-        <button type="button" data-value="chat">Чат <span id="chat-unread" class="unread" hidden></span></button>
+      <div class="tabs-row">
+        <div id="room-tabs" class="tabs" role="tablist">
+          <button type="button" data-value="people">Участники <span id="people-count" class="count"></span></button>
+          <button type="button" data-value="chat">Чат <span id="chat-unread" class="unread" hidden></span></button>
+        </div>
+        <div id="peer-layout" class="layout-toggle" role="radiogroup" aria-label="Как показывать участников">
+          <button type="button" class="icon-btn" data-value="list" data-icon="view-list" aria-label="Списком" data-tip="Списком"></button>
+          <button type="button" class="icon-btn tip-right" data-value="tiles" data-icon="view-grid" aria-label="Плитками" data-tip="Плитками"></button>
+        </div>
       </div>
 
       <ul id="peers" class="peers"></ul>

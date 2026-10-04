@@ -1,67 +1,105 @@
 /* --- Цвета ---
- * Светлая тема — по умолчанию; тёмная — по системной настройке или выбором
- * в настройках (data-theme на <html>). Цвет акцента — data-accent. */
+ * Тёмная тема «Ночь» — по умолчанию; светлая — выбором в настройках или по
+ * системной настройке (data-theme на <html>). Цвет акцента — data-accent. */
+
+/* Golos Text (SIL OFL, см. fonts/OFL.txt) — встроен, интернет не нужен. */
+@font-face {
+  font-family: "Golos Text";
+  font-style: normal;
+  font-weight: 400 900;
+  font-display: swap;
+  src: url("fonts/golos-text-cyrillic-wght-normal.woff2") format("woff2");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+
+@font-face {
+  font-family: "Golos Text";
+  font-style: normal;
+  font-weight: 400 900;
+  font-display: swap;
+  src: url("fonts/golos-text-latin-wght-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
+    U+FEFF, U+FFFD;
+}
 
 :root {
-  --bg: #f4f5f7;
+  --bg: #f3f4f7;
   --surface: #ffffff;
-  --surface-2: #eff0f3;
-  --surface-3: #e4e6eb;
-  --border: #e3e5ea;
-  --text: #17181c;
-  --text-2: #5d616b;
-  --text-3: #8b8f99;
-  --shadow: 0 1px 2px rgba(17, 19, 26, 0.05), 0 4px 14px rgba(17, 19, 26, 0.05);
+  --surface-2: #eceef3;
+  --surface-3: #e1e4eb;
+  --border: #e2e5eb;
+  --field: #ffffff;
+  --field-border: #d9dce4;
+  --text: #15171c;
+  --text-2: #5a5f6b;
+  --text-3: #80858f;
+  --shadow: 0 1px 2px rgba(17, 19, 26, 0.05);
   --shadow-pop: 0 10px 30px rgba(17, 19, 26, 0.16);
   --backdrop: rgba(17, 19, 26, 0.32);
   color-scheme: light;
 
-  --speaking: #1fb35a;
+  --speaking: #1fa85a;
   --danger: #e5484d;
   --danger-strong: #cd2b31;
-  --warning: #c27c00;
+  --warning: #b87400;
   --radius: 14px;
   --radius-sm: 10px;
-  --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font: "Golos Text", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   --mono: "Cascadia Mono", Consolas, ui-monospace, monospace;
 
-  --accent: #5b5bd6;
-  --accent-strong: #4a4ac4;
-  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
-  --danger-soft: color-mix(in srgb, var(--danger) 13%, transparent);
+  --accent: #6a5af0;
+  --accent-strong: #5a49e0;
+  --accent-soft: color-mix(in srgb, var(--accent) 16%, transparent);
+  --accent-text: color-mix(in srgb, var(--accent) 70%, var(--text));
+  --danger-soft: color-mix(in srgb, var(--danger) 14%, transparent);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #111214;
-    --surface: #1a1b1f;
-    --surface-2: #232429;
-    --surface-3: #2d2f35;
-    --border: #2a2c31;
-    --text: #ececef;
-    --text-2: #a2a5ad;
-    --text-3: #70737c;
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-    --shadow-pop: 0 12px 34px rgba(0, 0, 0, 0.5);
-    --backdrop: rgba(0, 0, 0, 0.5);
+    --bg: #0f1115;
+    --surface: #161920;
+    --surface-2: #1b1e26;
+    --surface-3: #262a33;
+    --border: #1f232b;
+    --field: #0b0d11;
+    --field-border: #262a33;
+    --text: #e8eaf0;
+    --text-2: #9aa0ad;
+    --text-3: #7d8391;
+    --shadow: none;
+    --shadow-pop: 0 12px 34px rgba(0, 0, 0, 0.55);
+    --backdrop: rgba(0, 0, 0, 0.55);
+    --speaking: #3ddc84;
+    --danger: #ff6b78;
+    --danger-strong: #f04858;
     --warning: #f0a92e;
+    --accent: #7c6cff;
+    --accent-strong: #6c5bf5;
     color-scheme: dark;
   }
 }
 
 :root[data-theme="dark"] {
-  --bg: #111214;
-  --surface: #1a1b1f;
-  --surface-2: #232429;
-  --surface-3: #2d2f35;
-  --border: #2a2c31;
-  --text: #ececef;
-  --text-2: #a2a5ad;
-  --text-3: #70737c;
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-pop: 0 12px 34px rgba(0, 0, 0, 0.5);
-  --backdrop: rgba(0, 0, 0, 0.5);
+  --bg: #0f1115;
+  --surface: #161920;
+  --surface-2: #1b1e26;
+  --surface-3: #262a33;
+  --border: #1f232b;
+  --field: #0b0d11;
+  --field-border: #262a33;
+  --text: #e8eaf0;
+  --text-2: #9aa0ad;
+  --text-3: #7d8391;
+  --shadow: none;
+  --shadow-pop: 0 12px 34px rgba(0, 0, 0, 0.55);
+  --backdrop: rgba(0, 0, 0, 0.55);
+  --speaking: #3ddc84;
+  --danger: #ff6b78;
+  --danger-strong: #f04858;
   --warning: #f0a92e;
+  --accent: #7c6cff;
+  --accent-strong: #6c5bf5;
   color-scheme: dark;
 }
 
@@ -179,10 +217,10 @@ input,
 select {
   font: inherit;
   color: var(--text);
-  background: var(--surface-2);
-  border: 1px solid transparent;
+  background: var(--field);
+  border: 1px solid var(--field-border);
   border-radius: var(--radius-sm);
-  padding: 9px 12px;
+  padding: 10px 12px;
   outline: none;
   user-select: text;
   transition: border-color 120ms, box-shadow 120ms, background 120ms;
@@ -194,12 +232,11 @@ input::placeholder {
 
 input:hover,
 select:hover {
-  background: var(--surface-3);
+  border-color: var(--text-3);
 }
 
 input:focus,
 select:focus {
-  background: var(--surface);
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
@@ -385,67 +422,86 @@ button.link:hover {
 /* --- Экран подключения --- */
 
 #connect-view {
-  max-width: 420px;
+  max-width: 460px;
   margin: 0 auto;
-}
-
-.topbar {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: -8px;
-}
-
-/* По центру, пока помещается; если форма выше окна — прокрутка, а не обрезка сверху. */
-#connect-view > .brand {
-  margin-top: auto;
-}
-
-#connect-view > :last-child {
-  margin-bottom: auto;
+  gap: 22px;
+  padding: 22px 20px 18px;
 }
 
 .brand {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 4px;
-  padding-bottom: 6px;
+  gap: 12px;
 }
 
 .logo {
-  width: 56px;
-  height: 56px;
-  margin-bottom: 8px;
-  border-radius: 18px;
-  background: linear-gradient(145deg, var(--accent), var(--accent-strong));
-  box-shadow: 0 8px 20px color-mix(in srgb, var(--accent) 35%, transparent);
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  background: var(--accent);
   display: grid;
   place-items: center;
+  flex: none;
 }
 
 .logo svg {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   fill: #fff;
+}
+
+.brand-titles {
+  flex: 1;
+  min-width: 0;
 }
 
 .brand h1 {
   margin: 0;
-  font-size: 21px;
+  font-size: 20px;
   font-weight: 700;
   letter-spacing: -0.01em;
+  line-height: 1.25;
 }
 
 .tagline {
   margin: 0;
   color: var(--text-2);
-  font-size: 13px;
+  font-size: 12px;
 }
 
+.connect-form {
+  gap: 14px;
+  flex: 1;
+}
+
+.connect-form .lan {
+  margin-top: 6px;
+}
+
+button.big {
+  height: 44px;
+  font-size: 15px;
+}
+
+.footnote {
+  margin-top: auto;
+  padding-top: 4px;
+  color: var(--text-3);
+}
+
+/* Заголовки разделов: «В ЛОКАЛЬНОЙ СЕТИ», «МОИ КОМНАТЫ». */
 .section-head {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
+}
+
+.section-head > span:first-child {
+  color: var(--text-2);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 
 /* Серверы в локальной сети */
@@ -467,18 +523,35 @@ button.link:hover {
 
 .lan-item {
   width: 100%;
+  min-height: 52px;
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   text-align: left;
-  padding: 9px 12px;
-  background: transparent;
-  border: 1px solid var(--border);
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  border: 1px solid transparent;
 }
 
 .lan-item:hover {
-  background: var(--surface-2);
+  background: var(--surface-3);
+}
+
+.lan-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--speaking);
+  flex: none;
+}
+
+.lan-item:disabled .lan-dot {
+  background: var(--text-3);
+}
+
+.lan-item > .lan-name {
+  flex: 1;
 }
 
 .lan-item.selected {
@@ -487,7 +560,7 @@ button.link:hover {
 }
 
 .lan-name {
-  font-weight: 500;
+  font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -505,21 +578,55 @@ button.link:hover {
   display: flex;
   align-items: center;
   gap: 4px;
+  padding-right: 8px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  transition: background 120ms;
+}
+
+.my-rooms li:hover {
+  background: var(--surface-3);
+}
+
+.my-rooms li:has(.room-edit) {
+  padding: 0;
+  background: none;
 }
 
 .my-rooms .lan-item {
   flex: 1;
   min-width: 0;
+  background: transparent;
 }
 
-.my-rooms .lan-name {
+.my-rooms .menu-wrap .icon-btn {
+  background: transparent;
+}
+
+/* Значок комнаты — первая буква названия. */
+.room-badge {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  font-weight: 700;
+  color: var(--accent-text);
+  background: var(--accent-soft);
+}
+
+.lan-text {
+  flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 
+.my-rooms .lan-name,
 .my-rooms .lan-meta {
   overflow: hidden;
   text-overflow: ellipsis;
-  flex-shrink: 3;
 }
 
 .my-rooms li.busy .lan-item {
@@ -550,7 +657,7 @@ button.add-room svg {
 }
 
 .room-locked {
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 600;
 }
 
@@ -653,15 +760,27 @@ button.add-room svg {
 /* Кнопки-иконки в шапке комнаты; подсказки у них — снизу. */
 .head-btn {
   position: relative;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  color: var(--text-2);
+  background: var(--surface-2);
 }
 
-.room-header [data-tip]:hover::after {
+.head-btn:hover {
+  color: var(--text);
+  background: var(--surface-3);
+}
+
+.room-header [data-tip]:hover::after,
+.brand [data-tip]:hover::after,
+.tabs-row [data-tip]:hover::after {
   top: calc(100% + 8px);
   bottom: auto;
 }
 
 .head-btn[aria-pressed="true"] {
-  color: var(--accent);
+  color: var(--accent-text);
   background: var(--accent-soft);
 }
 
@@ -779,13 +898,62 @@ button.leave:hover {
   line-height: 1.4;
 }
 
-/* Вкладки «Участники / Чат» */
+/* Вкладки «Участники / Чат» и вид списка участников */
+
+.tabs-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tabs {
+  flex: 1;
+  display: flex;
+  gap: 4px;
+}
 
 .tabs button {
   display: flex;
   align-items: center;
-  justify-content: center;
   gap: 6px;
+  margin-bottom: -1px;
+  padding: 8px 10px;
+  border-radius: 8px 8px 0 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-2);
+  font-weight: 500;
+}
+
+.tabs button:hover {
+  color: var(--text);
+  background: transparent;
+}
+
+.tabs button.active {
+  color: var(--text);
+  font-weight: 600;
+  border-bottom-color: var(--accent);
+}
+
+.layout-toggle {
+  display: flex;
+  gap: 2px;
+  padding-bottom: 4px;
+}
+
+.layout-toggle .icon-btn {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  background: transparent;
+  color: var(--text-3);
+}
+
+.layout-toggle .icon-btn.active {
+  color: var(--text);
+  background: var(--surface-2);
 }
 
 .count {
@@ -814,7 +982,7 @@ button.leave:hover {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 2px;
   flex: 1;
   min-height: 60px;
   overflow-y: auto;
@@ -826,17 +994,18 @@ button.leave:hover {
   gap: 12px;
   padding: 10px 10px 10px 12px;
   border-radius: 12px;
-  background: var(--surface);
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
+  transition: background 120ms;
 }
 
+.peer:hover,
 .peer.me {
-  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+  background: var(--surface);
 }
 
 .avatar {
-  width: 38px;
-  height: 38px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
   display: grid;
   place-items: center;
@@ -849,6 +1018,11 @@ button.leave:hover {
 }
 
 .peer.speaking .avatar {
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--speaking);
+}
+
+.peer.me.speaking .avatar,
+.peer.speaking:hover .avatar {
   box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--speaking);
 }
 
@@ -857,13 +1031,13 @@ button.leave:hover {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
 }
 
 .peer-name {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   overflow: hidden;
   white-space: nowrap;
   font-weight: 600;
@@ -930,6 +1104,76 @@ button.leave:hover {
 .status-icon .icon {
   width: 16px;
   height: 16px;
+}
+
+/* Плитками: крупные аватары в сетке. */
+.peers.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  align-content: start;
+  gap: 8px;
+}
+
+.peers.tiles .peer {
+  position: relative;
+  flex-direction: column;
+  gap: 8px;
+  padding: 18px 10px 12px;
+  text-align: center;
+  background: var(--surface);
+  border-color: var(--border);
+  border-radius: var(--radius);
+}
+
+.peers.tiles .peer.me {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+}
+
+.peers.tiles .avatar {
+  width: 60px;
+  height: 60px;
+  font-size: 22px;
+}
+
+.peers.tiles .peer.speaking .avatar {
+  box-shadow: 0 0 0 3px var(--surface), 0 0 0 5px var(--speaking);
+}
+
+.peers.tiles .peer-main {
+  width: 100%;
+  align-items: center;
+}
+
+.peers.tiles .peer-name {
+  justify-content: center;
+  max-width: 100%;
+}
+
+.peers.tiles .peer-volume {
+  width: 100%;
+}
+
+.peers.tiles .peer-side:empty {
+  display: none;
+}
+
+/* Меню хоста — в углу плитки, значки и «Смотреть» — под именем. */
+.peers.tiles .peer-side .menu-wrap {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+}
+
+.peer-side .menu-wrap .icon-btn {
+  background: transparent;
+}
+
+.peer-side .menu-wrap .icon-btn:hover {
+  background: var(--surface-3);
+}
+
+.peers.tiles .empty {
+  grid-column: 1 / -1;
 }
 
 .empty {
@@ -1582,8 +1826,8 @@ button.key.listening {
   padding: 0 10px;
   font-size: 12.5px;
   font-weight: 600;
-  color: var(--accent);
-  background: var(--accent-soft);
+  color: #fff;
+  background: var(--accent);
 }
 
 .watch-btn .icon {
@@ -1592,12 +1836,19 @@ button.key.listening {
 }
 
 .watch-btn:hover {
-  color: #fff;
-  background: var(--accent);
+  background: var(--accent-strong);
 }
 
 .badge.live {
-  color: var(--accent);
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 6px;
+  color: var(--danger);
+  background: var(--danger-soft);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 /* --- Настройки --- */
