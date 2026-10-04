@@ -445,3 +445,59 @@ async fn screen_share_reaches_only_watchers() {
     )
     .await;
 }
+
+#[tokio::test]
+async fn locked_room_lets_in_only_host_and_returning_members() {
+    use std::sync::atomic::Ordering;
+    use vwf_proto::ClientMsg;
+
+    let server = vwf_server::Server::bind(vwf_server::Config {
+        bind: "127.0.0.1:0".parse().unwrap(),
+        echo: false,
+        data_dir: None,
+        name: "Комната".into(),
+        discovery: Some("127.0.0.1:0".parse().unwrap()),
+        admin_token: Some("секрет".into()),
+    })
+    .unwrap();
+    let addr = server.local_addr().unwrap().to_string();
+    let discovery_port = server.discovery_addr().unwrap().port();
+    let lock = server.lock_switch();
+    let visible = server.discovery_switch();
+    tokio::spawn(server.run());
+
+    let host = vwf_client::net::connect_with_token(&addr, "Хост", Some("секрет")).await.unwrap();
+    let mut alice = vwf_client::net::connect(&addr, "Алиса").await.unwrap();
+    let mallory = vwf_client::net::connect(&addr, "Мэллори").await.unwrap();
+    let _carol = vwf_client::net::connect(&addr, "Кэрол").await.unwrap();
+
+    // Хост выгоняет Мэллори и закрывает вход.
+    host.control().send(ClientMsg::Kick { id: mallory.me.id });
+    expect_event(&mut alice, |e| matches!(e, ServerMsg::PeerLeft { .. })).await;
+    lock.store(true, Ordering::Relaxed);
+
+    // Новичка не пускают — с понятной причиной.
+    let err = vwf_client::net::connect(&addr, "Боб").await.err().expect("Боба не должны пустить");
+    assert!(format!("{err:#}").contains(vwf_proto::LOCKED_REASON), "{err:#}");
+    // Выгнанный тоже не возвращается.
+    assert!(vwf_client::net::connect(&addr, "Мэллори").await.is_err());
+
+    // Алиса, у которой оборвалась связь, возвращается и в закрытую комнату.
+    alice.close().await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    vwf_client::net::connect(&addr, "Алиса").await.expect("Алиса возвращается");
+    // У Кэрол связь пропала молча: сервер ещё считает её в комнате, а программа
+    // уже переподключается. Её тоже пускают.
+    vwf_client::net::connect(&addr, "Кэрол").await.expect("Кэрол переподключается");
+
+    // Открыли вход — Боб заходит.
+    lock.store(false, Ordering::Relaxed);
+    vwf_client::net::connect(&addr, "Боб").await.expect("вход открыт");
+
+    // Комнату спрятали из локальной сети — поиск её не находит.
+    visible.store(false, Ordering::Relaxed);
+    let found = vwf_client::discovery::discover_on(discovery_port, Duration::from_millis(400))
+        .await
+        .unwrap();
+    assert!(found.is_empty(), "{found:?}");
+}

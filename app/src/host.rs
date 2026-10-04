@@ -1,4 +1,4 @@
-//! Сервер внутри приложения: кнопка «Создать комнату».
+//! Сервер внутри приложения: свои комнаты на этом компьютере.
 //!
 //! Это тот же `vwf-server`, что и отдельная программа, только запущенный
 //! в процессе приложения. Хост сам подключается к нему как обычный клиент.
@@ -30,6 +30,8 @@ pub struct HostAddress {
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct HostInfo {
+    /// Какая из своих комнат открыта (см. `rooms.rs`).
+    pub room_id: String,
     pub name: String,
     pub port: u16,
     pub addresses: Vec<HostAddress>,
@@ -63,13 +65,21 @@ pub struct HostedServer {
     admin_token: String,
     fingerprint: String,
     echo: Arc<AtomicBool>,
+    locked: Arc<AtomicBool>,
+    lan: Arc<AtomicBool>,
     pub info: HostInfo,
 }
 
 impl HostedServer {
-    /// `data_dir` — где хранить сертификат сервера, чтобы он не менялся между запусками.
-    pub async fn start(name: String, data_dir: PathBuf) -> anyhow::Result<Self> {
-        let room_file = data_dir.join("room_id.txt");
+    /// Открывает комнату `room`. `data_dir` — где хранить сертификат сервера,
+    /// чтобы он не менялся между запусками; `room_file` — номер комнаты для
+    /// её кода приглашения.
+    pub async fn start(
+        room: &crate::rooms::RoomConfig,
+        room_file: PathBuf,
+        data_dir: PathBuf,
+    ) -> anyhow::Result<Self> {
+        let name = room.name.clone();
         let admin_token = random_token();
         let config = || vwf_server::Config {
             bind: SocketAddr::from(([0, 0, 0, 0], DEFAULT_PORT)),
@@ -110,6 +120,9 @@ impl HostedServer {
         let code = vwf_proto::short_fingerprint(&fingerprint);
         let endpoint = server.endpoint().clone();
         let echo = server.echo_switch();
+        let locked = server.lock_switch();
+        let lan = server.discovery_switch();
+        lan.store(room.lan, Ordering::Relaxed);
         let task = tauri::async_runtime::spawn(server.run());
         let addresses = vwf_server::reachable_addresses(port)
             .into_iter()
@@ -131,7 +144,9 @@ impl HostedServer {
             admin_token,
             fingerprint,
             echo,
-            info: HostInfo { name, port, addresses, code },
+            locked,
+            lan,
+            info: HostInfo { room_id: room.id.clone(), name, port, addresses, code },
         })
     }
 
@@ -174,6 +189,16 @@ impl HostedServer {
     /// Эхо: сервер возвращает каждому его собственный голос.
     pub fn set_echo(&self, enabled: bool) {
         self.echo.store(enabled, Ordering::Relaxed);
+    }
+
+    /// «Никого больше не пускать»: новые участники получают отказ.
+    pub fn set_locked(&self, locked: bool) {
+        self.locked.store(locked, Ordering::Relaxed);
+    }
+
+    /// Видна ли комната в списке «В локальной сети».
+    pub fn set_lan(&self, visible: bool) {
+        self.lan.store(visible, Ordering::Relaxed);
     }
 
     /// Адрес, по которому к серверу подключается сам хост.

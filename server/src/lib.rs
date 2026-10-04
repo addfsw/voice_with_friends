@@ -46,6 +46,10 @@ pub struct Server {
     fingerprint: String,
     /// Режим эха можно переключать и на работающем сервере (см. `echo_switch`).
     echo: Arc<AtomicBool>,
+    /// «Никого больше не пускать» (см. `lock_switch`).
+    locked: Arc<AtomicBool>,
+    /// Отвечать ли на поиск в локальной сети (см. `discovery_switch`).
+    discoverable: Arc<AtomicBool>,
     name: String,
     discovery: Option<std::net::UdpSocket>,
     admin_token: Option<String>,
@@ -107,6 +111,8 @@ impl Server {
             endpoint,
             fingerprint,
             echo: Arc::new(AtomicBool::new(config.echo)),
+            locked: Arc::new(AtomicBool::new(false)),
+            discoverable: Arc::new(AtomicBool::new(true)),
             name: config.name,
             discovery,
             admin_token: config.admin_token.filter(|t| !t.is_empty()),
@@ -145,14 +151,22 @@ impl Server {
                         protocol: PROTOCOL_VERSION,
                         users: 0,
                     };
-                    discovery_task =
-                        Some(tokio::spawn(answer_discovery(socket, room.clone(), announcement)));
+                    discovery_task = Some(tokio::spawn(answer_discovery(
+                        socket,
+                        room.clone(),
+                        announcement,
+                        self.discoverable.clone(),
+                    )));
                 }
                 Err(e) => warn!("поиск в локальной сети отключён: {e}"),
             }
         }
 
-        let settings = Arc::new(RoomSettings { echo: self.echo, admin_token: self.admin_token });
+        let settings = Arc::new(RoomSettings {
+            echo: self.echo,
+            locked: self.locked,
+            admin_token: self.admin_token,
+        });
         while let Some(incoming) = self.endpoint.accept().await {
             let room = room.clone();
             let settings = settings.clone();
@@ -176,6 +190,19 @@ impl Server {
         self.echo.clone()
     }
 
+    /// Переключатель «никого больше не пускать»: пока включён, сервер
+    /// отказывает новым участникам. Хост и те, кто только что был в комнате
+    /// (переподключаются после обрыва связи), проходят.
+    pub fn lock_switch(&self) -> Arc<AtomicBool> {
+        self.locked.clone()
+    }
+
+    /// Переключатель видимости в локальной сети: выключен — сервер молчит
+    /// на поиск, и в списке «В локальной сети» его нет.
+    pub fn discovery_switch(&self) -> Arc<AtomicBool> {
+        self.discoverable.clone()
+    }
+
     pub fn endpoint(&self) -> &quinn::Endpoint {
         &self.endpoint
     }
@@ -186,6 +213,7 @@ async fn answer_discovery(
     socket: tokio::net::UdpSocket,
     room: Arc<Mutex<Room>>,
     mut announcement: Announcement,
+    discoverable: Arc<AtomicBool>,
 ) {
     let mut buf = [0u8; 64];
     loop {
@@ -199,7 +227,7 @@ async fn answer_discovery(
                 continue;
             }
         };
-        if &buf[..len] != vwf_proto::DISCOVERY_PROBE {
+        if &buf[..len] != vwf_proto::DISCOVERY_PROBE || !discoverable.load(Ordering::Relaxed) {
             continue;
         }
         announcement.users = room.lock().unwrap().peers.len() as u32;
@@ -243,6 +271,8 @@ fn transport_config() -> quinn::TransportConfig {
 struct Room {
     next_id: PeerId,
     peers: HashMap<PeerId, Peer>,
+    /// Кто и когда недавно ушёл (по имени) — для закрытой комнаты.
+    recently_left: HashMap<String, Instant>,
     /// Последние сообщения чата (старые — первыми).
     chat: VecDeque<ChatMessage>,
     next_message_id: u64,
@@ -250,8 +280,13 @@ struct Room {
 
 struct RoomSettings {
     echo: Arc<AtomicBool>,
+    locked: Arc<AtomicBool>,
     admin_token: Option<String>,
 }
+
+/// Кто ушёл из комнаты не дольше этого назад, может вернуться и в закрытую:
+/// так переподключение после обрыва связи не упирается в замок.
+const REJOIN_WINDOW: Duration = Duration::from_secs(180);
 
 struct Peer {
     info: PeerInfo,
@@ -269,6 +304,8 @@ struct Peer {
     video: mpsc::Sender<Bytes>,
     /// Когда у него последний раз просили опорный кадр (если он показывает экран).
     keyframe_asked: Option<Instant>,
+    /// Его выгнал хост: в закрытую комнату он не вернётся.
+    kicked: bool,
 }
 
 /// Сколько кадров демонстрации может ждать отправки одному зрителю. Больше —
@@ -288,6 +325,7 @@ impl Room {
         Self {
             next_id: 0,
             peers: HashMap::new(),
+            recently_left: HashMap::new(),
             chat: VecDeque::new(),
             // Номера сообщений начинаются со случайного числа: если сервер
             // перезапустят, новые сообщения не совпадут по номеру со старыми,
@@ -374,6 +412,15 @@ impl Room {
         if lagging {
             self.ask_keyframe(from);
         }
+    }
+
+    /// Можно ли `name` войти в закрытую комнату: он только что в ней был
+    /// или всё ещё числится в ней (связь оборвалась, а сервер этого пока не
+    /// заметил, — клиент переподключается).
+    fn may_rejoin(&mut self, name: &str) -> bool {
+        self.recently_left.retain(|_, left| left.elapsed() < REJOIN_WINDOW);
+        self.recently_left.contains_key(name)
+            || self.peers.values().any(|p| !p.kicked && p.info.name == name)
     }
 
     /// Принимает сообщение в чат от участника `from` и рассылает всем.
@@ -463,7 +510,8 @@ impl Room {
                 }
             }
             ClientMsg::Kick { id } if from_admin && id != from => {
-                if let Some(peer) = self.peers.get(&id) {
+                if let Some(peer) = self.peers.get_mut(&id) {
+                    peer.kicked = true;
                     info!("хост выгнал {} (id {id})", peer.info.name);
                     // Остальное (удаление из комнаты, PeerLeft) сделает
                     // обработчик соединения этого участника, когда оно закроется.
@@ -507,6 +555,14 @@ async fn handle_connection(
     }
     let name = sanitize_name(&name);
     let admin = settings.admin_token.is_some() && admin_token == settings.admin_token;
+    if !admin && settings.locked.load(Ordering::Relaxed) && !room.lock().unwrap().may_rejoin(&name)
+    {
+        let reason = vwf_proto::LOCKED_REASON.to_string();
+        vwf_proto::write_msg(&mut send, &ServerMsg::Rejected { reason: reason.clone() }).await?;
+        let _ = send.finish();
+        let _ = tokio::time::timeout(Duration::from_secs(2), conn.closed()).await;
+        anyhow::bail!("{name}: {reason}");
+    }
 
     let (control_tx, mut control_rx) = mpsc::unbounded_channel();
     let (video_tx, mut video_rx) = mpsc::channel::<Bytes>(VIDEO_QUEUE);
@@ -533,6 +589,7 @@ async fn handle_connection(
                 waiting_keyframe: HashSet::new(),
                 video: video_tx,
                 keyframe_asked: None,
+                kicked: false,
             },
         );
         id
@@ -620,6 +677,9 @@ async fn handle_connection(
     {
         let mut room = room.lock().unwrap();
         if let Some(peer) = room.peers.remove(&id) {
+            if !peer.kicked {
+                room.recently_left.insert(peer.info.name.clone(), Instant::now());
+            }
             // Ушедший больше никого не смотрит, а его зрители — его.
             for sharer in peer.watching {
                 room.send_viewer_count(sharer);

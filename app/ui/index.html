@@ -67,10 +67,17 @@
         <button type="submit" id="connect-btn" class="primary">Подключиться</button>
         <p id="connect-error" class="error" hidden></p>
 
-        <div class="divider"><span>или</span></div>
-        <button type="button" id="host-btn">Создать комнату на этом компьютере</button>
+        <div class="divider"><span>или откройте свою комнату</span></div>
+        <ul id="my-rooms" class="lan-list my-rooms"></ul>
+        <div id="new-room" class="room-edit" hidden>
+          <input id="new-room-name" maxlength="40" placeholder="Например, «Игры с Саней»" />
+          <button type="button" id="new-room-create" class="primary">Создать</button>
+          <button type="button" id="new-room-cancel" class="icon-btn ghost" data-icon="close" title="Отмена" aria-label="Отмена"></button>
+        </div>
+        <button type="button" id="new-room-btn" class="link add-room" data-icon="plus">Новая комната</button>
         <p class="hint center">
-          Сервер запустится прямо в программе — адрес вводить не нужно.
+          Сервер запустится прямо в программе. У каждой комнаты свой код
+          приглашения — друзья из разных компаний не попадут друг к другу.
         </p>
       </form>
     </main>
@@ -79,7 +86,10 @@
     <main id="room-view" class="view" hidden>
       <header class="room-header">
         <div class="room-titles">
-          <div id="room-title" class="room-title">Комната</div>
+          <div class="room-title">
+            <span id="room-title">Комната</span>
+            <span id="room-locked" class="room-locked" data-icon="lock" title="Вход закрыт: новые участники не смогут войти" hidden></span>
+          </div>
           <div class="room-sub">
             <span id="server-label"></span>
             <span id="server-code" class="mono"
@@ -102,6 +112,11 @@
           <span class="chevron" data-icon="chevron"></span>
         </summary>
         <div class="host-body">
+          <label class="switch-row" title="Войти смогут только те, кто уже был в комнате (кроме выгнанных)">
+            <span>Никого больше не пускать</span>
+            <input type="checkbox" id="room-lock" class="switch" />
+          </label>
+
           <label class="switch-row" title="Друзья смогут подключиться по коду приглашения без Tailscale и белого IP">
             <span>Доступ через интернет</span>
             <input type="checkbox" id="internet" class="switch" />
@@ -117,7 +132,10 @@
 
           <div class="section-head"><span>Локальная сеть и Tailscale</span></div>
           <ul id="host-addresses" class="host-addresses"></ul>
-          <p class="hint">Друзья из вашей сети увидят комнату в списке сами.</p>
+          <label class="switch-row" title="Друзья из вашей сети увидят комнату в списке «В локальной сети»">
+            <span>Видна в локальной сети</span>
+            <input type="checkbox" id="room-lan" class="switch" />
+          </label>
 
           <label class="switch-row" title="Сервер возвращает каждому его собственный голос">
             <span>Эхо: каждый слышит себя</span>

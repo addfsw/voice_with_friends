@@ -8,6 +8,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod host;
+mod rooms;
 mod screen;
 mod tray;
 
@@ -36,8 +37,10 @@ struct AppState {
     deafened: AtomicBool,
     /// Клавиша рации в формате `Ctrl+Alt+KeyV`, `F8` и т.п.
     ptt_key: Mutex<Option<String>>,
-    /// Сервер, запущенный кнопкой «Создать комнату».
+    /// Открытая на этом компьютере комната (свой сервер).
     host: tokio::sync::Mutex<Option<HostedServer>>,
+    /// Свои комнаты (загружаются при запуске).
+    rooms: Mutex<Option<rooms::Rooms>>,
     /// Запомненные сертификаты серверов (загружаются при запуске).
     known: Mutex<KnownServers>,
     /// Номер текущего звонка. Растёт при каждом подключении и отключении;
@@ -424,33 +427,102 @@ async fn disconnect(state: State<'_, AppState>) -> CmdResult<()> {
     Ok(())
 }
 
+/// Работает со списком своих комнат.
+fn with_rooms<T>(
+    state: &AppState,
+    f: impl FnOnce(&mut rooms::Rooms) -> anyhow::Result<T>,
+) -> CmdResult<T> {
+    let mut rooms = state.rooms.lock().unwrap();
+    let rooms = rooms.as_mut().ok_or("список комнат ещё не загружен")?;
+    f(rooms).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn list_rooms(state: State<'_, AppState>) -> CmdResult<Vec<rooms::RoomConfig>> {
+    with_rooms(&state, |rooms| Ok(rooms.list()))
+}
+
+#[tauri::command]
+fn create_room(state: State<'_, AppState>, name: String) -> CmdResult<rooms::RoomConfig> {
+    with_rooms(&state, |rooms| rooms.create(&name))
+}
+
+/// Новое название видно друзьям со следующего открытия комнаты.
+#[tauri::command]
+fn rename_room(
+    state: State<'_, AppState>,
+    id: String,
+    name: String,
+) -> CmdResult<rooms::RoomConfig> {
+    with_rooms(&state, |rooms| rooms.update(&id, |room| room.name = name))
+}
+
+/// Удаляет комнату; её код приглашения перестаёт работать навсегда.
+#[tauri::command]
+async fn delete_room(state: State<'_, AppState>, id: String) -> CmdResult<()> {
+    if state.host.lock().await.as_ref().is_some_and(|server| server.info.room_id == id) {
+        return Err("сначала закройте эту комнату".into());
+    }
+    with_rooms(&state, |rooms| rooms.delete(&id))
+}
+
+/// Видна ли комната в списке «В локальной сети». Для открытой комнаты —
+/// сразу.
+#[tauri::command]
+async fn set_room_lan(state: State<'_, AppState>, id: String, visible: bool) -> CmdResult<()> {
+    with_rooms(&state, |rooms| rooms.update(&id, |room| room.lan = visible))?;
+    if let Some(server) = state.host.lock().await.as_ref().filter(|s| s.info.room_id == id) {
+        server.set_lan(visible);
+    }
+    Ok(())
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Hosted {
     info: HostInfo,
     /// Куда подключаться самому хосту.
     local_address: String,
+    /// Настройки комнаты (видимость, интернет).
+    room: rooms::RoomConfig,
 }
 
-/// Запускает сервер на этом компьютере (если ещё не запущен).
+/// Открывает свою комнату `room_id`: запускает сервер на этом компьютере.
+/// Одновременно открыта только одна комната — у всех один порт.
 #[tauri::command]
 async fn start_server(
     app: AppHandle,
     state: State<'_, AppState>,
-    name: String,
+    room_id: String,
 ) -> CmdResult<Hosted> {
+    let (room, room_file) = with_rooms(&state, |rooms| {
+        let room = rooms.get(&room_id).ok_or_else(|| anyhow::anyhow!("комната не найдена"))?;
+        Ok((room, rooms.invite_file(&room_id)))
+    })?;
     let mut host = state.host.lock().await;
+    if host.as_ref().is_some_and(|server| server.info.room_id != room_id) {
+        return Err("открыта другая комната — сначала закройте её".into());
+    }
     if host.is_none() {
         // Сертификат сервера храним в папке данных приложения
         // (на Windows это %APPDATA%\io.github.addfsw.poigrulkiny).
         let data_dir = app.path().app_data_dir().map_err(err)?;
-        let name = name.trim();
-        let name =
-            if name.is_empty() { vwf_server::default_server_name() } else { name.to_string() };
-        *host = Some(HostedServer::start(name, data_dir).await.map_err(|e| format!("{e:#}"))?);
+        *host = Some(
+            HostedServer::start(&room, room_file, data_dir).await.map_err(|e| format!("{e:#}"))?,
+        );
     }
     let server = host.as_ref().expect("только что запустили");
-    Ok(Hosted { info: server.info.clone(), local_address: server.local_address() })
+    Ok(Hosted { info: server.info.clone(), local_address: server.local_address(), room })
+}
+
+/// Только для своей комнаты: «никого больше не пускать». Вернуться могут
+/// только те, кто был в комнате (не выгнанные) в последние минуты.
+#[tauri::command]
+async fn set_lock(state: State<'_, AppState>, locked: bool) -> CmdResult<()> {
+    if let Some(server) = state.host.lock().await.as_ref() {
+        server.set_locked(locked);
+    }
+    Ok(())
 }
 
 /// Только для своей комнаты: эхо — каждый слышит сам себя (проверка связи).
@@ -468,6 +540,8 @@ async fn set_internet(state: State<'_, AppState>, enabled: bool) -> CmdResult<In
     let host = state.host.lock().await;
     let server = host.as_ref().ok_or("комната не создана")?;
     server.set_internet(enabled).map_err(|e| format!("{e:#}"))?;
+    // Запоминаем для этой комнаты: в следующий раз включится сам.
+    with_rooms(&state, |rooms| rooms.update(&server.info.room_id, |room| room.internet = enabled))?;
     Ok(server.internet_status())
 }
 
@@ -828,6 +902,7 @@ fn main() {
             deafened: AtomicBool::new(false),
             ptt_key: Mutex::new(None),
             host: tokio::sync::Mutex::new(None),
+            rooms: Mutex::new(None),
             known: Mutex::new(KnownServers::in_memory()),
             generation: AtomicU64::new(0),
             params: Mutex::new(None),
@@ -838,8 +913,10 @@ fn main() {
         .manage(screen::Screens::default())
         .setup(|app| {
             // Файл с запомненными сертификатами — в папке данных программы.
-            let path = app.path().app_data_dir()?.join("known_servers.txt");
-            *app.state::<AppState>().known.lock().unwrap() = KnownServers::load(path);
+            let data_dir = app.path().app_data_dir()?;
+            let state = app.state::<AppState>();
+            *state.known.lock().unwrap() = KnownServers::load(data_dir.join("known_servers.txt"));
+            *state.rooms.lock().unwrap() = Some(rooms::Rooms::load(&data_dir, "Моя комната"));
             // В Linux без библиотеки appindicator создание значка не ошибка,
             // а паника внутри tauri — ловим и её.
             let handle = app.handle().clone();
@@ -878,8 +955,14 @@ fn main() {
             discover_servers,
             set_mode,
             set_ptt_key,
+            list_rooms,
+            create_room,
+            rename_room,
+            delete_room,
+            set_room_lan,
             start_server,
             stop_server,
+            set_lock,
             set_echo,
             set_internet,
             internet_status,

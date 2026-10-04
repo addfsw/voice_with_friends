@@ -499,6 +499,63 @@ button.link:hover {
   white-space: nowrap;
 }
 
+/* Свои комнаты */
+
+.my-rooms li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.my-rooms .lan-item {
+  flex: 1;
+  min-width: 0;
+}
+
+.my-rooms .lan-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.my-rooms li.busy .lan-item {
+  border-color: var(--accent);
+}
+
+.room-edit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.room-edit input {
+  flex: 1;
+  min-width: 0;
+}
+
+button.add-room {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+button.add-room svg {
+  width: 16px;
+  height: 16px;
+}
+
+.room-locked {
+  display: inline-flex;
+  vertical-align: -2px;
+  margin-left: 6px;
+  color: var(--text-2);
+}
+
+.room-locked svg {
+  width: 16px;
+  height: 16px;
+}
+
 .divider {
   display: flex;
   align-items: center;

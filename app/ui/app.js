@@ -26,8 +26,9 @@ const store = {
 };
 
 const call = {
-  // Сведения о своём сервере, если комнату создали мы.
+  // Сведения о своём сервере, если комнату открыли мы.
   hosting: null,
+  hostRoom: null, // настройки открытой своей комнаты: { id, name, lan, internet }
   me: null, // мы сами: { id, name, admin, muted, deafened, serverMuted }
   peers: new Map(), // id -> такие же сведения о собеседнике
   statusTimer: null,
@@ -64,6 +65,8 @@ const ICON_PATHS = {
     "M3 17v2h6v-2H3ZM3 5v2h10V5H3Zm10 16v-2h8v-2h-8v-2h-2v6h2ZM7 9v2H3v2h4v2h2V9H7Zm14 4v-2H11v2h10Zm-6-4h2V7h4V5h-4V3h-2v6Z",
   screen:
     "M21 3H3a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h5v2h8v-2h5a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2Zm0 14H3V5h18v12Z",
+  lock: "M18 8h-1V6A5 5 0 0 0 7 6v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2Zm-6 9a2 2 0 1 1 0-4 2 2 0 0 1 0 4Zm3.1-9H8.9V6a3.1 3.1 0 0 1 6.2 0v2Z",
+  plus: "M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2Z",
   window: "M19 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2Zm0 14H5V8h14v10Z",
 };
 
@@ -309,35 +312,214 @@ $("cert-trust").addEventListener("click", async () => {
   }
 });
 
-// «Создать комнату»: запускаем сервер внутри программы и подключаемся к нему сами.
-$("host-btn").addEventListener("click", async () => {
+// ---------------------------------------------------------------------------
+// Свои комнаты: сервер запускается прямо в программе
+// ---------------------------------------------------------------------------
+
+let myRooms = [];
+let roomsBusy = false;
+
+async function loadRooms() {
+  try {
+    myRooms = await invoke("list_rooms");
+  } catch (e) {
+    toast(`Не удалось загрузить список комнат: ${errorText(e)}`);
+  }
+  renderRooms();
+}
+
+function roomMeta(room) {
+  const parts = [room.lan ? "видна в сети" : "скрыта из сети"];
+  if (room.internet) parts.push("через интернет");
+  return parts.join(" · ");
+}
+
+function renderRooms(busyId = null) {
+  const list = $("my-rooms");
+  list.innerHTML = "";
+  for (const room of myRooms) {
+    const li = document.createElement("li");
+    li.classList.toggle("busy", room.id === busyId);
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "lan-item";
+    open.disabled = roomsBusy;
+    const name = document.createElement("span");
+    name.className = "lan-name";
+    name.textContent = room.name;
+    const meta = document.createElement("span");
+    meta.className = "lan-meta";
+    meta.textContent = room.id === busyId ? "Запуск сервера…" : roomMeta(room);
+    open.append(name, meta);
+    open.addEventListener("click", () => openRoom(room));
+    li.append(open, roomMenu(room, li));
+    list.append(li);
+  }
+  $("new-room-btn").disabled = roomsBusy;
+}
+
+// Меню комнаты: переименовать, удалить.
+function roomMenu(room, li) {
+  const wrap = document.createElement("div");
+  wrap.className = "menu-wrap";
+  const button = toggleButton(null, icon("more"), false, "Действия с комнатой", (event) => {
+    event.stopPropagation();
+    const open = !menu.hidden;
+    closeMenus();
+    menu.hidden = open;
+  });
+  button.removeAttribute("title");
+  button.setAttribute("aria-label", "Действия с комнатой");
+  button.disabled = roomsBusy;
+  const menu = document.createElement("div");
+  menu.className = "menu";
+  menu.hidden = true;
+
+  const rename = document.createElement("button");
+  rename.type = "button";
+  rename.textContent = "Переименовать";
+  rename.addEventListener("click", () => {
+    closeMenus();
+    editRoomName(li, room.name, async (name) => {
+      const updated = await invoke("rename_room", { id: room.id, name });
+      myRooms = myRooms.map((r) => (r.id === room.id ? updated : r));
+    });
+  });
+  menu.append(rename);
+
+  // Удалить — нужно подтвердить вторым нажатием. Последнюю комнату не удалить.
+  if (myRooms.length > 1) {
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "danger-item";
+    remove.textContent = "Удалить";
+    remove.title = "Код приглашения этой комнаты перестанет работать";
+    remove.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      if (!remove.classList.contains("armed")) {
+        remove.classList.add("armed");
+        remove.textContent = "Точно удалить? Код перестанет работать";
+        return;
+      }
+      closeMenus();
+      try {
+        await invoke("delete_room", { id: room.id });
+        myRooms = myRooms.filter((r) => r.id !== room.id);
+      } catch (e) {
+        toast(errorText(e));
+      }
+      renderRooms();
+    });
+    menu.append(remove);
+  }
+  wrap.append(button, menu);
+  return wrap;
+}
+
+// Поле для названия на месте строки комнаты. Enter — сохранить, Esc — отмена.
+function editRoomName(li, value, save) {
+  const row = document.createElement("div");
+  row.className = "room-edit";
+  const input = document.createElement("input");
+  input.maxLength = 40;
+  input.value = value;
+  const ok = document.createElement("button");
+  ok.type = "button";
+  ok.className = "primary";
+  ok.textContent = "Сохранить";
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "icon-btn ghost";
+  cancel.title = "Отмена";
+  cancel.setAttribute("aria-label", "Отмена");
+  cancel.append(icon("close"));
+  row.append(input, ok, cancel);
+
+  const submit = async () => {
+    if (!input.value.trim()) return input.focus();
+    try {
+      await save(input.value);
+      renderRooms();
+    } catch (e) {
+      toast(errorText(e));
+    }
+  };
+  ok.addEventListener("click", submit);
+  cancel.addEventListener("click", () => renderRooms());
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault(); // иначе отправится форма подключения
+      submit();
+    } else if (event.key === "Escape") {
+      renderRooms();
+    }
+  });
+  li.replaceChildren(row);
+  input.focus();
+  input.select();
+}
+
+function showNewRoom(show) {
+  $("new-room").hidden = !show;
+  $("new-room-btn").hidden = show;
+  $("new-room-name").value = "";
+  if (show) $("new-room-name").focus();
+}
+
+async function createRoom() {
+  const name = $("new-room-name").value;
+  if (!name.trim()) return $("new-room-name").focus();
+  try {
+    myRooms.push(await invoke("create_room", { name }));
+    showNewRoom(false);
+    renderRooms();
+  } catch (e) {
+    toast(errorText(e));
+  }
+}
+
+$("new-room-btn").addEventListener("click", () => showNewRoom(true));
+$("new-room-cancel").addEventListener("click", () => showNewRoom(false));
+$("new-room-create").addEventListener("click", createRoom);
+$("new-room-name").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    createRoom();
+  } else if (event.key === "Escape") {
+    showNewRoom(false);
+  }
+});
+
+// Открываем свою комнату: запускаем сервер и подключаемся к нему сами.
+async function openRoom(room) {
+  if (roomsBusy) return;
   if (!$("name").value.trim()) {
     $("name").reportValidity();
     return;
   }
   const { name, input, output } = formValues();
-  const button = $("host-btn");
   const error = $("connect-error");
-  button.disabled = true;
-  button.textContent = "Запуск сервера…";
+  roomsBusy = true;
+  renderRooms(room.id);
   error.hidden = true;
   let hosted = null;
   try {
-    hosted = await invoke("start_server", { name: `${name} — комната` });
+    hosted = await invoke("start_server", { roomId: room.id });
     const joined = await invoke("connect", {
       args: { server: hosted.localAddress, name, input, output },
     });
     call.hosting = hosted.info;
+    call.hostRoom = hosted.room;
     enterRoom(hosted.localAddress, name, joined);
   } catch (e) {
     if (hosted) await invoke("stop_server").catch(() => {});
     error.textContent = errorText(e);
     error.hidden = false;
   } finally {
-    button.disabled = false;
-    button.textContent = "Создать комнату на этом компьютере";
+    roomsBusy = false;
+    renderRooms();
   }
-});
+}
 
 // ---------------------------------------------------------------------------
 // Комната
@@ -415,6 +597,7 @@ function leaveRoom(reason) {
   call.chatPending = [];
   setUnread(0);
   call.hosting = null;
+  call.hostRoom = null;
   call.me = null;
   closeMenus();
   stopInternetPolling();
@@ -423,6 +606,7 @@ function leaveRoom(reason) {
   call.peers.clear();
   showView("connect");
   startLanSearch();
+  loadRooms(); // в комнате могли включить интернет или скрыть её из сети
   if (reason) toast(reason);
 }
 
@@ -461,7 +645,17 @@ function renderHostCard() {
   card.open = store.get("hostCardOpen", false);
   $("host-code").textContent = call.hosting.code;
   $("echo").checked = false; // новая комната всегда без эха
-  const internet = store.get("internet", false);
+  $("room-lock").checked = false; // и с открытым входом
+  $("room-locked").hidden = true;
+  $("room-lan").checked = call.hostRoom.lan;
+  // Раньше «доступ через интернет» запоминался для всех комнат сразу.
+  const legacy = call.hostRoom.id === "default" && store.get("internet", false);
+  try {
+    localStorage.removeItem("internet");
+  } catch {
+    // Не страшно.
+  }
+  const internet = call.hostRoom.internet || legacy;
   $("internet").checked = internet;
   if (internet) setInternet(true);
   else renderInternet(null);
@@ -1214,10 +1408,25 @@ function renderInternet(status) {
   }
 }
 
-$("internet").addEventListener("change", () => {
-  const enabled = $("internet").checked;
-  store.set("internet", enabled);
-  setInternet(enabled);
+$("internet").addEventListener("change", () => setInternet($("internet").checked));
+
+$("room-lan").addEventListener("change", async () => {
+  if (!call.hostRoom) return;
+  const visible = $("room-lan").checked;
+  try {
+    await invoke("set_room_lan", { id: call.hostRoom.id, visible });
+    call.hostRoom.lan = visible;
+  } catch (e) {
+    $("room-lan").checked = !visible;
+    toast(errorText(e));
+  }
+});
+
+$("room-lock").addEventListener("change", async () => {
+  const locked = $("room-lock").checked;
+  await invoke("set_lock", { locked });
+  $("room-locked").hidden = !locked;
+  toast(locked ? "Вход закрыт: новые участники не войдут" : "Вход снова открыт");
 });
 
 $("invite-copy").addEventListener("click", () => copyText($("invite-code").textContent));
@@ -1565,6 +1774,7 @@ async function init() {
   updateModeRows();
 
   startLanSearch();
+  loadRooms();
   await loadDevices();
   try {
     await invoke("set_noise_suppression", { enabled: denoise });
