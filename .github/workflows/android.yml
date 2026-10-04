@@ -8,13 +8,14 @@ on:
   workflow_dispatch:
   push:
 
-concurrency:
-  group: android-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   apk:
     if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[android]')
+    # На уровне задачи, а не всего workflow: пуш без [android] (задача
+    # пропускается) не должен отменять идущую сборку.
+    concurrency:
+      group: android-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
