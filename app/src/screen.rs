@@ -18,7 +18,9 @@ use std::sync::{Arc, Mutex};
 use serde::Serialize;
 use tauri::http::{Request, Response, StatusCode};
 use tauri::ipc::{Channel, InvokeResponseBody};
-use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, State};
+#[cfg(desktop)]
+use tauri::{WebviewUrl, WebviewWindowBuilder};
 use vwf_client::call::KeyframeRequester;
 use vwf_client::screen::{ShareSettings, Viewer, ViewerFrame};
 use vwf_proto::{PeerId, VideoHeader};
@@ -240,6 +242,27 @@ pub async fn open_viewer(
     id: PeerId,
     name: String,
 ) -> CmdResult<()> {
+    open_viewer_window(app, state, id, name).await
+}
+
+/// На телефоне отдельных окон нет; просмотр там пока не сделан.
+#[cfg(mobile)]
+async fn open_viewer_window(
+    _app: AppHandle,
+    _state: State<'_, AppState>,
+    _id: PeerId,
+    _name: String,
+) -> CmdResult<()> {
+    Err("на телефоне смотреть демонстрацию экрана пока нельзя".into())
+}
+
+#[cfg(desktop)]
+async fn open_viewer_window(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: PeerId,
+    name: String,
+) -> CmdResult<()> {
     let label = window_label(id);
     if let Some(window) = app.get_webview_window(&label) {
         let _ = window.unminimize();
@@ -266,6 +289,7 @@ pub async fn open_viewer(
 }
 
 /// Окно просмотра закрыли — перестаём смотреть.
+#[cfg(desktop)]
 pub fn viewer_closed(app: &AppHandle, id: PeerId) {
     app.state::<Screens>().forget(id);
     let app = app.clone();
@@ -276,6 +300,7 @@ pub fn viewer_closed(app: &AppHandle, id: PeerId) {
     });
 }
 
+#[cfg(desktop)]
 /// Кодирует строку для адреса (имя участника в параметре окна просмотра).
 fn url_escape(text: &str) -> String {
     let mut out = String::new();

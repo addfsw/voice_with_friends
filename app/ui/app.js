@@ -6,6 +6,11 @@ const { listen } = window.__TAURI__.event;
 
 const $ = (id) => document.getElementById(id);
 
+// На Android программа — приложение для телефона: MainActivity.kt даёт
+// `window.PoigrulkinyAndroid` (фоновый звонок, цвет системных панелей).
+const isAndroid = document.documentElement.classList.contains("android");
+const androidBridge = window.PoigrulkinyAndroid ?? null;
+
 // Настройки храним в localStorage окна приложения.
 const store = {
   get(key, fallback) {
@@ -565,6 +570,8 @@ async function openRoom(room) {
 
 function enterRoom(server, name, joined) {
   call.server = server;
+  // Android: уведомление «вы в комнате» держит звонок, когда программа свёрнута.
+  androidBridge?.callStarted(call.hosting?.name ?? (isInvite(server) ? "Через интернет" : server));
   setReconnecting(false);
   applyJoined(joined);
   renderHostControls();
@@ -629,6 +636,7 @@ listen("call-reconnected", ({ payload }) => {
 });
 
 function leaveRoom(reason) {
+  androidBridge?.callEnded();
   setReconnecting(false);
   closeShareSheet();
   setSharing(false);
@@ -1848,6 +1856,10 @@ function applyTheme(theme) {
   store.set("theme", theme);
   if (theme === "system") delete document.documentElement.dataset.theme;
   else document.documentElement.dataset.theme = theme;
+  // На Android подложка под системными панелями — в цвет темы.
+  const dark =
+    theme === "dark" || (theme === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+  androidBridge?.setTheme(dark);
 }
 
 function applyAccent(accent) {
@@ -1859,6 +1871,7 @@ function applyAccent(accent) {
 }
 
 segmented($("theme"), store.get("theme", "dark"), applyTheme);
+if (androidBridge) applyTheme(store.get("theme", "dark"));
 for (const button of $("accent").querySelectorAll("button")) {
   button.setAttribute("aria-label", button.title);
   button.addEventListener("click", () => applyAccent(button.dataset.value));
@@ -1961,7 +1974,8 @@ async function init() {
   $("server").value = store.get("server", "");
   $("name").value = store.get("name", "");
 
-  const mode = store.get("mode", "voice");
+  let mode = store.get("mode", "voice");
+  if (isAndroid && mode === "ptt") mode = "voice"; // клавиши рации на телефоне нет
   const vad = store.get("vad", -45);
   const pttKey = store.get("pttKey", null);
   const denoise = store.get("denoise", true);

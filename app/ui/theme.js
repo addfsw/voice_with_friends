@@ -13,4 +13,6 @@
   const theme = read("theme", "dark");
   if (theme === "light" || theme === "dark") root.dataset.theme = theme;
   root.dataset.accent = read("accent", "indigo");
+  // Телефон: без трея, рации по клавише, показа экрана и своих комнат.
+  if (/Android/i.test(navigator.userAgent)) root.classList.add("android");
 })();

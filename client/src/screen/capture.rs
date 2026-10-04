@@ -263,3 +263,18 @@ mod platform {
         }
     }
 }
+
+/// Остальные системы (Android): показывать свой экран нельзя, но смотреть
+/// чужой — можно, поэтому модуль собирается, а список источников пуст.
+#[cfg(not(any(windows, target_os = "linux")))]
+mod platform {
+    use super::{FrameSource, Source};
+
+    pub fn sources() -> anyhow::Result<Vec<Source>> {
+        Ok(Vec::new())
+    }
+
+    pub fn open(_id: &str) -> anyhow::Result<Box<dyn FrameSource>> {
+        anyhow::bail!("на этом устройстве показывать экран нельзя")
+    }
+}

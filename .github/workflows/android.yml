@@ -1,0 +1,82 @@
+# Сборка APK для Android. Запуск:
+# - кнопкой «Run workflow» на вкладке Actions (когда файл есть в main);
+# - пушем коммита, в сообщении которого есть [android].
+# Готовый APK — в разделе Artifacts запуска («Poigrulkiny-android»).
+name: Android APK
+
+on:
+  workflow_dispatch:
+  push:
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[android]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android
+
+      - name: tauri-cli
+        working-directory: app
+        run: npm ci
+
+      - name: Сборка APK (arm64)
+        working-directory: app
+        run: |
+          # NDK уже установлен на раннере. NDK_HOME нужен tauri-cli,
+          # ANDROID_NDK_HOME — сборке Opus (CMake).
+          export NDK_HOME="$ANDROID_NDK_LATEST_HOME"
+          export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
+          npm run tauri -- android build --apk --target aarch64 --ci
+
+      - name: Подпись APK
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          tools="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          apk="$(find app/gen/android/app/build/outputs/apk -name '*release-unsigned.apk' | head -1)"
+          echo "APK: $apk"
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > keystore.jks
+            pass="$KEYSTORE_PASSWORD"
+          else
+            echo "::warning::Секрет ANDROID_KEYSTORE не задан: APK подписан временным ключом. Поверх такой версии новую не установить — только удалить старую. См. README, раздел про Android."
+            pass="temporary"
+            keytool -genkeypair -keystore keystore.jks -storepass "$pass" -keypass "$pass" \
+              -alias poigrulkiny -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Poigrulkiny"
+          fi
+          "$tools/zipalign" -p -f 4 "$apk" aligned.apk
+          "$tools/apksigner" sign --ks keystore.jks --ks-pass "pass:$pass" --out Poigrulkiny.apk aligned.apk
+          "$tools/apksigner" verify --print-certs Poigrulkiny.apk
+          rm -f keystore.jks
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Poigrulkiny-android
+          path: Poigrulkiny.apk
+          retention-days: 30

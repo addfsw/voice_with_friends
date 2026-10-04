@@ -2082,3 +2082,29 @@ button.key.listening {
     transition: none !important;
   }
 }
+
+/* --- Android --- */
+
+/* Чего на телефоне нет: трей, рация по клавише, показ своего экрана и
+ * просмотр чужого (пока), свои комнаты. */
+.android .desktop-only,
+.android .watch-btn {
+  display: none !important;
+}
+
+/* Подсказки по наведению на сенсорном экране залипают после касания. */
+.android [data-tip]:hover::after {
+  display: none;
+}
+
+/* Крупнее зоны нажатия для пальца. */
+.android .dock-btn,
+.android .head-btn {
+  width: 40px;
+  height: 40px;
+}
+
+.android .view {
+  padding-left: 12px;
+  padding-right: 12px;
+}

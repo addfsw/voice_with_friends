@@ -3,5 +3,11 @@
 server_cert.der
 server_key.der
 
-# Сгенерированные tauri-build схемы
-/app/gen
+# Сгенерированные tauri-build схемы. Android-проект (app/gen/android)
+# хранится в репозитории: в нём наши разрешения и фоновый сервис.
+/app/gen/schemas
+# Проверка сборки под Android без NDK (см. README).
+/target-android
+
+# tauri-cli для сборки под Android
+node_modules/
