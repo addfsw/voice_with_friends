@@ -42,3 +42,9 @@ tauri-plugin-opener = "2"
 tauri-plugin-global-shortcut = "2"
 # Второй запуск программы не открывает вторую копию, а показывает первую.
 tauri-plugin-single-instance = "2"
+
+# Android: передать Java-машину и Activity звуковой библиотеке (src/android.rs).
+# jni — той же версии, что у wry.
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+ndk-context = "0.1"

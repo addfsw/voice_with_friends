@@ -8,6 +8,8 @@
 //! На Android нет трея, глобальных клавиш, второй копии программы и
 //! отдельных окон: эти части собираются только для компьютера (`cfg(desktop)`).
 
+#[cfg(target_os = "android")]
+mod android;
 mod host;
 mod rooms;
 mod screen;
@@ -79,8 +81,23 @@ struct Devices {
     default_output: Option<String>,
 }
 
+/// На Android к звуку можно обращаться только после того, как звуковая
+/// библиотека получила Android-контекст (см. `android.rs`).
+#[cfg(target_os = "android")]
+fn audio_ready() -> CmdResult<()> {
+    android::wait_ready()
+}
+
+#[cfg(not(target_os = "android"))]
+fn audio_ready() -> CmdResult<()> {
+    Ok(())
+}
+
+// async: команда выполняется не в главном потоке — на Android ей, может быть,
+// придётся подождать готовности звука.
 #[tauri::command]
-fn list_devices() -> CmdResult<Devices> {
+async fn list_devices() -> CmdResult<Devices> {
+    audio_ready()?;
     let list = audio::device_list().map_err(err)?;
     Ok(Devices {
         inputs: list.inputs,
@@ -278,6 +295,7 @@ async fn start_call(
     if state.generation.load(Ordering::SeqCst) != generation {
         return Err(cancelled());
     }
+    audio_ready().map_err(|message| ConnectError::Message { message })?;
 
     let settings = AudioSettings {
         input: params.input.clone(),
@@ -1005,6 +1023,8 @@ pub fn run() {
         .manage(screen::Screens::default())
         .setup(|app| {
             // Файл с запомненными сертификатами — в папке данных программы.
+            #[cfg(target_os = "android")]
+            android::init(app);
             let data_dir = app.path().app_data_dir()?;
             let state = app.state::<AppState>();
             *state.known.lock().unwrap() = KnownServers::load(data_dir.join("known_servers.txt"));

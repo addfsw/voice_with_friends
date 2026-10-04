@@ -34,7 +34,12 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android
+          # x86_64 — для эмулятора, на котором APK проверяется после сборки.
+          targets: aarch64-linux-android,x86_64-linux-android
+
+      # Ассемблер для быстрой сборки H.264 под x86_64 (см. client/build.rs).
+      - name: NASM
+        run: sudo apt-get install -y nasm
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -44,14 +49,21 @@ jobs:
         working-directory: app
         run: npm ci
 
-      - name: Сборка APK (arm64)
+      - name: Сборка APK (arm64 и x86_64)
         working-directory: app
         run: |
           # NDK уже установлен на раннере. NDK_HOME нужен tauri-cli,
           # ANDROID_NDK_HOME — сборке Opus (CMake).
           export NDK_HOME="$ANDROID_NDK_LATEST_HOME"
           export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
-          npm run tauri -- android build --apk --target aarch64 --ci
+          # Кодек H.264 (C++) связан с libc++_shared.so, а tauri кладёт в APK
+          # только нашу библиотеку. Без неё программа падает при запуске.
+          sysroot="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib"
+          libs=gen/android/app/src/main/jniLibs
+          mkdir -p "$libs/arm64-v8a" "$libs/x86_64"
+          cp "$sysroot/aarch64-linux-android/libc++_shared.so" "$libs/arm64-v8a/"
+          cp "$sysroot/x86_64-linux-android/libc++_shared.so" "$libs/x86_64/"
+          npm run tauri -- android build --apk --target aarch64 --target x86_64 --ci
 
       - name: Подпись APK
         env:
@@ -75,9 +87,27 @@ jobs:
           "$tools/apksigner" sign --ks keystore.jks --ks-pass "pass:$pass" --out Poigrulkiny.apk aligned.apk
           "$tools/apksigner" verify --print-certs Poigrulkiny.apk
           rm -f keystore.jks
+          echo "Состав APK:"
+          unzip -l Poigrulkiny.apk | grep -E "\.so$"
 
       - uses: actions/upload-artifact@v4
         with:
           name: Poigrulkiny-android
           path: Poigrulkiny.apk
           retention-days: 30
+
+      # Проверка: APK ставится на эмулятор и не закрывается при запуске.
+      - name: KVM для эмулятора
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Запуск на эмуляторе
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          script: ./scripts/android-smoke.sh

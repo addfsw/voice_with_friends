@@ -5886,6 +5886,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
+ "jni 0.21.1",
+ "ndk-context",
  "quinn",
  "serde",
  "serde_json",
