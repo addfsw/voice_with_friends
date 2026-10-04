@@ -51,7 +51,7 @@
             и подмена сервера кем-то посередине.
           </p>
           <p class="hint">
-            Спросите у хоста код сервера (он виден в его карточке «Вы — сервер»
+            Спросите у хоста код сервера (он виден у хоста в окне «Пригласить друзей»
             или в окне сервера):
           </p>
           <div class="cert-codes">
@@ -86,68 +86,24 @@
     <main id="room-view" class="view" hidden>
       <header class="room-header">
         <div class="room-titles">
-          <div class="room-title">
-            <span id="room-title">Комната</span>
-            <span id="room-locked" class="room-locked" data-icon="lock" title="Вход закрыт: новые участники не смогут войти" hidden></span>
-          </div>
+          <div id="room-title" class="room-title">Комната</div>
           <div class="room-sub">
             <span id="server-label"></span>
+            <span id="room-locked" class="room-locked" hidden>вход закрыт</span>
             <span id="server-code" class="mono"
                   title="Код сертификата сервера: его можно сверить с хостом"></span>
           </div>
         </div>
-        <button type="button" class="icon-btn ghost open-settings" data-icon="gear" aria-label="Настройки" title="Настройки"></button>
-        <button type="button" id="leave-btn" class="leave" data-icon="logout"><span>Выйти</span></button>
+        <button type="button" id="lock-btn" class="icon-btn ghost head-btn" aria-pressed="false" aria-label="Никого больше не пускать" data-tip="Никого больше не пускать" hidden></button>
+        <button type="button" id="invite-btn" class="icon-btn head-btn invite-btn" data-icon="person-add" aria-label="Пригласить друзей" data-tip="Пригласить друзей" hidden></button>
+        <button type="button" class="icon-btn ghost head-btn open-settings" data-icon="gear" aria-label="Настройки" data-tip="Настройки"></button>
+        <button type="button" id="leave-btn" class="icon-btn head-btn leave tip-right" data-icon="logout" aria-label="Выйти" data-tip="Выйти"></button>
       </header>
 
       <div id="reconnect-banner" class="banner" hidden>
         <span class="spinner" aria-hidden="true"></span>
         <span id="reconnect-text">Связь пропала. Возвращаюсь в комнату…</span>
       </div>
-
-      <details id="host-card" class="card host-card" hidden>
-        <summary>
-          <span class="host-summary" data-icon="broadcast">Вы — сервер</span>
-          <span class="hint">адреса и приглашение</span>
-          <span class="chevron" data-icon="chevron"></span>
-        </summary>
-        <div class="host-body">
-          <label class="switch-row" title="Войти смогут только те, кто уже был в комнате (кроме выгнанных)">
-            <span>Никого больше не пускать</span>
-            <input type="checkbox" id="room-lock" class="switch" />
-          </label>
-
-          <label class="switch-row" title="Друзья смогут подключиться по коду приглашения без Tailscale и белого IP">
-            <span>Доступ через интернет</span>
-            <input type="checkbox" id="internet" class="switch" />
-          </label>
-          <div id="internet-info" class="internet-info" hidden>
-            <p id="internet-state" class="hint"></p>
-            <div class="invite">
-              <code id="invite-code"></code>
-              <button type="button" id="invite-copy" class="icon-btn" data-icon="copy" title="Скопировать код" aria-label="Скопировать код"></button>
-            </div>
-            <p class="hint">Друг вставляет код в поле «Сервер». Код постоянный — отправьте его один раз.</p>
-          </div>
-
-          <div class="section-head"><span>Локальная сеть и Tailscale</span></div>
-          <ul id="host-addresses" class="host-addresses"></ul>
-          <label class="switch-row" title="Друзья из вашей сети увидят комнату в списке «В локальной сети»">
-            <span>Видна в локальной сети</span>
-            <input type="checkbox" id="room-lan" class="switch" />
-          </label>
-
-          <label class="switch-row" title="Сервер возвращает каждому его собственный голос">
-            <span>Эхо: каждый слышит себя</span>
-            <input type="checkbox" id="echo" class="switch" />
-          </label>
-
-          <p class="hint">
-            Код сервера <code id="host-code"></code> — для сверки, если программа
-            друга предупредит о смене сертификата. Закроете комнату — все отключатся.
-          </p>
-        </div>
-      </details>
 
       <div id="room-tabs" class="segmented tabs" role="tablist">
         <button type="button" data-value="people">Участники <span id="people-count" class="count"></span></button>
@@ -320,6 +276,79 @@
         </div>
 
         <button type="button" id="share-start" class="primary" disabled>Начать показ</button>
+      </section>
+    </div>
+
+    <!-- Свой сервер: как пригласить друзей -->
+    <div id="invite-sheet" class="sheet-backdrop pop" hidden>
+      <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="invite-title">
+        <header class="sheet-head">
+          <h2 id="invite-title">Пригласить друзей</h2>
+          <button type="button" id="invite-close" class="icon-btn ghost" data-icon="close" aria-label="Закрыть"></button>
+        </header>
+
+        <div class="group">
+          <label class="switch-row" title="Друзья смогут подключиться по коду приглашения без Tailscale и белого IP">
+            <span>Через интернет, по коду приглашения</span>
+            <input type="checkbox" id="internet" class="switch" />
+          </label>
+          <div id="internet-info" class="internet-info" hidden>
+            <div class="invite">
+              <code id="invite-code"></code>
+              <button type="button" id="invite-copy" class="icon-btn ghost" data-icon="copy" title="Скопировать код" aria-label="Скопировать код"></button>
+            </div>
+            <p id="internet-state" class="hint"></p>
+            <p class="hint">Друг вставляет код в поле «Сервер». Код постоянный — отправьте его один раз.</p>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="group-title">В своей сети и через Tailscale</div>
+          <div class="invite address-pick">
+            <div class="menu-wrap">
+              <button type="button" id="address-btn" class="address-btn" aria-haspopup="true">
+                <span id="address-iface" class="host-iface"></span>
+                <span id="address-value" class="host-address"></span>
+                <span class="pill-chevron" data-icon="chevron"></span>
+              </button>
+              <div id="address-menu" class="menu address-menu" hidden></div>
+            </div>
+            <button type="button" id="address-copy" class="icon-btn ghost" data-icon="copy" title="Скопировать адрес" aria-label="Скопировать адрес"></button>
+          </div>
+          <label class="switch-row" title="Друзья из вашей сети увидят комнату в списке «В локальной сети»">
+            <span>Видна в локальной сети</span>
+            <input type="checkbox" id="room-lan" class="switch" />
+          </label>
+        </div>
+
+        <div class="group">
+          <label class="switch-row" title="Сервер возвращает каждому его собственный голос: удобно проверить звук, пока никого нет">
+            <span>Эхо: каждый слышит себя</span>
+            <input type="checkbox" id="echo" class="switch" />
+          </label>
+          <p class="hint">
+            Код сервера <code id="host-code"></code> — для сверки, если программа
+            друга предупредит о смене сертификата.
+          </p>
+        </div>
+      </section>
+    </div>
+
+    <!-- Подтверждение: закрыть свою комнату -->
+    <div id="leave-sheet" class="sheet-backdrop pop" hidden>
+      <section class="sheet" role="alertdialog" aria-modal="true" aria-labelledby="leave-title" aria-describedby="leave-text">
+        <header class="sheet-head">
+          <h2 id="leave-title">Закрыть комнату?</h2>
+          <button type="button" id="leave-close" class="icon-btn ghost" data-icon="close" aria-label="Отмена"></button>
+        </header>
+        <p id="leave-text" class="hint">
+          Все участники отключатся. Код приглашения и адреса не изменятся:
+          откроете комнату снова — друзья зайдут как обычно.
+        </p>
+        <div class="cert-actions">
+          <button type="button" id="leave-cancel">Отмена</button>
+          <button type="button" id="leave-confirm" class="danger">Закрыть комнату</button>
+        </div>
       </section>
     </div>
 

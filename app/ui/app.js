@@ -67,6 +67,10 @@ const ICON_PATHS = {
     "M21 3H3a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h5v2h8v-2h5a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2Zm0 14H3V5h18v12Z",
   lock: "M18 8h-1V6A5 5 0 0 0 7 6v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2Zm-6 9a2 2 0 1 1 0-4 2 2 0 0 1 0 4Zm3.1-9H8.9V6a3.1 3.1 0 0 1 6.2 0v2Z",
   plus: "M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2Z",
+  "lock-open":
+    "M12 17a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm6-9h-1V6A5 5 0 0 0 7 6h1.9a3.1 3.1 0 0 1 6.2 0v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2Zm0 12H6V10h12v10Z",
+  "person-add":
+    "M15 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-9-2V7H4v3H1v2h3v3h2v-3h3v-2H6Zm9 4c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4Z",
   window: "M19 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2Zm0 14H5V8h14v10Z",
 };
 
@@ -330,7 +334,7 @@ async function loadRooms() {
 
 function roomMeta(room) {
   const parts = [room.lan ? "видна в сети" : "скрыта из сети"];
-  if (room.internet) parts.push("через интернет");
+  if (room.internet) parts[0] = room.lan ? "сеть + интернет" : "только интернет";
   return parts.join(" · ");
 }
 
@@ -529,8 +533,7 @@ function enterRoom(server, name, joined) {
   call.server = server;
   setReconnecting(false);
   applyJoined(joined);
-  renderHostCard();
-  disarmLeave();
+  renderHostControls();
   const tab = store.get("roomTab", "people");
   selectTab(tab);
   showTab(tab);
@@ -552,6 +555,8 @@ function applyJoined(joined) {
       ? "через интернет"
       : server;
   $("server-code").textContent = joined.serverCode;
+  // Хосту код сервера виден в окне «Пригласить друзей», а в шапке — место для «вход закрыт».
+  $("server-code").hidden = Boolean(call.hosting);
   showDevice("input", joined.inputDevice);
   showDevice("output", joined.outputDevice);
   // После (пере)подключения демонстрация не идёт: звонок новый.
@@ -600,6 +605,8 @@ function leaveRoom(reason) {
   call.hostRoom = null;
   call.me = null;
   closeMenus();
+  closeInvite();
+  $("leave-sheet").hidden = true;
   stopInternetPolling();
   clearInterval(call.statusTimer);
   call.statusTimer = null;
@@ -610,25 +617,7 @@ function leaveRoom(reason) {
   if (reason) toast(reason);
 }
 
-// Хосту закрытие комнаты отключает всех, поэтому просим нажать дважды.
-let leaveArmTimer = null;
-
-function disarmLeave() {
-  clearTimeout(leaveArmTimer);
-  const button = $("leave-btn");
-  button.classList.remove("armed");
-  button.querySelector("span").textContent = call.hosting ? "Закрыть" : "Выйти";
-  button.title = call.hosting ? "Закрыть комнату: все отключатся" : "Отключиться";
-}
-
-$("leave-btn").addEventListener("click", async () => {
-  const button = $("leave-btn");
-  if (call.hosting && !button.classList.contains("armed")) {
-    button.classList.add("armed");
-    button.querySelector("span").textContent = "Все отключатся. Точно?";
-    leaveArmTimer = setTimeout(disarmLeave, 4000);
-    return;
-  }
+async function leave() {
   const wasHosting = Boolean(call.hosting);
   try {
     await invoke("disconnect");
@@ -636,17 +625,42 @@ $("leave-btn").addEventListener("click", async () => {
   } finally {
     leaveRoom();
   }
+}
+
+// Хосту закрытие комнаты отключает всех, поэтому сначала спрашиваем.
+$("leave-btn").addEventListener("click", () => {
+  if (!call.hosting) return leave();
+  closeInvite();
+  $("leave-sheet").hidden = false;
+  $("leave-confirm").focus();
 });
 
-function renderHostCard() {
-  const card = $("host-card");
-  card.hidden = !call.hosting;
-  if (!call.hosting) return;
-  card.open = store.get("hostCardOpen", false);
+function closeLeaveSheet() {
+  $("leave-sheet").hidden = true;
+}
+
+$("leave-confirm").addEventListener("click", () => {
+  closeLeaveSheet();
+  leave();
+});
+$("leave-cancel").addEventListener("click", closeLeaveSheet);
+$("leave-close").addEventListener("click", closeLeaveSheet);
+$("leave-sheet").addEventListener("click", (event) => {
+  if (event.target === $("leave-sheet")) closeLeaveSheet();
+});
+
+// Кнопки шапки и окно «Пригласить друзей» для своей комнаты.
+function renderHostControls() {
+  const hosting = Boolean(call.hosting);
+  const leaveText = hosting ? "Закрыть комнату" : "Выйти";
+  $("leave-btn").dataset.tip = leaveText;
+  $("leave-btn").setAttribute("aria-label", leaveText);
+  $("lock-btn").hidden = !hosting;
+  $("invite-btn").hidden = !hosting;
+  if (!hosting) return;
+  showLocked(false); // новая комната всегда с открытым входом
   $("host-code").textContent = call.hosting.code;
-  $("echo").checked = false; // новая комната всегда без эха
-  $("room-lock").checked = false; // и с открытым входом
-  $("room-locked").hidden = true;
+  $("echo").checked = false; // и без эха
   $("room-lan").checked = call.hostRoom.lan;
   // Раньше «доступ через интернет» запоминался для всех комнат сразу.
   const legacy = call.hostRoom.id === "default" && store.get("internet", false);
@@ -659,34 +673,102 @@ function renderHostCard() {
   $("internet").checked = internet;
   if (internet) setInternet(true);
   else renderInternet(null);
-  const list = $("host-addresses");
-  list.innerHTML = "";
-  for (const { interface: iface, address } of call.hosting.addresses) {
-    const li = document.createElement("li");
-    const name = document.createElement("span");
-    name.className = "host-iface";
-    name.textContent = iface;
-    name.title = iface;
-    const addr = document.createElement("span");
-    addr.className = "host-address";
-    addr.textContent = address;
-    const copy = document.createElement("button");
-    copy.type = "button";
-    copy.className = "icon-btn ghost";
-    copy.title = "Скопировать адрес";
-    copy.setAttribute("aria-label", "Скопировать адрес");
-    copy.append(icon("copy"));
-    copy.addEventListener("click", () => copyText(address));
-    li.append(name, addr, copy);
-    list.append(li);
+  renderAddress();
+}
+
+function showLocked(locked) {
+  const button = $("lock-btn");
+  button.setAttribute("aria-pressed", String(locked));
+  button.dataset.tip = locked ? "Вход закрыт. Нажмите, чтобы открыть" : "Никого больше не пускать";
+  button.replaceChildren(icon(locked ? "lock" : "lock-open"));
+  $("room-locked").hidden = !locked;
+}
+
+$("lock-btn").addEventListener("click", async () => {
+  const locked = $("lock-btn").getAttribute("aria-pressed") !== "true";
+  try {
+    await invoke("set_lock", { locked });
+  } catch (e) {
+    return toast(errorText(e));
   }
-  if (call.hosting.addresses.length === 0) {
-    const li = document.createElement("li");
-    li.className = "hint";
-    li.textContent = "Компьютер не подключён к сети.";
-    list.append(li);
+  showLocked(locked);
+  toast(locked ? "Вход закрыт: новые участники не войдут" : "Вход снова открыт");
+});
+
+// Адрес для друзей: у компьютера их бывает много (Ethernet, Wi-Fi, Tailscale,
+// виртуальные сети), показываем один — выбранный в прошлый раз или Tailscale.
+function chosenAddress() {
+  const addresses = call.hosting?.addresses ?? [];
+  const saved = store.get("inviteInterface", null);
+  return (
+    addresses.find((a) => a.interface === saved) ??
+    addresses.find((a) => /tailscale/i.test(a.interface)) ??
+    addresses[0] ??
+    null
+  );
+}
+
+function renderAddress() {
+  const chosen = chosenAddress();
+  $("address-iface").textContent = chosen ? chosen.interface : "";
+  $("address-value").textContent = chosen ? chosen.address : "Компьютер не подключён к сети";
+  $("address-copy").disabled = !chosen;
+  const button = $("address-btn");
+  button.disabled = (call.hosting?.addresses.length ?? 0) < 2;
+  button.setAttribute("aria-label", button.disabled ? "Адрес" : "Выбрать другой адрес");
+  button.setAttribute("aria-expanded", "false");
+
+  const menu = $("address-menu");
+  menu.hidden = true;
+  menu.innerHTML = "";
+  for (const address of call.hosting?.addresses ?? []) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.classList.toggle("current", address === chosen);
+    const check = icon("check");
+    check.classList.add("check");
+    const iface = document.createElement("span");
+    iface.className = "host-iface";
+    iface.textContent = address.interface;
+    const value = document.createElement("span");
+    value.className = "host-address label";
+    value.textContent = address.address;
+    item.append(check, iface, value);
+    item.addEventListener("click", () => {
+      store.set("inviteInterface", address.interface);
+      renderAddress();
+    });
+    menu.append(item);
   }
 }
+
+$("address-btn").addEventListener("click", (event) => {
+  event.stopPropagation();
+  const open = $("address-menu").hidden;
+  closeMenus();
+  $("address-menu").hidden = !open;
+  $("address-btn").setAttribute("aria-expanded", String(open));
+});
+
+$("address-copy").addEventListener("click", () => {
+  const chosen = chosenAddress();
+  if (chosen) copyText(chosen.address);
+});
+
+function openInvite() {
+  renderAddress();
+  $("invite-sheet").hidden = false;
+}
+
+function closeInvite() {
+  $("invite-sheet").hidden = true;
+}
+
+$("invite-btn").addEventListener("click", openInvite);
+$("invite-close").addEventListener("click", closeInvite);
+$("invite-sheet").addEventListener("click", (event) => {
+  if (event.target === $("invite-sheet")) closeInvite();
+});
 
 async function copyText(text) {
   try {
@@ -772,7 +854,7 @@ function renderPeers() {
     const empty = document.createElement("li");
     empty.className = "empty";
     empty.textContent = call.hosting
-      ? "Пока никого. Отправьте друзьям код приглашения из карточки выше."
+      ? "Пока никого. Позовите друзей кнопкой «Пригласить» вверху."
       : "Пока никого нет. Позовите друзей!";
     list.append(empty);
   }
@@ -913,6 +995,7 @@ function hostMenu(peer) {
 
 function closeMenus() {
   for (const menu of document.querySelectorAll(".menu")) menu.hidden = true;
+  $("address-btn").setAttribute("aria-expanded", "false");
 }
 
 document.addEventListener("click", closeMenus);
@@ -1351,7 +1434,6 @@ async function refreshStatus() {
 // Управление передачей
 // ---------------------------------------------------------------------------
 
-$("host-card").addEventListener("toggle", () => store.set("hostCardOpen", $("host-card").open));
 
 // ---------------------------------------------------------------------------
 // Доступ через интернет (пробивка NAT)
@@ -1420,13 +1502,6 @@ $("room-lan").addEventListener("change", async () => {
     $("room-lan").checked = !visible;
     toast(errorText(e));
   }
-});
-
-$("room-lock").addEventListener("change", async () => {
-  const locked = $("room-lock").checked;
-  await invoke("set_lock", { locked });
-  $("room-locked").hidden = !locked;
-  toast(locked ? "Вход закрыт: новые участники не войдут" : "Вход снова открыт");
 });
 
 $("invite-copy").addEventListener("click", () => copyText($("invite-code").textContent));
@@ -1633,6 +1708,8 @@ window.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !capturingKey) {
     closeSettings();
     closeShareSheet();
+    if ($("address-menu").hidden) closeInvite();
+    closeLeaveSheet();
     closeMenus();
   }
 });
