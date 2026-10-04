@@ -17,6 +17,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use tauri::webview::PageLoadEvent;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use vwf_client::call::{AudioSettings, Call, CallEvent};
@@ -896,6 +897,17 @@ fn main() {
         // Первым: второй запуск программы просто показывает уже открытое окно.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| tray::show_window(app)))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        // В релизной сборке окна не перезагружаются ни меню по правому клику,
+        // ни клавишами (F5, Ctrl+R). В отладочной это нужно для разработки.
+        .plugin(
+            tauri::plugin::Builder::<tauri::Wry>::new("release-guard")
+                .js_init_script(if cfg!(debug_assertions) {
+                    String::new()
+                } else {
+                    include_str!("release_guard.js").to_string()
+                })
+                .build(),
+        )
         .manage(AppState {
             tx: Arc::new(TxState::default()),
             call: tokio::sync::Mutex::new(None),
@@ -972,6 +984,24 @@ fn main() {
         ])
         .register_uri_scheme_protocol("screen", |ctx, request| {
             screen::protocol(ctx.app_handle(), request)
+        })
+        .on_page_load(|webview, payload| {
+            // Главное окно загрузилось заново (перезагрузка страницы): интерфейс
+            // начал с чистого листа и о звонке не знает — кладём трубку и
+            // закрываем свою комнату, а не оставляем их работать без окна.
+            if webview.label() == "main" && payload.event() == PageLoadEvent::Started {
+                let app = webview.app_handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let state = app.state::<AppState>();
+                    let busy =
+                        state.call.lock().await.is_some() || state.host.lock().await.is_some();
+                    if busy {
+                        screen::close_all_viewers(&app);
+                        *state.params.lock().unwrap() = None;
+                        shutdown(&app).await;
+                    }
+                });
+            }
         })
         .on_window_event(|window, event| {
             // Окна просмотра чужого экрана закрываются как обычно.
