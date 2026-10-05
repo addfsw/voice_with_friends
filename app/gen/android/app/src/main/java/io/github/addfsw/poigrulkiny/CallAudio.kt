@@ -69,8 +69,12 @@ class CallAudio(context: Context) {
   @RequiresApi(31)
   private fun applyModern() {
     val available = audio.availableCommunicationDevices
-    fun find(vararg types: Int) = types.firstNotNullOfOrNull { type ->
-      available.firstOrNull { it.type == type }
+    // Первое доступное устройство из `types` (в порядке предпочтения).
+    fun find(vararg types: Int): AudioDeviceInfo? {
+      for (type in types) {
+        available.firstOrNull { it.type == type }?.let { return it }
+      }
+      return null
     }
     val speaker = find(AudioDeviceInfo.TYPE_BUILTIN_SPEAKER)
     val target = when (route) {
