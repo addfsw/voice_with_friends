@@ -45,7 +45,8 @@ class CallService : Service() {
     )
     val room = intent?.getStringExtra(EXTRA_ROOM)?.takeIf { it.isNotBlank() } ?: "Поигрулькины"
     val notification = NotificationCompat.Builder(this, CHANNEL)
-      .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+      .setSmallIcon(R.drawable.ic_notification)
+      .setColor(0xFF7C6CFF.toInt())
       .setContentTitle(room)
       .setContentText("Вы в голосовой комнате")
       .setContentIntent(open)
