@@ -22,68 +22,75 @@
         <button type="button" class="icon-btn head-btn open-settings tip-right" data-icon="gear" aria-label="Настройки" data-tip="Настройки"></button>
       </header>
 
-      <form id="connect-form" class="stack connect-form" autocomplete="off">
-        <label class="field">
-          <span>Ваше имя</span>
-          <input id="name" maxlength="32" required placeholder="Как вас называть" />
+      <div class="stack connect-form">
+        <label class="who">
+          <span id="who-avatar" class="avatar who-avatar" aria-hidden="true"></span>
+          <span class="who-text">
+            <span>Ваше имя</span>
+            <input id="name" maxlength="32" required placeholder="Как вас называть" autocomplete="off" />
+          </span>
         </label>
 
-        <label class="field">
-          <span>Сервер или код приглашения</span>
-          <input id="server" placeholder="192.168.1.10 или poi-…" required spellcheck="false" />
-        </label>
-
-        <label id="password-field" class="field" hidden>
-          <span>Пароль комнаты</span>
-          <input id="room-pass" type="password" maxlength="64" placeholder="Спросите у хоста" autocomplete="off" />
-        </label>
-
-        <div id="cert-warning" class="cert-warning" hidden>
-          <div class="cert-title">Сертификат сервера изменился</div>
-          <p class="hint">
-            Сервер <b id="cert-address"></b> раньше предъявлял другой сертификат.
-            Так бывает, если хост переустановил программу. Но так же выглядит
-            и подмена сервера кем-то посередине.
-          </p>
-          <p class="hint">
-            Спросите у хоста код сервера (он виден у хоста в окне «Пригласить друзей»
-            или в окне сервера):
-          </p>
-          <div class="cert-codes">
-            <span class="hint">было</span> <code id="cert-known"></code>
-            <span class="hint">стало</span> <code id="cert-presented"></code>
-          </div>
-          <div class="cert-actions">
-            <button type="button" id="cert-cancel">Отмена</button>
-            <button type="button" id="cert-trust" class="danger" title="Код совпал с тем, что видит хост: запомнить новый сертификат">Доверять</button>
-          </div>
-        </div>
-
-        <button type="submit" id="connect-btn" class="primary big">Подключиться</button>
-        <p id="connect-error" class="error" hidden></p>
-
-        <div class="lan">
+        <section class="lan">
           <div class="section-head">
-            <span>В локальной сети</span>
+            <span>Войти в комнату</span>
             <button type="button" id="lan-refresh" class="link">обновить</button>
           </div>
-          <ul id="lan-list" class="lan-list"></ul>
-          <p id="lan-status" class="hint">Ищу серверы…</p>
-        </div>
 
-        <div class="lan desktop-only">
+          <div id="cert-warning" class="cert-warning" hidden>
+            <div class="cert-title">Сертификат сервера изменился</div>
+            <p class="hint">
+              Сервер <b id="cert-address"></b> раньше предъявлял другой сертификат.
+              Так бывает, если хост переустановил программу. Но так же выглядит
+              и подмена сервера кем-то посередине.
+            </p>
+            <p class="hint">
+              Спросите у хоста код сервера (он виден у хоста в окне «Пригласить друзей»
+              или в окне сервера):
+            </p>
+            <div class="cert-codes">
+              <span class="hint">было</span> <code id="cert-known"></code>
+              <span class="hint">стало</span> <code id="cert-presented"></code>
+            </div>
+            <div class="cert-actions">
+              <button type="button" id="cert-cancel">Отмена</button>
+              <button type="button" id="cert-trust" class="danger" title="Код совпал с тем, что видит хост: запомнить новый сертификат">Доверять</button>
+            </div>
+          </div>
+
+          <ul id="join-list" class="lan-list join-list"></ul>
+          <p id="lan-status" class="hint">Ищу комнаты в сети…</p>
+
+          <button type="button" id="manual-open" class="join-manual">
+            <span class="join-ico" data-icon="link"></span>
+            <span>Войти по адресу или коду</span>
+          </button>
+          <form id="manual-form" class="manual" autocomplete="off" hidden>
+            <div class="manual-head">
+              <span>Вход по адресу или коду</span>
+              <button type="button" id="manual-close" class="icon-btn" data-icon="close" aria-label="Закрыть"></button>
+            </div>
+            <p class="hint">Вставьте код приглашения от друга или адрес вида 192.168.1.10</p>
+            <input id="server" placeholder="poi-… или 192.168.1.10" required spellcheck="false" aria-label="Код приглашения или адрес" />
+            <input id="manual-pass" type="password" maxlength="64" placeholder="Пароль (если нужен)" aria-label="Пароль комнаты" />
+            <p id="manual-error" class="error" hidden></p>
+            <button type="submit" id="connect-btn" class="primary big">Войти</button>
+          </form>
+        </section>
+
+        <section class="lan desktop-only">
           <div class="section-head">
             <span>Мои комнаты</span>
             <button type="button" id="new-room-btn" class="link add-room" data-icon="plus">Новая</button>
           </div>
           <ul id="my-rooms" class="lan-list my-rooms"></ul>
-        </div>
+        </section>
 
         <p class="hint center footnote desktop-only">
           Своя комната запускается прямо в программе. У каждой комнаты свой код
           приглашения — друзья из разных компаний не попадут друг к другу.
         </p>
-      </form>
+      </div>
     </main>
 
     <!-- Комната -->
