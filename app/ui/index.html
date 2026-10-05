@@ -33,6 +33,11 @@
           <input id="server" placeholder="192.168.1.10 или poi-…" required spellcheck="false" />
         </label>
 
+        <label id="password-field" class="field" hidden>
+          <span>Пароль комнаты</span>
+          <input id="room-pass" type="password" maxlength="64" placeholder="Спросите у хоста" autocomplete="off" />
+        </label>
+
         <div id="cert-warning" class="cert-warning" hidden>
           <div class="cert-title">Сертификат сервера изменился</div>
           <p class="hint">
@@ -72,11 +77,6 @@
             <button type="button" id="new-room-btn" class="link add-room" data-icon="plus">Новая</button>
           </div>
           <ul id="my-rooms" class="lan-list my-rooms"></ul>
-          <div id="new-room" class="room-edit" hidden>
-            <input id="new-room-name" maxlength="40" placeholder="Например, «Игры с Саней»" />
-            <button type="button" id="new-room-create" class="primary">Создать</button>
-            <button type="button" id="new-room-cancel" class="icon-btn ghost" data-icon="close" title="Отмена" aria-label="Отмена"></button>
-          </div>
         </div>
 
         <p class="hint center footnote desktop-only">
@@ -325,6 +325,15 @@
           </div>
         </div>
 
+        <div id="invite-password" class="group" hidden>
+          <div class="group-title">Пароль комнаты</div>
+          <div class="invite">
+            <code id="invite-password-value"></code>
+            <button type="button" id="invite-password-copy" class="icon-btn ghost" data-icon="copy" title="Скопировать пароль" aria-label="Скопировать пароль"></button>
+          </div>
+          <p class="hint">Скажите его друзьям: без него в комнату не войти.</p>
+        </div>
+
         <div class="group">
           <div class="group-title">В своей сети и через Tailscale</div>
           <div class="invite address-pick">
@@ -353,7 +362,63 @@
             Код сервера <code id="host-code"></code> — для сверки, если программа
             друга предупредит о смене сертификата.
           </p>
+          <button type="button" id="invite-settings" class="link">Настройки комнаты: пароль, лимит участников…</button>
         </div>
+      </section>
+    </div>
+
+    <!-- Новая комната / настройки своей комнаты -->
+    <div id="room-sheet" class="sheet-backdrop pop" hidden>
+      <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="rs-title">
+        <header class="sheet-head">
+          <h2 id="rs-title">Новая комната</h2>
+          <button type="button" id="rs-close" class="icon-btn ghost" data-icon="close" aria-label="Закрыть"></button>
+        </header>
+        <form id="room-form" class="stack" autocomplete="off">
+          <label class="field">
+            <span>Название</span>
+            <input id="rs-name" maxlength="40" required placeholder="Например, «Игры с Саней»" />
+          </label>
+          <label class="field">
+            <span>Пароль</span>
+            <span class="password-row">
+              <input id="rs-password" type="password" maxlength="64" placeholder="Без пароля" autocomplete="new-password" />
+              <button type="button" id="rs-show" class="icon-btn ghost" data-icon="eye" aria-label="Показать пароль" title="Показать пароль"></button>
+            </span>
+          </label>
+          <p class="hint">Друзья введут его один раз, программа запомнит. Пусто — войдёт любой, кто знает адрес или код приглашения.</p>
+          <label class="field">
+            <span>Участников не больше</span>
+            <select id="rs-max">
+              <option value="0">Без ограничений</option>
+              <option value="2">2</option>
+              <option value="3">3</option>
+              <option value="4">4</option>
+              <option value="5">5</option>
+              <option value="6">6</option>
+              <option value="8">8</option>
+              <option value="10">10</option>
+              <option value="16">16</option>
+            </select>
+          </label>
+          <label class="switch-row" title="Друзья из вашей сети увидят комнату в списке «В локальной сети»">
+            <span>Видна в локальной сети</span>
+            <input type="checkbox" id="rs-lan" class="switch" />
+          </label>
+          <label class="switch-row" title="Друзья смогут подключиться по коду приглашения без Tailscale и белого IP">
+            <span>Доступ через интернет</span>
+            <input type="checkbox" id="rs-internet" class="switch" />
+          </label>
+          <p id="rs-note" class="hint" hidden>
+            Комната открыта: пароль и остальное действуют сразу, новое название —
+            со следующего открытия.
+          </p>
+          <p class="hint">У каждой комнаты свой код приглашения и свои настройки — программа их запоминает.</p>
+          <div class="cert-actions">
+            <button type="button" id="rs-cancel">Отмена</button>
+            <button type="submit" id="rs-save" class="primary">Создать</button>
+          </div>
+        </form>
       </section>
     </div>
 

@@ -115,6 +115,9 @@ struct ConnectArgs {
     /// Пустая строка или `null` — устройство по умолчанию.
     input: Option<String>,
     output: Option<String>,
+    /// Пароль комнаты, если хост его задал.
+    #[serde(default)]
+    password: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -252,6 +255,7 @@ struct CallParams {
     name: String,
     input: Option<String>,
     output: Option<String>,
+    password: Option<String>,
 }
 
 #[tauri::command]
@@ -266,6 +270,7 @@ async fn connect(
         name: args.name.trim().to_string(),
         input: non_empty(args.input),
         output: non_empty(args.output),
+        password: args.password.filter(|p| !p.is_empty()),
     };
     // Новый звонок — новое поколение: события и переподключение старого
     // звонка, если он ещё где-то в пути, больше ни на что не влияют.
@@ -310,11 +315,13 @@ async fn start_call(
         Some((token, fingerprint)) => (Some(token.as_str()), Trust::Exact(fingerprint)),
         None => (None, Trust::Known(&state.known)),
     };
+    let credentials =
+        vwf_client::net::Credentials { admin_token, password: params.password.as_deref() };
     let events = app.clone();
     let call = Call::start(
         &params.server,
         &params.name,
-        admin_token,
+        credentials,
         trust,
         &settings,
         state.tx.clone(),
@@ -490,18 +497,28 @@ fn list_rooms(state: State<'_, AppState>) -> CmdResult<Vec<rooms::RoomConfig>> {
 }
 
 #[tauri::command]
-fn create_room(state: State<'_, AppState>, name: String) -> CmdResult<rooms::RoomConfig> {
-    with_rooms(&state, |rooms| rooms.create(&name))
+fn create_room(
+    state: State<'_, AppState>,
+    settings: rooms::RoomSettings,
+) -> CmdResult<rooms::RoomConfig> {
+    with_rooms(&state, |rooms| rooms.create(settings))
 }
 
-/// Новое название видно друзьям со следующего открытия комнаты.
+/// Новые настройки комнаты из окна настроек. Если комната открыта, пароль,
+/// лимит, видимость и интернет меняются сразу; название — со следующего открытия.
 #[tauri::command]
-fn rename_room(
+async fn update_room(
     state: State<'_, AppState>,
     id: String,
-    name: String,
+    settings: rooms::RoomSettings,
 ) -> CmdResult<rooms::RoomConfig> {
-    with_rooms(&state, |rooms| rooms.update(&id, |room| room.name = name))
+    let room = with_rooms(&state, |rooms| rooms.configure(&id, settings))?;
+    if let Some(server) = state.host.lock().await.as_ref().filter(|s| s.info.room_id == id) {
+        server.set_access(&room.password, room.max_peers);
+        server.set_lan(room.lan);
+        server.set_internet(room.internet).map_err(|e| format!("{e:#}"))?;
+    }
+    Ok(room)
 }
 
 /// Удаляет комнату; её код приглашения перестаёт работать навсегда.
@@ -805,6 +822,8 @@ struct LanServer {
     /// Для показа: без порта, если он стандартный.
     host: String,
     users: u32,
+    /// Вход по паролю.
+    password: bool,
     compatible: bool,
 }
 
@@ -823,6 +842,7 @@ async fn discover_servers() -> CmdResult<Vec<LanServer>> {
             address: s.address.to_string(),
             name: s.name,
             users: s.users,
+            password: s.password,
             compatible: s.compatible,
         })
         .collect())
@@ -1080,7 +1100,7 @@ pub fn run() {
             set_ptt_key,
             list_rooms,
             create_room,
-            rename_room,
+            update_room,
             delete_room,
             set_room_lan,
             start_server,

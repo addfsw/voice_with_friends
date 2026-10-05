@@ -37,6 +37,14 @@ struct Args {
     /// --admin-token ...`), сможет заглушать и выгонять участников.
     #[arg(long)]
     admin_token: Option<String>,
+
+    /// Пароль комнаты: без него не войти (хост с секретом хоста входит всегда).
+    #[arg(long)]
+    password: Option<String>,
+
+    /// Сколько человек может быть в комнате одновременно (0 — сколько угодно).
+    #[arg(long, default_value_t = 0)]
+    max_peers: u32,
 }
 
 #[tokio::main]
@@ -66,8 +74,17 @@ async fn main() -> anyhow::Result<()> {
         },
         nat_socket.clone().map(|s| s as _),
     )?;
+    let access = server.access();
+    access.set_password(args.password.as_deref().unwrap_or_default());
+    access.set_max_peers(args.max_peers);
     let addr = server.local_addr()?;
     info!("сервер слушает UDP {addr}");
+    if access.has_password() {
+        info!("вход по паролю");
+    }
+    if args.max_peers > 0 {
+        info!("не больше {} человек в комнате", args.max_peers);
+    }
     info!(
         "код сервера: {}  (полный отпечаток сертификата: {})",
         vwf_proto::short_fingerprint(server.fingerprint()),

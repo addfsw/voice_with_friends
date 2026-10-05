@@ -74,6 +74,7 @@ const ICON_PATHS = {
   plus: "M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2Z",
   "lock-open":
     "M12 17a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm6-9h-1V6A5 5 0 0 0 7 6h1.9a3.1 3.1 0 0 1 6.2 0v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2Zm0 12H6V10h12v10Z",
+  eye: "M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5ZM12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10Zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z",
   "view-list": "M3 13h2v-2H3v2Zm0 4h2v-2H3v2Zm0-8h2V7H3v2Zm4 4h14v-2H7v2Zm0 4h14v-2H7v2ZM7 7v2h14V7H7Z",
   "view-grid":
     "M3 3v8h8V3H3Zm6 6H5V5h4v4Zm-6 4v8h8v-8H3Zm6 6H5v-4h4v4Zm4-16v8h8V3h-8Zm6 6h-4V5h4v4Zm-6 4v8h8v-8h-8Zm6 6h-4v-4h4v4Z",
@@ -236,13 +237,24 @@ function renderLan(servers) {
     meta.textContent = server.compatible
       ? `${server.host} · ${server.users} чел.`
       : `${server.host} · другая версия программы`;
-    button.append(dot, name, meta);
+    button.append(dot, name);
+    if (server.password) {
+      const lock = icon("lock");
+      lock.classList.add("lan-lock");
+      lock.append(Object.assign(document.createElementNS("http://www.w3.org/2000/svg", "title"), {
+        textContent: "Вход по паролю",
+      }));
+      button.append(lock);
+    }
+    button.append(meta);
 
     button.addEventListener("click", () => {
       $("server").value = server.address;
       for (const other of list.querySelectorAll(".lan-item")) other.classList.remove("selected");
       button.classList.add("selected");
+      showPasswordField(server.password, server.address);
       if (!$("name").value.trim()) $("name").focus();
+      else if (server.password && !$("room-pass").value) $("room-pass").focus();
     });
     li.append(button);
     list.append(li);
@@ -293,13 +305,28 @@ $("connect-form").addEventListener("submit", async (event) => {
   button.textContent = isInvite(server) ? "Связываюсь с хостом через интернет…" : "Подключение…";
   error.hidden = true;
   $("cert-warning").hidden = true;
+  // Пароль: введённый или запомненный для этого сервера.
+  const password = $("password-field").hidden ? savedPasswords()[server] : $("room-pass").value;
   try {
     avatars.clear();
-    const joined = await invoke("connect", { args: { server, name, input, output } });
+    const joined = await invoke("connect", {
+      args: { server, name, input, output, password: password || null },
+    });
+    if (password) rememberPassword(server, password);
     enterRoom(server, name, joined);
   } catch (e) {
     if (e?.kind === "certificateChanged") {
       showCertWarning(e);
+    } else if (needsPassword(e)) {
+      // Комната с паролем: показываем поле и просим ввести (или исправить).
+      forgetPassword(server);
+      showPasswordField(true, server);
+      $("room-pass").value = "";
+      $("room-pass").focus();
+      error.textContent = errorText(e).includes(WRONG_PASSWORD)
+        ? "Неверный пароль комнаты — проверьте у хоста."
+        : "В эту комнату входят по паролю — введите его.";
+      error.hidden = false;
     } else {
       error.textContent = errorText(e);
       error.hidden = false;
@@ -309,6 +336,39 @@ $("connect-form").addEventListener("submit", async (event) => {
     button.textContent = "Подключиться";
   }
 });
+
+// Причины отказа сервера (vwf_proto::PASSWORD_REQUIRED_REASON и т.д.).
+const PASSWORD_REQUIRED = "в эту комнату входят по паролю";
+const WRONG_PASSWORD = "неверный пароль комнаты";
+
+function needsPassword(e) {
+  const text = errorText(e);
+  return text.includes(PASSWORD_REQUIRED) || text.includes(WRONG_PASSWORD);
+}
+
+// Пароли комнат запоминаются по адресу сервера (или коду приглашения),
+// чтобы не вводить их при каждом входе.
+function savedPasswords() {
+  return store.get("roomPasswords", {});
+}
+
+function rememberPassword(server, password) {
+  store.set("roomPasswords", { ...savedPasswords(), [server]: password });
+}
+
+function forgetPassword(server) {
+  const passwords = savedPasswords();
+  delete passwords[server];
+  store.set("roomPasswords", passwords);
+}
+
+function showPasswordField(show, server) {
+  $("password-field").hidden = !show;
+  if (show) $("room-pass").value = savedPasswords()[server] ?? "";
+}
+
+// Другой сервер — поле пароля прячем, пока он его не попросит.
+$("server").addEventListener("input", () => showPasswordField(false));
 
 function isInvite(text) {
   return text.trim().startsWith("poi-");
@@ -365,8 +425,17 @@ async function loadRooms() {
 }
 
 function roomMeta(room) {
-  const parts = [room.lan ? "видна в сети" : "скрыта из сети"];
-  if (room.internet) parts[0] = room.lan ? "сеть + интернет" : "только интернет";
+  const parts = [
+    room.lan && room.internet
+      ? "сеть + интернет"
+      : room.lan
+        ? "видна в сети"
+        : room.internet
+          ? "только интернет"
+          : "скрыта из сети",
+  ];
+  if (room.password) parts.push("с паролем");
+  if (room.maxPeers) parts.push(`до ${room.maxPeers} чел.`);
   return parts.join(" · ");
 }
 
@@ -417,17 +486,14 @@ function roomMenu(room, li) {
   menu.className = "menu";
   menu.hidden = true;
 
-  const rename = document.createElement("button");
-  rename.type = "button";
-  rename.textContent = "Переименовать";
-  rename.addEventListener("click", () => {
+  const settings = document.createElement("button");
+  settings.type = "button";
+  settings.textContent = "Настройки";
+  settings.addEventListener("click", () => {
     closeMenus();
-    editRoomName(li, room.name, async (name) => {
-      const updated = await invoke("rename_room", { id: room.id, name });
-      myRooms = myRooms.map((r) => (r.id === room.id ? updated : r));
-    });
+    openRoomSheet(room);
   });
-  menu.append(rename);
+  menu.append(settings);
 
   // Удалить — нужно подтвердить вторым нажатием. Последнюю комнату не удалить.
   if (myRooms.length > 1) {
@@ -458,79 +524,79 @@ function roomMenu(room, li) {
   return wrap;
 }
 
-// Поле для названия на месте строки комнаты. Enter — сохранить, Esc — отмена.
-function editRoomName(li, value, save) {
-  const row = document.createElement("div");
-  row.className = "room-edit";
-  const input = document.createElement("input");
-  input.maxLength = 40;
-  input.value = value;
-  const ok = document.createElement("button");
-  ok.type = "button";
-  ok.className = "primary";
-  ok.textContent = "Сохранить";
-  const cancel = document.createElement("button");
-  cancel.type = "button";
-  cancel.className = "icon-btn ghost";
-  cancel.title = "Отмена";
-  cancel.setAttribute("aria-label", "Отмена");
-  cancel.append(icon("close"));
-  row.append(input, ok, cancel);
+// Окно «Новая комната» / «Настройки комнаты». Новая комната получает
+// параметры последней (кроме названия и пароля), чтобы не настраивать заново.
+let editingRoom = null;
 
-  const submit = async () => {
-    if (!input.value.trim()) return input.focus();
-    try {
-      await save(input.value);
-      renderRooms();
-    } catch (e) {
-      toast(errorText(e));
-    }
+function openRoomSheet(room) {
+  editingRoom = room;
+  const base = room ?? myRooms[myRooms.length - 1] ?? {};
+  $("rs-title").textContent = room ? "Настройки комнаты" : "Новая комната";
+  $("rs-save").textContent = room ? "Сохранить" : "Создать";
+  $("rs-name").value = room?.name ?? "";
+  $("rs-password").value = room?.password ?? "";
+  showRoomPassword(false);
+  const max = String(base.maxPeers ?? 0);
+  $("rs-max").value = [...$("rs-max").options].some((o) => o.value === max) ? max : "0";
+  $("rs-lan").checked = base.lan ?? true;
+  $("rs-internet").checked = base.internet ?? false;
+  $("rs-note").hidden = !(room && call.hostRoom?.id === room.id);
+  $("room-sheet").hidden = false;
+  $("rs-name").focus();
+}
+
+function closeRoomSheet() {
+  $("room-sheet").hidden = true;
+  editingRoom = null;
+}
+
+function showRoomPassword(show) {
+  $("rs-password").type = show ? "text" : "password";
+  $("rs-show").classList.toggle("active", show);
+  $("rs-show").setAttribute("aria-label", show ? "Скрыть пароль" : "Показать пароль");
+}
+
+$("rs-show").addEventListener("click", () => showRoomPassword($("rs-password").type === "password"));
+$("rs-cancel").addEventListener("click", closeRoomSheet);
+$("rs-close").addEventListener("click", closeRoomSheet);
+$("room-sheet").addEventListener("click", (event) => {
+  if (event.target === $("room-sheet")) closeRoomSheet();
+});
+
+$("room-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!$("rs-name").value.trim()) return $("rs-name").reportValidity();
+  const settings = {
+    name: $("rs-name").value,
+    password: $("rs-password").value,
+    maxPeers: Number($("rs-max").value),
+    lan: $("rs-lan").checked,
+    internet: $("rs-internet").checked,
   };
-  ok.addEventListener("click", submit);
-  cancel.addEventListener("click", () => renderRooms());
-  input.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      event.preventDefault(); // иначе отправится форма подключения
-      submit();
-    } else if (event.key === "Escape") {
-      renderRooms();
-    }
-  });
-  li.replaceChildren(row);
-  input.focus();
-  input.select();
-}
-
-function showNewRoom(show) {
-  $("new-room").hidden = !show;
-  $("new-room-btn").hidden = show;
-  $("new-room-name").value = "";
-  if (show) $("new-room-name").focus();
-}
-
-async function createRoom() {
-  const name = $("new-room-name").value;
-  if (!name.trim()) return $("new-room-name").focus();
   try {
-    myRooms.push(await invoke("create_room", { name }));
-    showNewRoom(false);
-    renderRooms();
+    if (editingRoom) {
+      const updated = await invoke("update_room", { id: editingRoom.id, settings });
+      myRooms = myRooms.map((r) => (r.id === updated.id ? updated : r));
+      // Открытая комната: обновить окно «Пригласить друзей».
+      if (call.hostRoom?.id === updated.id) {
+        call.hostRoom = updated;
+        renderInvitePassword();
+        $("room-lan").checked = updated.lan;
+        $("internet").checked = updated.internet;
+        setInternet(updated.internet);
+      }
+    } else {
+      myRooms.push(await invoke("create_room", { settings }));
+    }
   } catch (e) {
     toast(errorText(e));
+    return;
   }
-}
-
-$("new-room-btn").addEventListener("click", () => showNewRoom(true));
-$("new-room-cancel").addEventListener("click", () => showNewRoom(false));
-$("new-room-create").addEventListener("click", createRoom);
-$("new-room-name").addEventListener("keydown", (event) => {
-  if (event.key === "Enter") {
-    event.preventDefault();
-    createRoom();
-  } else if (event.key === "Escape") {
-    showNewRoom(false);
-  }
+  closeRoomSheet();
+  renderRooms();
 });
+
+$("new-room-btn").addEventListener("click", () => openRoomSheet(null));
 
 // Открываем свою комнату: запускаем сервер и подключаемся к нему сами.
 async function openRoom(room) {
@@ -716,7 +782,26 @@ function renderHostControls() {
   if (internet) setInternet(true);
   else renderInternet(null);
   renderAddress();
+  renderInvitePassword();
 }
+
+// Пароль своей комнаты в окне «Пригласить друзей» — чтобы передать друзьям.
+function renderInvitePassword() {
+  const password = call.hostRoom?.password ?? "";
+  $("invite-password").hidden = !password;
+  $("invite-password-value").textContent = password;
+}
+
+$("invite-password-copy").addEventListener("click", () =>
+  copyText($("invite-password-value").textContent),
+);
+
+$("invite-settings").addEventListener("click", () => {
+  const room = myRooms.find((r) => r.id === call.hostRoom?.id);
+  if (!room) return;
+  closeInvite();
+  openRoomSheet(room);
+});
 
 function showLocked(locked) {
   const button = $("lock-btn");
@@ -1761,6 +1846,7 @@ window.addEventListener("keydown", (event) => {
     closeSettings();
     closeShareSheet();
     if ($("address-menu").hidden) closeInvite();
+    closeRoomSheet();
     closeLeaveSheet();
     closeMenus();
   }

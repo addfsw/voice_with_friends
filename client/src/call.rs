@@ -274,19 +274,19 @@ impl KeyframeRequester {
 
 impl Call {
     /// Подключается к серверу и запускает звук. События комнаты передаются в `on_event`.
-    /// `admin_token` — секрет хоста, если мы им являемся; `trust` — как проверять
-    /// сертификат сервера.
+    /// `credentials` — секрет хоста, если мы им являемся, и пароль комнаты;
+    /// `trust` — как проверять сертификат сервера.
     pub async fn start(
         server: &str,
         name: &str,
-        admin_token: Option<&str>,
+        credentials: net::Credentials<'_>,
         trust: net::Trust<'_>,
         settings: &AudioSettings,
         tx_state: Arc<TxState>,
         on_event: impl Fn(CallEvent) + Send + Sync + 'static,
     ) -> anyhow::Result<Self> {
         let on_event: OnEvent = Arc::new(on_event);
-        let mut session = net::connect_with(server, name, admin_token, trust).await?;
+        let mut session = net::connect_as(server, name, credentials, trust).await?;
         let my_id = session.me.id;
         let fingerprint = session.fingerprint.clone();
         let room = Arc::new(Mutex::new(Room {

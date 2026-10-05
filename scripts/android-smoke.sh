@@ -4,7 +4,7 @@
 set -uo pipefail
 pkg=io.github.addfsw.poigrulkiny
 
-adb install -r -g Poigrulkiny.apk
+adb install -r -g "${1:-Poigrulkiny-x86_64.apk}"
 adb logcat -c
 adb shell am start -n "$pkg/.MainActivity"
 sleep 25

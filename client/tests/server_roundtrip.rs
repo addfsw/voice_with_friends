@@ -128,6 +128,7 @@ async fn server_is_found_by_discovery() {
             name: "Комната Пети".into(),
             address: addr,
             users: 1,
+            password: false,
             compatible: true,
         }]
     );
@@ -529,4 +530,54 @@ async fn avatars_reach_everyone_and_newcomers() {
     alice.control().send(ClientMsg::SetAvatar { data: Vec::new() });
     let got = expect_event(&mut bob, is_avatar).await;
     assert_eq!(got, ServerMsg::Avatar { id: alice.me.id, data: Vec::new() });
+}
+
+#[tokio::test]
+async fn password_and_capacity() {
+    use vwf_client::net::{Credentials, Trust, connect_as};
+
+    let server = vwf_server::Server::bind(vwf_server::Config {
+        bind: "127.0.0.1:0".parse().unwrap(),
+        echo: false,
+        data_dir: None,
+        name: "Комната".into(),
+        discovery: Some("127.0.0.1:0".parse().unwrap()),
+        admin_token: Some("секрет".into()),
+    })
+    .unwrap();
+    let addr = server.local_addr().unwrap().to_string();
+    let discovery_port = server.discovery_addr().unwrap().port();
+    let access = server.access();
+    access.set_password("тайна");
+    access.set_max_peers(2);
+    tokio::spawn(server.run());
+
+    let with = |password| Credentials { admin_token: None, password };
+    // Без пароля и с неверным — отказ с понятной причиной.
+    let err = connect_as(&addr, "Боб", with(None), Trust::Any).await.err().unwrap();
+    assert!(format!("{err:#}").contains(vwf_proto::PASSWORD_REQUIRED_REASON), "{err:#}");
+    let err = connect_as(&addr, "Боб", with(Some("не то")), Trust::Any).await.err().unwrap();
+    assert!(format!("{err:#}").contains(vwf_proto::WRONG_PASSWORD_REASON), "{err:#}");
+
+    // Хост входит без пароля, Алиса — с паролем.
+    let _host = vwf_client::net::connect_with_token(&addr, "Хост", Some("секрет")).await.unwrap();
+    let _alice = connect_as(&addr, "Алиса", with(Some("тайна")), Trust::Any).await.unwrap();
+
+    // Двое уже в комнате — третьему места нет.
+    let err = connect_as(&addr, "Боб", with(Some("тайна")), Trust::Any).await.err().unwrap();
+    assert!(format!("{err:#}").contains(vwf_proto::ROOM_FULL_REASON), "{err:#}");
+
+    // Сняли лимит и пароль — Боб входит без пароля; в поиске комната без замка.
+    access.set_max_peers(0);
+    access.set_password("");
+    connect_as(&addr, "Боб", with(None), Trust::Any).await.expect("пароль снят");
+    let found = vwf_client::discovery::discover_on(discovery_port, Duration::from_millis(400))
+        .await
+        .unwrap();
+    assert!(found.iter().all(|s| !s.password), "{found:?}");
+    access.set_password("снова");
+    let found = vwf_client::discovery::discover_on(discovery_port, Duration::from_millis(400))
+        .await
+        .unwrap();
+    assert!(found.iter().any(|s| s.password), "{found:?}");
 }

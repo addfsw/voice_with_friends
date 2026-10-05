@@ -53,6 +53,9 @@ enum Command {
         /// Секрет хоста, если сервер запущен с `--admin-token`.
         #[arg(long)]
         admin_token: Option<String>,
+        /// Пароль комнаты, если хост его задал.
+        #[arg(long)]
+        password: Option<String>,
         /// Сертификат сервера изменился, и вы уверены, что это не подмена
         /// (хост подтвердил новый код): запомнить новый и подключиться.
         #[arg(long)]
@@ -157,6 +160,7 @@ async fn main() -> anyhow::Result<()> {
             server,
             name,
             admin_token,
+            password,
             trust_new_certificate,
             share,
             share_height,
@@ -165,8 +169,11 @@ async fn main() -> anyhow::Result<()> {
         } => {
             let share = share
                 .map(|source| (source, ShareSettings { max_height: share_height, fps: share_fps }));
-            connect(&server, &name, admin_token.as_deref(), trust_new_certificate, share, audio)
-                .await
+            let credentials = vwf_client::net::Credentials {
+                admin_token: admin_token.as_deref(),
+                password: password.as_deref(),
+            };
+            connect(&server, &name, credentials, trust_new_certificate, share, audio).await
         }
     }
 }
@@ -222,7 +229,7 @@ async fn loopback(args: AudioArgs, sim_loss: f32, sim_jitter_ms: u32) -> anyhow:
 async fn connect(
     server: &str,
     name: &str,
-    admin_token: Option<&str>,
+    credentials: vwf_client::net::Credentials<'_>,
     trust_new_certificate: bool,
     share: Option<(String, ShareSettings)>,
     args: AudioArgs,
@@ -243,7 +250,7 @@ async fn connect(
         let result = Call::start(
             server,
             name,
-            admin_token,
+            credentials,
             trust,
             &settings,
             tx_state.clone(),

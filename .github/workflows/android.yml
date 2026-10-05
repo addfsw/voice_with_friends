@@ -68,10 +68,14 @@ jobs:
           # только нашу библиотеку. Без неё программа падает при запуске.
           sysroot="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib"
           libs=gen/android/app/src/main/jniLibs
+          # Без отладочной информации она в 9 раз меньше (в APK лежит несжатой).
+          strip="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
           mkdir -p "$libs/arm64-v8a" "$libs/x86_64"
-          cp "$sysroot/aarch64-linux-android/libc++_shared.so" "$libs/arm64-v8a/"
-          cp "$sysroot/x86_64-linux-android/libc++_shared.so" "$libs/x86_64/"
-          npm run tauri -- android build --apk --target aarch64 --target x86_64 --ci
+          "$strip" --strip-unneeded -o "$libs/arm64-v8a/libc++_shared.so" "$sysroot/aarch64-linux-android/libc++_shared.so"
+          "$strip" --strip-unneeded -o "$libs/x86_64/libc++_shared.so" "$sysroot/x86_64-linux-android/libc++_shared.so"
+          # Отдельный APK на архитектуру: людям — только arm64 (ARMv8),
+          # x86_64 — для проверки на эмуляторе.
+          npm run tauri -- android build --apk --split-per-abi --target aarch64 --target x86_64 --ci
 
       - name: Подпись APK
         env:
@@ -80,8 +84,6 @@ jobs:
         run: |
           set -euo pipefail
           tools="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
-          apk="$(find app/gen/android/app/build/outputs/apk -name '*release-unsigned.apk' | head -1)"
-          echo "APK: $apk"
           if [ -n "$KEYSTORE_B64" ]; then
             echo "$KEYSTORE_B64" | base64 -d > keystore.jks
             pass="$KEYSTORE_PASSWORD"
@@ -91,12 +93,18 @@ jobs:
             keytool -genkeypair -keystore keystore.jks -storepass "$pass" -keypass "$pass" \
               -alias poigrulkiny -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Poigrulkiny"
           fi
-          "$tools/zipalign" -p -f 4 "$apk" aligned.apk
-          "$tools/apksigner" sign --ks keystore.jks --ks-pass "pass:$pass" --out Poigrulkiny.apk aligned.apk
+          outputs=app/gen/android/app/build/outputs/apk
+          sign() {
+            "$tools/zipalign" -p -f 4 "$1" aligned.apk
+            "$tools/apksigner" sign --ks keystore.jks --ks-pass "pass:$pass" --out "$2" aligned.apk
+            rm aligned.apk
+            echo "$2: $(du -h "$2" | cut -f1)"
+            unzip -l "$2" | grep -E "\.so$"
+          }
+          sign "$(find $outputs -name '*arm64*release-unsigned.apk' | head -1)" Poigrulkiny.apk
+          sign "$(find $outputs -name '*x86_64*release-unsigned.apk' | head -1)" Poigrulkiny-x86_64.apk
           "$tools/apksigner" verify --print-certs Poigrulkiny.apk
           rm -f keystore.jks
-          echo "Состав APK:"
-          unzip -l Poigrulkiny.apk | grep -E "\.so$"
 
       - uses: actions/upload-artifact@v4
         with:

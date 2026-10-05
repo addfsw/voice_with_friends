@@ -554,6 +554,39 @@ button.big {
   flex: 1;
 }
 
+.lan-lock {
+  width: 15px;
+  height: 15px;
+  color: var(--text-2);
+}
+
+/* Поле пароля с кнопкой «показать» (внутри подписи поля — без её шрифта). */
+.field > .password-row {
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+.password-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.password-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.password-row .icon-btn.active {
+  color: var(--accent-text);
+}
+
+#invite-password-value {
+  flex: 1;
+  font-size: 14px;
+}
+
 .lan-item.selected {
   border-color: var(--accent);
   background: var(--accent-soft);

@@ -17,6 +17,8 @@ pub struct FoundServer {
     /// Адрес для подключения.
     pub address: SocketAddr,
     pub users: u32,
+    /// Вход по паролю.
+    pub password: bool,
     /// Совпадает ли версия протокола с нашей (иначе подключиться не получится).
     pub compatible: bool,
 }
@@ -65,6 +67,7 @@ pub async fn discover_on(port: u16, wait: Duration) -> anyhow::Result<Vec<FoundS
             name: announcement.name,
             address: SocketAddr::new(from.ip(), announcement.port),
             users: announcement.users,
+            password: announcement.password,
             compatible: announcement.protocol == PROTOCOL_VERSION,
         };
         // Если сервер на этом же компьютере, он ответит и с 127.0.0.1, и с

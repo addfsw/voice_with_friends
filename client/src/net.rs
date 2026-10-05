@@ -227,6 +227,13 @@ impl std::fmt::Display for CertificateChanged {
 
 impl std::error::Error for CertificateChanged {}
 
+/// С чем входить в комнату: секрет хоста (если мы хост) и пароль комнаты.
+#[derive(Clone, Copy, Default, Debug)]
+pub struct Credentials<'a> {
+    pub admin_token: Option<&'a str>,
+    pub password: Option<&'a str>,
+}
+
 pub async fn connect(server: &str, name: &str) -> anyhow::Result<Session> {
     connect_with(server, name, None, Trust::Any).await
 }
@@ -248,9 +255,19 @@ pub async fn connect_with(
     admin_token: Option<&str>,
     trust: Trust<'_>,
 ) -> anyhow::Result<Session> {
+    connect_as(server, name, Credentials { admin_token, password: None }, trust).await
+}
+
+/// То же, с паролем комнаты.
+pub async fn connect_as(
+    server: &str,
+    name: &str,
+    credentials: Credentials<'_>,
+    trust: Trust<'_>,
+) -> anyhow::Result<Session> {
     if vwf_nat::invite::looks_like_invite(server) {
         let mailbox = vwf_nat::mailbox::Mailbox::from_env()?;
-        return connect_invite(server, name, admin_token, &mailbox).await;
+        return connect_invite_as(server, name, credentials, &mailbox).await;
     }
     let addr = resolve(server).await?;
     let bind: SocketAddr =
@@ -271,7 +288,7 @@ pub async fn connect_with(
     })?
     .with_context(|| format!("не удалось подключиться к {addr}"))?;
 
-    handshake(endpoint, conn, addr, name, admin_token, trust).await
+    handshake(endpoint, conn, addr, name, credentials, trust).await
 }
 
 /// Подключение по коду приглашения: встреча через почтовый ящик, пробивка
@@ -282,6 +299,15 @@ pub async fn connect_invite(
     code: &str,
     name: &str,
     admin_token: Option<&str>,
+    mailbox: &vwf_nat::mailbox::Mailbox,
+) -> anyhow::Result<Session> {
+    connect_invite_as(code, name, Credentials { admin_token, password: None }, mailbox).await
+}
+
+async fn connect_invite_as(
+    code: &str,
+    name: &str,
+    credentials: Credentials<'_>,
     mailbox: &vwf_nat::mailbox::Mailbox,
 ) -> anyhow::Result<Session> {
     let invite = vwf_nat::invite::Invite::decode(code)?;
@@ -328,7 +354,7 @@ pub async fn connect_invite(
     // Остальные попытки больше не нужны.
     attempts.abort_all();
 
-    handshake(endpoint, conn, addr, name, admin_token, Trust::Exact(&invite.fingerprint)).await
+    handshake(endpoint, conn, addr, name, credentials, Trust::Exact(&invite.fingerprint)).await
 }
 
 /// Общая часть подключения после того, как QUIC-соединение установлено.
@@ -337,7 +363,7 @@ async fn handshake(
     conn: quinn::Connection,
     addr: SocketAddr,
     name: &str,
-    admin_token: Option<&str>,
+    credentials: Credentials<'_>,
     trust: Trust<'_>,
 ) -> anyhow::Result<Session> {
     // Сверяем сертификат сразу после рукопожатия — до того, как отправить
@@ -362,10 +388,12 @@ async fn handshake(
         &ClientMsg::Hello {
             protocol: PROTOCOL_VERSION,
             name: name.to_string(),
-            admin_token: admin_token.map(str::to_string),
+            admin_token: credentials.admin_token.map(str::to_string),
         },
     )
     .await?;
+    let password = credentials.password.unwrap_or_default().to_string();
+    vwf_proto::write_msg(&mut send, &ClientMsg::Auth { password }).await?;
 
     let reply = tokio::time::timeout(Duration::from_secs(10), vwf_proto::read_msg(&mut recv))
         .await

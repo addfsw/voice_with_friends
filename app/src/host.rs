@@ -67,6 +67,7 @@ pub struct HostedServer {
     echo: Arc<AtomicBool>,
     locked: Arc<AtomicBool>,
     lan: Arc<AtomicBool>,
+    access: Arc<vwf_server::Access>,
     pub info: HostInfo,
 }
 
@@ -123,6 +124,9 @@ impl HostedServer {
         let locked = server.lock_switch();
         let lan = server.discovery_switch();
         lan.store(room.lan, Ordering::Relaxed);
+        let access = server.access();
+        access.set_password(&room.password);
+        access.set_max_peers(room.max_peers);
         let task = tauri::async_runtime::spawn(server.run());
         let addresses = vwf_server::reachable_addresses(port)
             .into_iter()
@@ -146,6 +150,7 @@ impl HostedServer {
             echo,
             locked,
             lan,
+            access,
             info: HostInfo { room_id: room.id.clone(), name, port, addresses, code },
         })
     }
@@ -199,6 +204,12 @@ impl HostedServer {
     /// Видна ли комната в списке «В локальной сети».
     pub fn set_lan(&self, visible: bool) {
         self.lan.store(visible, Ordering::Relaxed);
+    }
+
+    /// Пароль и лимит участников — сразу, для следующих входящих.
+    pub fn set_access(&self, password: &str, max_peers: u32) {
+        self.access.set_password(password);
+        self.access.set_max_peers(max_peers);
     }
 
     /// Адрес, по которому к серверу подключается сам хост.

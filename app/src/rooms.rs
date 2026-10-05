@@ -29,7 +29,40 @@ pub struct RoomConfig {
     /// Включать ли доступ через интернет при открытии.
     #[serde(default)]
     pub internet: bool,
+    /// Пароль комнаты; пустой — входят без пароля. Хранится как есть: его
+    /// нужно показать хосту, чтобы он передал его друзьям.
+    #[serde(default)]
+    pub password: String,
+    /// Сколько человек может быть в комнате (вместе с хостом); 0 — сколько угодно.
+    #[serde(default)]
+    pub max_peers: u32,
 }
+
+/// Настройки комнаты из окна «Новая комната» / «Настройки комнаты».
+#[derive(Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct RoomSettings {
+    pub name: String,
+    #[serde(default)]
+    pub password: String,
+    #[serde(default)]
+    pub max_peers: u32,
+    pub lan: bool,
+    pub internet: bool,
+}
+
+impl RoomSettings {
+    fn apply(self, room: &mut RoomConfig) {
+        room.name = self.name;
+        room.password = self.password.trim().to_string();
+        room.max_peers = self.max_peers.min(MAX_PEERS_LIMIT);
+        room.lan = self.lan;
+        room.internet = self.internet;
+    }
+}
+
+/// Больше в комнату для своих и не нужно, а лимит защищает от опечаток.
+const MAX_PEERS_LIMIT: u32 = 99;
 
 fn yes() -> bool {
     true
@@ -53,6 +86,8 @@ impl Rooms {
                     name: default_name.into(),
                     lan: true,
                     internet: false,
+                    password: String::new(),
+                    max_peers: 0,
                 }]
             });
         Self { data_dir: data_dir.to_path_buf(), list }
@@ -75,16 +110,26 @@ impl Rooms {
         }
     }
 
-    pub fn create(&mut self, name: &str) -> anyhow::Result<RoomConfig> {
-        let room = RoomConfig {
+    /// Новая комната — со своим номером, а значит, и своим кодом приглашения.
+    pub fn create(&mut self, settings: RoomSettings) -> anyhow::Result<RoomConfig> {
+        let mut room = RoomConfig {
             id: vwf_nat::new_room_id()[..8].iter().map(|b| format!("{b:02x}")).collect(),
-            name: clean_name(name)?,
+            name: String::new(),
             lan: true,
             internet: false,
+            password: String::new(),
+            max_peers: 0,
         };
+        settings.apply(&mut room);
+        room.name = clean_name(&room.name)?;
         self.list.push(room.clone());
         self.save()?;
         Ok(room)
+    }
+
+    /// Меняет все настройки комнаты `id` из окна настроек.
+    pub fn configure(&mut self, id: &str, settings: RoomSettings) -> anyhow::Result<RoomConfig> {
+        self.update(id, |room| settings.apply(room))
     }
 
     /// Меняет комнату `id` (название, видимость, интернет) и сохраняет список.
@@ -139,8 +184,16 @@ mod tests {
         let first = rooms.list()[0].clone();
         assert_eq!(rooms.invite_file(&first.id), dir.join("room_id.txt"));
 
-        let games = rooms.create("  Игры с Саней ").unwrap();
+        let settings = |name: &str| RoomSettings {
+            name: name.into(),
+            password: " тайна ".into(),
+            max_peers: 4,
+            lan: true,
+            internet: true,
+        };
+        let games = rooms.create(settings("  Игры с Саней ")).unwrap();
         assert_eq!(games.name, "Игры с Саней");
+        assert_eq!((games.password.as_str(), games.max_peers, games.internet), ("тайна", 4, true));
         assert_ne!(rooms.invite_file(&games.id), rooms.invite_file(&first.id));
         rooms.update(&games.id, |r| r.lan = false).unwrap();
 
@@ -151,7 +204,9 @@ mod tests {
         let mut again = again;
         again.delete(&games.id).unwrap();
         assert!(again.delete(&first.id).is_err(), "последнюю не удалить");
-        assert!(again.create("   ").is_err());
+        assert!(again.create(settings("   ")).is_err());
+        let saved = again.list();
+        assert_eq!(saved[0].password, "", "старая комната — без пароля");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -20,7 +20,8 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 /// 4 — текстовый чат.
 /// 5 — демонстрация экрана.
 /// 6 — аватарки.
-pub const PROTOCOL_VERSION: u32 = 6;
+/// 7 — пароль комнаты (`ClientMsg::Auth` сразу после `Hello`), лимит участников.
+pub const PROTOCOL_VERSION: u32 = 7;
 
 /// ALPN-идентификатор для TLS-рукопожатия QUIC.
 pub const ALPN: &[u8] = b"vwf/1";
@@ -31,6 +32,13 @@ pub const SERVER_STOPPED_REASON: &str = "сервер остановлен";
 
 /// Почему сервер не пускает нового участника: хост закрыл вход.
 pub const LOCKED_REASON: &str = "хост закрыл вход в комнату";
+
+/// Причины отказа, по которым программа просит ввести пароль комнаты.
+pub const PASSWORD_REQUIRED_REASON: &str = "в эту комнату входят по паролю";
+pub const WRONG_PASSWORD_REASON: &str = "неверный пароль комнаты";
+
+/// Причина отказа: в комнате уже столько участников, сколько разрешил хост.
+pub const ROOM_FULL_REASON: &str = "комната заполнена";
 
 /// Причина закрытия соединения у участника, которого выгнал хост.
 pub const KICKED_REASON: &str = "хост отключил вас от комнаты";
@@ -127,6 +135,8 @@ pub struct Announcement {
     pub protocol: u32,
     /// Сколько человек сейчас в комнате.
     pub users: u32,
+    /// Вход по паролю (в списке комнат — замок).
+    pub password: bool,
 }
 
 pub fn encode_announcement(announcement: &Announcement) -> Vec<u8> {
@@ -183,6 +193,8 @@ pub enum ClientMsg {
     RequestKeyframe { id: PeerId },
     /// Своя аватарка (не больше [`MAX_AVATAR_BYTES`]); пустая — убрать.
     SetAvatar { data: Vec<u8> },
+    /// Сразу после `Hello`: пароль комнаты (пустой, если его не знаем).
+    Auth { password: String },
 }
 
 /// Сообщение в чате комнаты.
@@ -405,6 +417,7 @@ mod tests {
             port: DEFAULT_PORT,
             protocol: PROTOCOL_VERSION,
             users: 3,
+            password: true,
         };
         assert_eq!(decode_announcement(&encode_announcement(&a)), Some(a));
         assert_eq!(decode_announcement(DISCOVERY_PROBE), None);

@@ -39,6 +39,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [profile.release]
 debug = false
+# Без таблиц символов: exe и библиотека для Android заметно меньше.
+strip = true
 
 # Шумодав и БПФ считаются на каждом аудиокадре. Без оптимизаций они в десятки
 # раз медленнее, и в отладочной сборке (`cargo run`) звук начал бы прерываться.

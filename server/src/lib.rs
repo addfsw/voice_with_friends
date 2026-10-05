@@ -8,7 +8,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -50,6 +50,8 @@ pub struct Server {
     locked: Arc<AtomicBool>,
     /// Отвечать ли на поиск в локальной сети (см. `discovery_switch`).
     discoverable: Arc<AtomicBool>,
+    /// Пароль и лимит участников (см. `access`).
+    access: Arc<Access>,
     name: String,
     discovery: Option<std::net::UdpSocket>,
     admin_token: Option<String>,
@@ -113,6 +115,7 @@ impl Server {
             echo: Arc::new(AtomicBool::new(config.echo)),
             locked: Arc::new(AtomicBool::new(false)),
             discoverable: Arc::new(AtomicBool::new(true)),
+            access: Arc::new(Access::default()),
             name: config.name,
             discovery,
             admin_token: config.admin_token.filter(|t| !t.is_empty()),
@@ -150,12 +153,14 @@ impl Server {
                         port,
                         protocol: PROTOCOL_VERSION,
                         users: 0,
+                        password: false,
                     };
                     discovery_task = Some(tokio::spawn(answer_discovery(
                         socket,
                         room.clone(),
                         announcement,
                         self.discoverable.clone(),
+                        self.access.clone(),
                     )));
                 }
                 Err(e) => warn!("поиск в локальной сети отключён: {e}"),
@@ -165,6 +170,7 @@ impl Server {
         let settings = Arc::new(RoomSettings {
             echo: self.echo,
             locked: self.locked,
+            access: self.access,
             admin_token: self.admin_token,
         });
         while let Some(incoming) = self.endpoint.accept().await {
@@ -203,6 +209,11 @@ impl Server {
         self.discoverable.clone()
     }
 
+    /// Пароль комнаты и лимит участников; действуют и после запуска `run`.
+    pub fn access(&self) -> Arc<Access> {
+        self.access.clone()
+    }
+
     pub fn endpoint(&self) -> &quinn::Endpoint {
         &self.endpoint
     }
@@ -214,6 +225,7 @@ async fn answer_discovery(
     room: Arc<Mutex<Room>>,
     mut announcement: Announcement,
     discoverable: Arc<AtomicBool>,
+    access: Arc<Access>,
 ) {
     let mut buf = [0u8; 64];
     loop {
@@ -231,6 +243,7 @@ async fn answer_discovery(
             continue;
         }
         announcement.users = room.lock().unwrap().peers.len() as u32;
+        announcement.password = access.has_password();
         let _ = socket.send_to(&vwf_proto::encode_announcement(&announcement), from).await;
     }
 }
@@ -281,7 +294,59 @@ struct Room {
 struct RoomSettings {
     echo: Arc<AtomicBool>,
     locked: Arc<AtomicBool>,
+    access: Arc<Access>,
     admin_token: Option<String>,
+}
+
+/// Кто может войти: пароль комнаты и наибольшее число участников. Меняется
+/// и на работающем сервере (см. [`Server::access`]). Хост (с секретом хоста)
+/// входит всегда.
+#[derive(Default)]
+pub struct Access {
+    password: Mutex<Option<String>>,
+    max_peers: AtomicU32,
+}
+
+impl Access {
+    /// Пароль комнаты; пустой — входят без пароля.
+    pub fn set_password(&self, password: &str) {
+        *self.password.lock().unwrap() = Some(password.to_string()).filter(|p| !p.is_empty());
+    }
+
+    pub fn has_password(&self) -> bool {
+        self.password.lock().unwrap().is_some()
+    }
+
+    /// Сколько человек (вместе с хостом) может быть в комнате; 0 — сколько угодно.
+    pub fn set_max_peers(&self, max: u32) {
+        self.max_peers.store(max, Ordering::Relaxed);
+    }
+
+    /// Подходит ли пароль. Сравнение без раннего выхода: по времени ответа
+    /// пароль не подобрать.
+    fn admits(&self, password: &str) -> bool {
+        match self.password.lock().unwrap().as_deref() {
+            None => true,
+            Some(expected) => {
+                expected.len() == password.len()
+                    && expected.bytes().zip(password.bytes()).fold(0, |acc, (a, b)| acc | (a ^ b))
+                        == 0
+            }
+        }
+    }
+}
+
+/// Отказывает в подключении с понятной причиной и закрывает соединение.
+async fn reject(
+    send: &mut quinn::SendStream,
+    conn: &quinn::Connection,
+    reason: &str,
+) -> anyhow::Result<()> {
+    vwf_proto::write_msg(send, &ServerMsg::Rejected { reason: reason.to_string() }).await?;
+    let _ = send.finish();
+    // Даём сообщению дойти, прежде чем рвать соединение.
+    let _ = tokio::time::timeout(Duration::from_secs(2), conn.closed()).await;
+    Ok(())
 }
 
 /// Кто ушёл из комнаты не дольше этого назад, может вернуться и в закрытую:
@@ -562,15 +627,42 @@ async fn handle_connection(
         let _ = tokio::time::timeout(Duration::from_secs(2), conn.closed()).await;
         anyhow::bail!(reason);
     }
+    // Сразу за Hello клиент присылает пароль комнаты (пустой, если не знает).
+    let auth = tokio::time::timeout(Duration::from_secs(10), vwf_proto::read_msg(&mut recv))
+        .await
+        .context("клиент не прислал пароль")??;
+    let Some(ClientMsg::Auth { password }) = auth else {
+        anyhow::bail!("клиент не прислал пароль");
+    };
+
     let name = sanitize_name(&name);
     let admin = settings.admin_token.is_some() && admin_token == settings.admin_token;
+    if !admin && !settings.access.admits(&password) {
+        // Пауза против подбора пароля.
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let reason = if password.is_empty() {
+            vwf_proto::PASSWORD_REQUIRED_REASON
+        } else {
+            vwf_proto::WRONG_PASSWORD_REASON
+        };
+        reject(&mut send, &conn, reason).await?;
+        anyhow::bail!("{name}: {reason}");
+    }
     if !admin && settings.locked.load(Ordering::Relaxed) && !room.lock().unwrap().may_rejoin(&name)
     {
-        let reason = vwf_proto::LOCKED_REASON.to_string();
-        vwf_proto::write_msg(&mut send, &ServerMsg::Rejected { reason: reason.clone() }).await?;
-        let _ = send.finish();
-        let _ = tokio::time::timeout(Duration::from_secs(2), conn.closed()).await;
-        anyhow::bail!("{name}: {reason}");
+        reject(&mut send, &conn, vwf_proto::LOCKED_REASON).await?;
+        anyhow::bail!("{name}: {}", vwf_proto::LOCKED_REASON);
+    }
+    let max = settings.access.max_peers.load(Ordering::Relaxed) as usize;
+    let full = max > 0 && {
+        let room = room.lock().unwrap();
+        // Кто переподключается после обрыва, ещё числится в комнате — его пускаем.
+        let returning = room.peers.values().any(|p| !p.kicked && p.info.name == name);
+        room.peers.len() >= max && !returning
+    };
+    if !admin && full {
+        reject(&mut send, &conn, vwf_proto::ROOM_FULL_REASON).await?;
+        anyhow::bail!("{name}: {}", vwf_proto::ROOM_FULL_REASON);
     }
 
     let (control_tx, mut control_rx) = mpsc::unbounded_channel();
