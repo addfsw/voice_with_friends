@@ -85,6 +85,8 @@ const ICON_PATHS = {
     "M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6a7 7 0 1 1 2.05 4.95l-1.42 1.42A9 9 0 1 0 13 3Zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12Z",
   link: "M3.9 12a3.1 3.1 0 0 1 3.1-3.1h4V7H7a5 5 0 0 0 0 10h4v-1.9H7A3.1 3.1 0 0 1 3.9 12ZM8 13h8v-2H8v2Zm9-6h-4v1.9h4a3.1 3.1 0 0 1 0 6.2h-4V17h4a5 5 0 0 0 0-10Z",
   "chevron-right": "M8.59 16.59 13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41Z",
+  rotate:
+    "M16.48 2.52c3.27 1.55 5.61 4.72 5.97 8.48h1.5C23.44 4.84 18.29 0 12 0l-.66.03 3.81 3.81 1.33-1.32Zm-6.25-.77a1.49 1.49 0 0 0-2.12 0L1.75 8.11a1.49 1.49 0 0 0 0 2.12l12.02 12.02c.59.59 1.54.59 2.12 0l6.36-6.36c.59-.59.59-1.54 0-2.12L10.23 1.75Zm4.6 19.44L2.81 9.17l6.36-6.36 12.02 12.02-6.36 6.36ZM7.52 21.48C4.25 19.94 1.91 16.76 1.55 13H.05C.56 19.16 5.71 24 12 24l.66-.03-3.81-3.81-1.33 1.32Z",
   window: "M19 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2Zm0 14H5V8h14v10Z",
 };
 
@@ -496,6 +498,7 @@ async function joinTarget(target, typed = null) {
   $("cert-warning").hidden = true;
   $("manual-error").hidden = true;
   renderJoin();
+  prepareAudio();
   try {
     avatars.clear();
     const joined = await invoke("connect", {
@@ -508,6 +511,7 @@ async function joinTarget(target, typed = null) {
     if (manual) closeManual();
     enterRoom(target.server, name, joined);
   } catch (e) {
+    androidBridge?.callEnded();
     if (e?.kind === "certificateChanged") {
       showCertWarning(e);
     } else if (needsPassword(e)) {
@@ -705,6 +709,19 @@ function renderRooms() {
     list.append(li);
   }
   $("new-room-btn").disabled = busy;
+  renderRoomsHint();
+}
+
+// Телефон: своя комната доступна друзьям только из Wi-Fi (через мобильный
+// интернет к телефону почти никогда не подключиться снаружи).
+function renderRoomsHint() {
+  if (!androidBridge?.networkType) return;
+  const wifi = androidBridge.networkType() === "wifi";
+  const hint = $("rooms-hint");
+  hint.classList.toggle("warning-text", !wifi);
+  hint.textContent = wifi
+    ? "Комната на телефоне работает, пока он в Wi-Fi: друзья из той же сети найдут её в списке, остальные — по коду приглашения."
+    : "Телефон не в Wi-Fi: через мобильный интернет друзья к вашей комнате почти никогда не подключатся. Подключитесь к Wi-Fi.";
 }
 
 // Меню комнаты: переименовать, удалить.
@@ -845,6 +862,7 @@ async function openRoom(room) {
   join.errors.delete(`room:${room.id}`);
   renderJoin();
   let hosted = null;
+  prepareAudio();
   try {
     hosted = await invoke("start_server", { roomId: room.id });
     avatars.clear();
@@ -855,6 +873,7 @@ async function openRoom(room) {
     call.hostRoom = hosted.room;
     enterRoom(hosted.localAddress, name, joined);
   } catch (e) {
+    androidBridge?.callEnded();
     if (hosted) await invoke("stop_server").catch(() => {});
     join.errors.set(`room:${room.id}`, errorText(e));
   } finally {
@@ -936,6 +955,7 @@ listen("call-reconnected", ({ payload }) => {
 });
 
 function leaveRoom(reason) {
+  closeScreenView();
   androidBridge?.callEnded();
   setReconnecting(false);
   closeShareSheet();
@@ -1202,6 +1222,8 @@ $("voice-btn").addEventListener("click", (event) => {
 $("voice-menu").addEventListener("click", (event) => event.stopPropagation());
 
 function renderPeers() {
+  // Участник закончил показ или ушёл — закрываем его экран.
+  if (sv.view && !call.peers.get(sv.peer)?.sharing) closeScreenView();
   renderDock();
   const list = $("peers");
   list.innerHTML = "";
@@ -1638,10 +1660,196 @@ function watchButton(peer, isMe) {
   button.append(icon("screen"));
   if (!isMe) button.append(document.createTextNode("Смотреть"));
   button.addEventListener("click", () => {
+    if (isAndroid) return openScreenView(peer);
     invoke("open_viewer", { id: peer.id, name: peer.name }).catch((e) => toast(errorText(e)));
   });
   return button;
 }
+
+// Телефон: чужой экран — слоем на весь экран поверх комнаты. Пальцами можно
+// увеличить и подвинуть картинку, двойное касание — увеличить или вернуть.
+const sv = {
+  view: null,
+  peer: null,
+  scale: 1,
+  x: 0,
+  y: 0,
+  pointers: new Map(),
+  pinch: null,
+  landscape: false,
+  lastTap: 0,
+  barTimer: null,
+};
+
+async function openScreenView(peer) {
+  closeScreenView();
+  try {
+    await invoke("open_viewer", { id: peer.id, name: peer.name });
+  } catch (e) {
+    return toast(errorText(e));
+  }
+  sv.peer = peer.id;
+  $("sv-title").textContent = `Экран: ${peer.name}`;
+  $("sv-waiting-text").textContent = `Жду картинку от ${peer.name}…`;
+  $("sv-waiting").hidden = false;
+  resetZoom();
+  showBar();
+  $("screen-view").hidden = false;
+  androidBridge?.setImmersive(true);
+  sv.view = createScreenView({
+    peer: peer.id,
+    canvas: $("sv-canvas"),
+    img: $("sv-img"),
+    onFrame: () => ($("sv-waiting").hidden = true),
+  });
+}
+
+function closeScreenView() {
+  if (!sv.view) return false;
+  sv.view.stop();
+  invoke("stop_watching", { id: sv.peer }).catch(() => {});
+  sv.view = null;
+  sv.peer = null;
+  $("screen-view").hidden = true;
+  androidBridge?.setImmersive(false);
+  if (sv.landscape) setLandscape(false);
+  return true;
+}
+
+function setLandscape(on) {
+  sv.landscape = on;
+  $("sv-rotate").classList.toggle("active", on);
+  androidBridge?.setLandscape(on);
+}
+
+// Панель сверху прячется через несколько секунд; касание показывает снова.
+function showBar() {
+  $("sv-bar").classList.remove("hidden");
+  clearTimeout(sv.barTimer);
+  sv.barTimer = setTimeout(() => {
+    if ($("sv-waiting").hidden) $("sv-bar").classList.add("hidden");
+  }, 3000);
+}
+
+function toggleBar() {
+  if ($("sv-bar").classList.contains("hidden")) showBar();
+  else $("sv-bar").classList.add("hidden");
+}
+
+function resetZoom() {
+  sv.scale = 1;
+  sv.x = 0;
+  sv.y = 0;
+  applyZoom();
+}
+
+function applyZoom() {
+  const rect = $("sv-stage").getBoundingClientRect();
+  const maxX = (rect.width * (sv.scale - 1)) / 2;
+  const maxY = (rect.height * (sv.scale - 1)) / 2;
+  sv.x = Math.max(-maxX, Math.min(maxX, sv.x));
+  sv.y = Math.max(-maxY, Math.min(maxY, sv.y));
+  $("sv-content").style.transform = `translate(${sv.x}px, ${sv.y}px) scale(${sv.scale})`;
+}
+
+// Точка касания относительно центра картинки.
+function fromCenter(x, y) {
+  const rect = $("sv-stage").getBoundingClientRect();
+  return { x: x - rect.left - rect.width / 2, y: y - rect.top - rect.height / 2 };
+}
+
+// Увеличить до `scale`, не сдвигая точку `at` (относительно центра).
+function zoomAt(scale, at, from = { scale: sv.scale, x: sv.x, y: sv.y }) {
+  const k = scale / from.scale;
+  sv.scale = scale;
+  sv.x = at.x - (at.x - from.x) * k;
+  sv.y = at.y - (at.y - from.y) * k;
+  applyZoom();
+}
+
+function pinchState() {
+  const [a, b] = [...sv.pointers.values()];
+  return {
+    dist: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+    mid: fromCenter((a.x + b.x) / 2, (a.y + b.y) / 2),
+  };
+}
+
+const stage = $("sv-stage");
+stage.addEventListener("pointerdown", (event) => {
+  stage.setPointerCapture(event.pointerId);
+  sv.pointers.set(event.pointerId, {
+    x: event.clientX,
+    y: event.clientY,
+    startX: event.clientX,
+    startY: event.clientY,
+    time: performance.now(),
+  });
+  if (sv.pointers.size === 2) {
+    const { dist, mid } = pinchState();
+    sv.pinch = { dist, mid, scale: sv.scale, x: sv.x, y: sv.y };
+  }
+});
+
+stage.addEventListener("pointermove", (event) => {
+  const pointer = sv.pointers.get(event.pointerId);
+  if (!pointer) return;
+  const dx = event.clientX - pointer.x;
+  const dy = event.clientY - pointer.y;
+  pointer.x = event.clientX;
+  pointer.y = event.clientY;
+  if (sv.pinch && sv.pointers.size === 2) {
+    const { dist, mid } = pinchState();
+    const scale = Math.max(1, Math.min(5, (sv.pinch.scale * dist) / sv.pinch.dist));
+    // Двигаем вместе с пальцами: точка под серединой пальцев остаётся под ними.
+    const from = { scale: sv.pinch.scale, x: sv.pinch.x, y: sv.pinch.y };
+    zoomAt(scale, sv.pinch.mid, from);
+    sv.x += mid.x - sv.pinch.mid.x;
+    sv.y += mid.y - sv.pinch.mid.y;
+    applyZoom();
+  } else if (sv.pointers.size === 1 && sv.scale > 1) {
+    sv.x += dx;
+    sv.y += dy;
+    applyZoom();
+  }
+});
+
+function pointerEnd(event) {
+  const pointer = sv.pointers.get(event.pointerId);
+  if (!pointer) return;
+  sv.pointers.delete(event.pointerId);
+  if (sv.pinch) {
+    if (sv.pointers.size < 2) sv.pinch = null;
+    return;
+  }
+  const moved = Math.hypot(event.clientX - pointer.startX, event.clientY - pointer.startY);
+  if (event.type === "pointercancel" || moved > 12 || performance.now() - pointer.time > 300) {
+    return;
+  }
+  const now = performance.now();
+  if (now - sv.lastTap < 300) {
+    sv.lastTap = 0;
+    if (sv.scale > 1) resetZoom();
+    else zoomAt(2.5, fromCenter(event.clientX, event.clientY));
+  } else {
+    sv.lastTap = now;
+    toggleBar();
+  }
+}
+
+stage.addEventListener("pointerup", pointerEnd);
+stage.addEventListener("pointercancel", pointerEnd);
+$("sv-close").addEventListener("click", closeScreenView);
+$("sv-rotate").addEventListener("click", () => {
+  setLandscape(!sv.landscape);
+  showBar();
+});
+// Повернули телефон — картинка другого размера, сдвиг пересчитываем.
+window.addEventListener("resize", () => sv.view && applyZoom());
+
+// «Назад» на телефоне (MainActivity.kt): закрывает просмотр экрана; если
+// закрывать нечего — программа сворачивается.
+window.onAndroidBack = () => closeScreenView();
 
 function setSharing(on) {
   call.sharing = on;
@@ -2230,12 +2438,62 @@ function showDevice(kind, name) {
 $("input").addEventListener("change", () => chooseDevice("input", $("input").value));
 $("output").addEventListener("change", () => chooseDevice("output", $("output").value));
 
+// Android: устройства выбирает система, а человек — только куда идёт звук
+// (см. CallAudio.kt). Режим «разговор» включается до подключения, чтобы
+// звук сразу открылся с эхоподавлением.
+const AUDIO_ROUTES = { auto: "Авто", speaker: "Громкий динамик", earpiece: "Динамик у уха" };
+
+function audioRoute() {
+  const route = store.get("audioRoute", "auto");
+  return route in AUDIO_ROUTES ? route : "auto";
+}
+
+function prepareAudio() {
+  androidBridge?.prepareCall(audioRoute());
+}
+
+const selectAudioRoute = segmented($("audio-route"), audioRoute(), setAudioRoute);
+
+function setAudioRoute(route) {
+  store.set("audioRoute", route);
+  selectAudioRoute(route);
+  androidBridge?.setAudioRoute(route);
+  if (isAndroid) $("output-pill").dataset.tip = `Звук: ${AUDIO_ROUTES[route]}`;
+}
+
+function openRouteMenu() {
+  const menu = $("output-menu");
+  menu.innerHTML = "";
+  const title = document.createElement("div");
+  title.className = "menu-title";
+  title.textContent = "Куда идёт звук";
+  menu.append(title);
+  for (const [value, label] of Object.entries(AUDIO_ROUTES)) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.classList.toggle("current", value === audioRoute());
+    const check = icon("check");
+    check.classList.add("check");
+    const text = document.createElement("span");
+    text.className = "label";
+    text.textContent = label;
+    item.append(check, text);
+    item.addEventListener("click", () => {
+      closeMenus();
+      setAudioRoute(value);
+    });
+    menu.append(item);
+  }
+  menu.hidden = false;
+}
+
 // Быстрый выбор устройства прямо в комнате.
 async function openDeviceMenu(kind) {
   const menu = $(`${kind}-menu`);
   const wasOpen = !menu.hidden;
   closeMenus();
   if (wasOpen) return;
+  if (isAndroid) return openRouteMenu();
   await loadDevices(); // список мог измениться: подключили наушники
   if (!devices) return;
   const names = kind === "input" ? devices.inputs : devices.outputs;

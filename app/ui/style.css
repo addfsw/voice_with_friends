@@ -2306,8 +2306,11 @@ button.key.listening {
 
 /* Чего на телефоне нет: трей, рация по клавише, показ своего экрана и
  * просмотр чужого (пока), свои комнаты. */
-.android .desktop-only,
-.android .watch-btn {
+html:not(.android) .android-only {
+  display: none !important;
+}
+
+.android .desktop-only {
   display: none !important;
 }
 
@@ -2326,4 +2329,102 @@ button.key.listening {
 .android .view {
   padding-left: 12px;
   padding-right: 12px;
+}
+
+/* --- Чужой экран на телефоне --- */
+
+.screen-view {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: #000;
+  color: #ececef;
+  touch-action: none;
+  user-select: none;
+}
+
+.sv-stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.sv-content {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 50%;
+}
+
+.sv-content canvas,
+.sv-content img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.sv-waiting {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: #a2a5ad;
+  font-size: 14px;
+}
+
+.sv-waiting .spinner {
+  width: 18px;
+  height: 18px;
+  border-color: rgba(255, 255, 255, 0.15);
+  border-top-color: #a2a5ad;
+}
+
+.sv-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: linear-gradient(rgba(0, 0, 0, 0.75), transparent);
+  transition: opacity 200ms;
+}
+
+.sv-bar.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sv-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sv-btn {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  color: #ececef;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.sv-btn:hover,
+.sv-btn.active {
+  background: rgba(255, 255, 255, 0.26);
+}
+
+.sv-btn .icon {
+  width: 22px;
+  height: 22px;
 }

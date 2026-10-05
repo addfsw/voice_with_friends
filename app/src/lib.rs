@@ -1095,6 +1095,7 @@ pub fn run() {
             screen::open_viewer,
             screen::subscribe_screen,
             screen::request_keyframe,
+            screen::stop_watching,
             discover_servers,
             set_mode,
             set_ptt_key,

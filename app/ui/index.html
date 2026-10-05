@@ -78,15 +78,19 @@
           </form>
         </section>
 
-        <section class="lan desktop-only">
+        <section class="lan">
           <div class="section-head">
             <span>Мои комнаты</span>
             <button type="button" id="new-room-btn" class="link add-room" data-icon="plus">Новая</button>
           </div>
           <ul id="my-rooms" class="lan-list my-rooms"></ul>
+          <p id="rooms-hint" class="hint android-only">
+            Комната на телефоне работает, пока он в Wi-Fi: друзья из той же сети
+            найдут её в списке, остальные — по коду приглашения.
+          </p>
         </section>
 
-        <p class="hint center footnote desktop-only">
+        <p class="hint center footnote">
           Своя комната запускается прямо в программе. У каждой комнаты свой код
           приглашения — друзья из разных компаний не попадут друг к другу.
         </p>
@@ -148,7 +152,7 @@
         <div class="dock-buttons">
           <div class="menu-wrap split">
             <button type="button" id="mic-btn" class="dock-btn" data-tip="Выключить микрофон"></button>
-            <button type="button" id="input-pill" class="dock-caret tip-right" data-tip="Микрофон" data-icon="chevron"></button>
+            <button type="button" id="input-pill" class="dock-caret tip-right desktop-only" data-tip="Микрофон" data-icon="chevron"></button>
             <div id="input-menu" class="menu up right" hidden></div>
           </div>
           <div class="menu-wrap split">
@@ -241,19 +245,28 @@
 
         <div class="group">
           <div class="group-title">Звук</div>
-          <label class="field">
+          <label class="field desktop-only">
             <span>Микрофон</span>
             <select id="input"></select>
           </label>
-          <label class="field">
+          <label class="field desktop-only">
             <span>Динамики / наушники</span>
             <select id="output"></select>
           </label>
+          <div class="field android-only">
+            <span>Куда идёт звук</span>
+            <div id="audio-route" class="segmented" role="radiogroup" aria-label="Куда идёт звук">
+              <button type="button" data-value="auto" title="В наушники, если подключены, иначе в громкий динамик">Авто</button>
+              <button type="button" data-value="speaker" title="Всегда громкий динамик">Громкий</button>
+              <button type="button" data-value="earpiece" title="Динамик у уха, как в обычном звонке">У уха</button>
+            </div>
+            <p class="hint">«Авто» — в наушники, если они подключены, иначе в громкий динамик. Эхо телефон убирает сам.</p>
+          </div>
           <label class="switch-row" title="Короткий сигнал, когда кто-то вошёл или вышел, и при нажатии кнопок микрофона и звука">
             <span>Звуки событий</span>
             <input type="checkbox" id="cues" class="switch" />
           </label>
-          <p class="hint">Устройства можно менять и во время разговора — связь не прервётся.</p>
+          <p class="hint desktop-only">Устройства можно менять и во время разговора — связь не прервётся.</p>
         </div>
 
         <div id="diag" class="group" hidden>
@@ -447,8 +460,28 @@
       </section>
     </div>
 
+    <!-- Чужой экран на телефоне (на компьютере — отдельное окно viewer.html). -->
+    <div id="screen-view" class="screen-view" hidden>
+      <div id="sv-stage" class="sv-stage">
+        <div id="sv-content" class="sv-content">
+          <canvas id="sv-canvas" hidden></canvas>
+          <img id="sv-img" alt="" hidden />
+        </div>
+        <div id="sv-waiting" class="sv-waiting">
+          <span class="spinner" aria-hidden="true"></span>
+          <span id="sv-waiting-text">Жду картинку…</span>
+        </div>
+      </div>
+      <header id="sv-bar" class="sv-bar">
+        <button type="button" id="sv-close" class="sv-btn" data-icon="close" aria-label="Закрыть"></button>
+        <span id="sv-title" class="sv-title"></span>
+        <button type="button" id="sv-rotate" class="sv-btn" data-icon="rotate" aria-label="Повернуть"></button>
+      </header>
+    </div>
+
     <div id="toast" class="toast" hidden></div>
 
+    <script src="screen-view.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

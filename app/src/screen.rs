@@ -2,6 +2,8 @@
 //!
 //! Чужой экран открывается в отдельном окне (`screen-<id>`, страница
 //! `ui/viewer.html`): его удобно растянуть или унести на второй монитор.
+//! На телефоне отдельных окон нет: там экран показывает слой поверх
+//! комнаты в главном окне (`ui/app.js`), кадры те же.
 //!
 //! Кадры (H.264) окно получает двумя путями:
 //! - **напрямую** — через канал Tauri, и декодирует их само видеокартой
@@ -129,7 +131,11 @@ fn on_frame(app: &AppHandle, frame: ViewerFrame) {
     screens.frames.lock().unwrap().insert(frame.from, Arc::new(frame.jpeg));
     let n = screens.counter.fetch_add(1, Ordering::Relaxed) + 1;
     let event = FrameReady { id: frame.from, n, width: frame.width, height: frame.height };
-    let _ = app.emit_to(window_label(frame.from), "screen-frame", event);
+    #[cfg(desktop)]
+    let target = window_label(frame.from);
+    #[cfg(mobile)]
+    let target = "main";
+    let _ = app.emit_to(target, "screen-frame", event);
 }
 
 /// Окно просмотра готово принимать кадры: `direct` — само декодирует H.264
@@ -245,15 +251,32 @@ pub async fn open_viewer(
     open_viewer_window(app, state, id, name).await
 }
 
-/// На телефоне отдельных окон нет; просмотр там пока не сделан.
+/// На телефоне отдельных окон нет: только просим сервер присылать кадры,
+/// а показывает их сам интерфейс (он же подписывается на них).
 #[cfg(mobile)]
 async fn open_viewer_window(
     _app: AppHandle,
-    _state: State<'_, AppState>,
-    _id: PeerId,
+    state: State<'_, AppState>,
+    id: PeerId,
     _name: String,
 ) -> CmdResult<()> {
-    Err("на телефоне смотреть демонстрацию экрана пока нельзя".into())
+    let call = state.call.lock().await;
+    let call = call.as_ref().ok_or("нет связи с комнатой")?;
+    call.watch(id, true);
+    Ok(())
+}
+
+/// Просмотр закрыт (на телефоне — слой в главном окне): кадры больше не нужны.
+#[tauri::command]
+pub async fn stop_watching(app: AppHandle, id: PeerId) {
+    stop(&app, id).await;
+}
+
+async fn stop(app: &AppHandle, id: PeerId) {
+    app.state::<Screens>().forget(id);
+    if let Some(call) = app.state::<AppState>().call.lock().await.as_ref() {
+        call.watch(id, false);
+    }
 }
 
 #[cfg(desktop)]
@@ -291,13 +314,8 @@ async fn open_viewer_window(
 /// Окно просмотра закрыли — перестаём смотреть.
 #[cfg(desktop)]
 pub fn viewer_closed(app: &AppHandle, id: PeerId) {
-    app.state::<Screens>().forget(id);
     let app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        if let Some(call) = app.state::<AppState>().call.lock().await.as_ref() {
-            call.watch(id, false);
-        }
-    });
+    tauri::async_runtime::spawn(async move { stop(&app, id).await });
 }
 
 #[cfg(desktop)]

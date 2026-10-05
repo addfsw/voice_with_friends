@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- minSdk 26: адаптивная векторная иконка нужна всем, PNG не нужны. -->
+<!-- minSdk 28: адаптивная векторная иконка нужна всем, PNG не нужны. -->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
   <background android:drawable="@color/ic_launcher_background"/>
   <foreground android:drawable="@drawable/ic_launcher_foreground"/>

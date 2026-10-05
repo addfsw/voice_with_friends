@@ -17,7 +17,9 @@ import androidx.core.content.ContextCompat
 
 /// Пока идёт звонок, программа работает «на переднем плане» с уведомлением:
 /// так Android не отключает микрофон и сеть, когда экран погас или открыта
-/// другая программа (игра). Процессор и Wi-Fi тоже не засыпают.
+/// другая программа (игра). Процессор и Wi-Fi тоже не засыпают, а Wi-Fi
+/// принимает широковещательные пакеты — по ним друзья в той же сети находят
+/// комнату, открытую на телефоне.
 class CallService : Service() {
   companion object {
     const val EXTRA_ROOM = "room"
@@ -27,6 +29,7 @@ class CallService : Service() {
 
   private var wakeLock: PowerManager.WakeLock? = null
   private var wifiLock: WifiManager.WifiLock? = null
+  private var multicastLock: WifiManager.MulticastLock? = null
 
   override fun onBind(intent: Intent?): IBinder? = null
 
@@ -94,14 +97,24 @@ class CallService : Service() {
         ?.createWifiLock(mode, "poigrulkiny:call")
         ?.apply { acquire() }
     }
+    if (multicastLock == null) {
+      multicastLock = applicationContext.getSystemService(WifiManager::class.java)
+        ?.createMulticastLock("poigrulkiny:discovery")
+        ?.apply {
+          setReferenceCounted(false)
+          acquire()
+        }
+    }
     return START_NOT_STICKY
   }
 
   override fun onDestroy() {
     wakeLock?.takeIf { it.isHeld }?.release()
     wifiLock?.takeIf { it.isHeld }?.release()
+    multicastLock?.takeIf { it.isHeld }?.release()
     wakeLock = null
     wifiLock = null
+    multicastLock = null
     super.onDestroy()
   }
 }

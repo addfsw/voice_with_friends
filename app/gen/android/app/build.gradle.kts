@@ -20,8 +20,8 @@ android {
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
         applicationId = "io.github.addfsw.poigrulkiny"
-        // Звук через AAudio (cpal) — только с Android 8.0.
-        minSdk = 26
+        // Звук через AAudio в режиме звонка (эхоподавление) — с Android 9.
+        minSdk = 28
         targetSdk = 37
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")

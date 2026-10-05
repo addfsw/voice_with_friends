@@ -1,6 +1,8 @@
 //! Клиентская часть voice_with_friends. Вынесена в библиотеку, чтобы потом
 //! её же использовал графический клиент (Tauri) на Windows и Android.
 
+#[cfg(target_os = "android")]
+mod aaudio;
 pub mod audio;
 pub mod call;
 pub mod cues;
