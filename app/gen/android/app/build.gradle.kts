@@ -58,6 +58,13 @@ android {
     buildFeatures {
         buildConfig = true
     }
+    // Библиотеки в APK сжаты: файл, который пересылают друзьям, вдвое меньше
+    // (Android распакует их при установке).
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
 }
 
 kotlin {

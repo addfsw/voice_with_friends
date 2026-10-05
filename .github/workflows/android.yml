@@ -68,11 +68,9 @@ jobs:
           # только нашу библиотеку. Без неё программа падает при запуске.
           sysroot="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib"
           libs=gen/android/app/src/main/jniLibs
-          # Без отладочной информации она в 9 раз меньше (в APK лежит несжатой).
-          strip="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
           mkdir -p "$libs/arm64-v8a" "$libs/x86_64"
-          "$strip" --strip-unneeded -o "$libs/arm64-v8a/libc++_shared.so" "$sysroot/aarch64-linux-android/libc++_shared.so"
-          "$strip" --strip-unneeded -o "$libs/x86_64/libc++_shared.so" "$sysroot/x86_64-linux-android/libc++_shared.so"
+          cp "$sysroot/aarch64-linux-android/libc++_shared.so" "$libs/arm64-v8a/"
+          cp "$sysroot/x86_64-linux-android/libc++_shared.so" "$libs/x86_64/"
           # Отдельный APK на архитектуру: людям — только arm64 (ARMv8),
           # x86_64 — для проверки на эмуляторе.
           npm run tauri -- android build --apk --split-per-abi --target aarch64 --target x86_64 --ci
@@ -94,12 +92,20 @@ jobs:
               -alias poigrulkiny -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Poigrulkiny"
           fi
           outputs=app/gen/android/app/build/outputs/apk
+          strip="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
           sign() {
+            # Библиотеки без отладочной информации: libc++_shared.so из NDK
+            # с ней весит 9 МБ вместо ~1,5.
+            local apk work
+            apk="$(realpath "$1")"
+            work="$(mktemp -d)"
+            (cd "$work" && unzip -q "$apk" 'lib/*' && "$strip" --strip-unneeded lib/*/*.so && zip -q -r -9 "$apk" lib)
+            rm -rf "$work"
             "$tools/zipalign" -p -f 4 "$1" aligned.apk
             "$tools/apksigner" sign --ks keystore.jks --ks-pass "pass:$pass" --out "$2" aligned.apk
             rm aligned.apk
             echo "$2: $(du -h "$2" | cut -f1)"
-            unzip -l "$2" | grep -E "\.so$"
+            unzip -v "$2" | grep -E "\.so$"
           }
           sign "$(find $outputs -name '*arm64*release-unsigned.apk' | head -1)" Poigrulkiny.apk
           sign "$(find $outputs -name '*x86_64*release-unsigned.apk' | head -1)" Poigrulkiny-x86_64.apk
