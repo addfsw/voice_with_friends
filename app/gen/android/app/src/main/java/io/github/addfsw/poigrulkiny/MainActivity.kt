@@ -19,9 +19,18 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
 
 class MainActivity : TauriActivity() {
+  companion object {
+    /// Нажали уведомление чата: открыть вкладку «Чат».
+    const val EXTRA_OPEN_CHAT = "open_chat"
+    /// Нажали «Выйти» в уведомлении звонка.
+    const val EXTRA_LEAVE = "leave"
+  }
+
   private val callAudio by lazy { CallAudio(this) }
+  private val chatNotifier by lazy { ChatNotifier(this) }
   private var webView: WebView? = null
 
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -80,8 +89,26 @@ class MainActivity : TauriActivity() {
     }
   }
 
+  /// Программа на экране — сообщения чата видны в ней самой.
+  override fun onResume() {
+    super.onResume()
+    chatNotifier.clear()
+  }
+
+  /// Нажатие на уведомление, когда программа уже запущена.
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    val script = when {
+      intent.getBooleanExtra(EXTRA_LEAVE, false) -> "window.onAndroidLeave && window.onAndroidLeave()"
+      intent.getBooleanExtra(EXTRA_OPEN_CHAT, false) -> "window.onAndroidOpenChat && window.onAndroidOpenChat()"
+      else -> return
+    }
+    webView?.evaluateJavascript(script, null)
+  }
+
   override fun onDestroy() {
     callAudio.stop()
+    chatNotifier.clear()
     super.onDestroy()
   }
 
@@ -123,7 +150,21 @@ class MainActivity : TauriActivity() {
     @JavascriptInterface
     fun callEnded() {
       stopService(Intent(this@MainActivity, CallService::class.java))
-      runOnUiThread { callAudio.stop() }
+      runOnUiThread {
+        callAudio.stop()
+        chatNotifier.clear()
+      }
+    }
+
+    /// Новое сообщение чата от собеседника. Уведомление — только если
+    /// программа не на экране.
+    @JavascriptInterface
+    fun chatMessage(room: String, name: String, text: String, timeMs: Double) {
+      runOnUiThread {
+        if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+          chatNotifier.show(room, name, text, timeMs.toLong())
+        }
+      }
     }
 
     /// Просмотр чужого экрана: на весь экран, без строки состояния и панели
