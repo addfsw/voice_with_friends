@@ -603,6 +603,61 @@ button.big {
   height: 20px;
 }
 
+/* Недавняя комната: точка «запущена / не запущена» на значке. */
+.join-ico {
+  position: relative;
+}
+
+.join-dot {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--surface-2);
+  background: var(--text-3);
+}
+
+.join-ico.online .join-dot {
+  background: var(--speaking);
+}
+
+.join-ico.checking .join-dot {
+  animation: join-dot-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes join-dot-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.join-ico.offline {
+  color: var(--text-3);
+  background: var(--surface-3);
+}
+
+.join-ico.offline .join-dot {
+  background: var(--danger);
+}
+
+.join-ico.unknown .join-dot {
+  display: none;
+}
+
+.room-state {
+  font-weight: 600;
+}
+
+.room-state.online {
+  color: var(--speaking);
+}
+
+.room-state.offline {
+  color: var(--danger);
+}
+
 .join-ico.lan {
   color: var(--speaking);
   background: color-mix(in srgb, var(--speaking) 16%, transparent);

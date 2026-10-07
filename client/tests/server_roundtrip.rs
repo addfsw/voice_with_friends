@@ -581,3 +581,19 @@ async fn password_and_capacity() {
         .unwrap();
     assert!(found.iter().any(|s| s.password), "{found:?}");
 }
+
+#[tokio::test]
+async fn probe_tells_running_server_from_stopped() {
+    use vwf_client::net::{Availability, probe_address};
+    let addr = start_server(false).await.to_string();
+    assert_eq!(probe_address(&addr, T).await, Availability::Online);
+
+    // Проверка не входит в комнату: следующий вошедший никого не видит.
+    let alice = vwf_client::net::connect(&addr, "Алиса").await.unwrap();
+    assert!(alice.peers.is_empty());
+
+    // Порт, на котором никто не слушает.
+    let free = std::net::UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+    let wait = Duration::from_millis(500);
+    assert_eq!(probe_address(&free.to_string(), wait).await, Availability::Offline);
+}

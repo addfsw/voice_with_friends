@@ -35,8 +35,23 @@ const HOST_REFRESH: Duration = Duration::from_secs(25);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 enum Signal {
-    Join { id: u64, public: SocketAddr, local: Vec<SocketAddr> },
-    Host { reply_to: u64, public: SocketAddr, local: Vec<SocketAddr> },
+    Join {
+        id: u64,
+        public: SocketAddr,
+        local: Vec<SocketAddr>,
+    },
+    Host {
+        reply_to: u64,
+        public: SocketAddr,
+        local: Vec<SocketAddr>,
+    },
+    /// «Комната открыта?» — проверка из списка недавних, без пробивки NAT.
+    Ping {
+        id: u64,
+    },
+    Pong {
+        reply_to: u64,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -167,8 +182,12 @@ async fn host_loop(
             event = sub.recv() => {
                 let Some(event) = event else { break };
                 let MailboxEvent::Message(text) = event else { continue };
-                let Ok(Signal::Join { id, public: guest, local: _ }) = serde_json::from_str(&text)
-                else {
+                let signal = serde_json::from_str(&text);
+                if let Ok(Signal::Ping { id }) = signal {
+                    publish_reply(&mailbox, &topic, Signal::Pong { reply_to: id });
+                    continue;
+                }
+                let Ok(Signal::Join { id, public: guest, local: _ }) = signal else {
                     continue;
                 };
                 let Some(me) = public else { continue };
@@ -176,17 +195,22 @@ async fn host_loop(
                 status.lock().unwrap().guests += 1;
                 spawn_punch(&socket, guest);
                 let reply = Signal::Host { reply_to: id, public: me, local: local_addrs(port) };
-                let mailbox = mailbox.clone();
-                let topic = topic.clone();
-                tokio::spawn(async move {
-                    let text = serde_json::to_string(&reply).expect("сериализация не падает");
-                    if let Err(e) = mailbox.publish(&topic, &text).await {
-                        warn!("не удалось ответить гостю: {e:#}");
-                    }
-                });
+                publish_reply(&mailbox, &topic, reply);
             }
         }
     }
+}
+
+/// Отвечает гостю в ящик, не задерживая цикл хоста.
+fn publish_reply(mailbox: &Mailbox, topic: &str, reply: Signal) {
+    let mailbox = mailbox.clone();
+    let topic = topic.to_string();
+    tokio::spawn(async move {
+        let text = serde_json::to_string(&reply).expect("сериализация не падает");
+        if let Err(e) = mailbox.publish(&topic, &text).await {
+            warn!("не удалось ответить гостю: {e:#}");
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -200,6 +224,45 @@ pub struct FoundHost {
     pub candidates: Vec<SocketAddr>,
     /// Наш собственный NAT.
     pub me: NatInfo,
+}
+
+/// Открыта ли комната с этой темой: хост, если он запущен и слушает ящик,
+/// отвечает на `Ping` за секунду-две. `Ok(false)` — за `wait` ответа не было;
+/// ошибка — сам ящик недоступен (например, нет интернета), и тогда про
+/// комнату ничего сказать нельзя.
+pub async fn ping_host(mailbox: &Mailbox, topic: &str, wait: Duration) -> anyhow::Result<bool> {
+    let deadline = Instant::now() + wait;
+    let mut sub = mailbox.subscribe(topic);
+    loop {
+        match tokio::time::timeout_at(deadline, sub.recv()).await {
+            Ok(Some(MailboxEvent::Open)) => break,
+            Ok(Some(_)) => continue,
+            _ => bail!("сервис обмена адресами недоступен — проверьте интернет"),
+        }
+    }
+
+    let id = u64::from_le_bytes(crate::random_bytes());
+    let ping = serde_json::to_string(&Signal::Ping { id }).expect("сериализация не падает");
+    // Повтор — на случай, если хост пропустил первое сообщение.
+    let mut resend = tokio::time::interval(Duration::from_secs(3));
+    loop {
+        tokio::select! {
+            _ = resend.tick() => {
+                mailbox.publish(topic, &ping).await.context("не удалось связаться с хостом")?;
+            }
+            event = tokio::time::timeout_at(deadline, sub.recv()) => match event {
+                Ok(Some(MailboxEvent::Message(text))) => {
+                    if let Ok(Signal::Pong { reply_to }) = serde_json::from_str(&text)
+                        && reply_to == id
+                    {
+                        return Ok(true);
+                    }
+                }
+                Ok(Some(MailboxEvent::Open)) => {}
+                Ok(None) | Err(_) => return Ok(false),
+            },
+        }
+    }
 }
 
 /// Находит хоста через почтовый ящик и начинает пробивку.
