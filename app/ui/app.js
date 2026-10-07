@@ -39,6 +39,7 @@ const call = {
   statusTimer: null,
   chat: [], // сообщения чата: { id, from, name, text, timeMs }, старые — первыми
   chatPending: [], // пришли, пока интерфейс ещё не вошёл в комнату
+  title: "", // название комнаты для уведомлений Android ("" — неизвестно)
   unread: 0,
   sharing: false, // мы показываем экран
   viewers: 0, // сколько человек смотрит наш экран
@@ -607,7 +608,7 @@ async function joinTarget(target, typed = null) {
     join.prompt = null;
     join.promptError = "";
     if (manual) closeManual();
-    enterRoom(target.server, name, joined);
+    enterRoom(target.server, name, joined, recentRooms()[0]?.title);
   } catch (e) {
     androidBridge?.callEnded();
     if (e?.kind === "certificateChanged") {
@@ -987,10 +988,12 @@ async function openRoom(room) {
 // Комната
 // ---------------------------------------------------------------------------
 
-function enterRoom(server, name, joined) {
+// title — название чужой комнаты, если оно известно (для уведомлений Android).
+function enterRoom(server, name, joined, title = null) {
   call.server = server;
+  call.title = call.hosting?.name ?? title ?? "";
   // Android: уведомление «вы в комнате» держит звонок, когда программа свёрнута.
-  androidBridge?.callStarted(call.hosting?.name ?? (isInvite(server) ? "Через интернет" : server));
+  androidBridge?.callStarted(call.title);
   setReconnecting(false);
   applyJoined(joined);
   renderHostControls();
@@ -1623,8 +1626,18 @@ listen("chat-message", ({ payload }) => {
   if (!addMessage(payload)) return;
   const mine = payload.from === call.me.id;
   if (!mine && (currentTab !== "chat" || document.hidden)) setUnread(call.unread + 1);
+  // Android сам решает, показывать ли уведомление: только если программа свёрнута.
+  if (!mine) androidBridge?.chatMessage(call.title, payload.name, payload.text, payload.timeMs);
   renderChat(mine);
 });
+
+// Android: нажали уведомление о сообщении.
+window.onAndroidOpenChat = () => {
+  if (!call.me) return;
+  closeScreenView();
+  selectTab("chat");
+  showTab("chat");
+};
 
 // Прочитали, вернувшись в окно с открытым чатом.
 document.addEventListener("visibilitychange", () => {
@@ -1950,6 +1963,11 @@ window.addEventListener("resize", () => sv.view && applyZoom());
 // «Назад» на телефоне (MainActivity.kt): закрывает просмотр экрана; если
 // закрывать нечего — программа сворачивается.
 window.onAndroidBack = () => closeScreenView();
+
+// Android: «Выйти» в уведомлении звонка — как кнопка «Выйти» (хосту — с вопросом).
+window.onAndroidLeave = () => {
+  if (call.me) $("leave-btn").click();
+};
 
 function setSharing(on) {
   call.sharing = on;

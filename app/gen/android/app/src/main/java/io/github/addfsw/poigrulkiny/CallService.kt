@@ -38,6 +38,7 @@ class CallService : Service() {
     if (Build.VERSION.SDK_INT >= 26) {
       manager.createNotificationChannel(
         NotificationChannel(CHANNEL, "Голосовая комната", NotificationManager.IMPORTANCE_LOW)
+          .apply { setShowBadge(false) }
       )
     }
     val open = PendingIntent.getActivity(
@@ -46,14 +47,31 @@ class CallService : Service() {
       Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
       PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
     )
-    val room = intent?.getStringExtra(EXTRA_ROOM)?.takeIf { it.isNotBlank() } ?: "Поигрулькины"
+    // «Выйти» открывает программу: хосту она сначала покажет вопрос, ведь
+    // закрытие комнаты отключит всех.
+    val leave = PendingIntent.getActivity(
+      this,
+      1,
+      Intent(this, MainActivity::class.java)
+        .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        .putExtra(MainActivity.EXTRA_LEAVE, true),
+      PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+    )
+    // Одна тихая строка: название комнаты и кнопка «Выйти», без звука и
+    // времени.
+    val room = intent?.getStringExtra(EXTRA_ROOM)?.takeIf { it.isNotBlank() } ?: "Голосовая комната"
     val notification = NotificationCompat.Builder(this, CHANNEL)
       .setSmallIcon(R.drawable.ic_notification)
       .setColor(0xFF7C6CFF.toInt())
       .setContentTitle(room)
       .setContentText("Вы в голосовой комнате")
       .setContentIntent(open)
+      .addAction(0, "Выйти", leave)
       .setOngoing(true)
+      .setSilent(true)
+      .setShowWhen(false)
+      .setPriority(NotificationCompat.PRIORITY_LOW)
+      .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
       .setCategory(NotificationCompat.CATEGORY_CALL)
       .build()
 
