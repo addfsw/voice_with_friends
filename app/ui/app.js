@@ -2238,6 +2238,8 @@ async function refreshDiagnostics() {
     stats = null;
   }
   $("diag").hidden = !stats;
+  // На телефоне трея нет — без разговора в «Дополнительно» пусто.
+  if (isAndroid) $("advanced").hidden = !stats;
   if (!stats) return;
   const list = $("diag-list");
   list.innerHTML = "";
@@ -2370,6 +2372,7 @@ $("avatar-file").addEventListener("change", async () => {
 
 $("avatar-pick").addEventListener("click", () => $("avatar-file").click());
 $("me-avatar").addEventListener("click", () => $("avatar-file").click());
+$("profile-avatar").addEventListener("click", () => $("avatar-file").click());
 $("avatar-remove").addEventListener("click", () => setAvatar([]));
 
 invoke("get_avatar")
