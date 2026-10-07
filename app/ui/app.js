@@ -225,8 +225,8 @@ const join = {
   errors: new Map(), // key → текст ошибки под названием
   lan: [], // последний ответ поиска в локальной сети
   last: null, // последняя попытка: { target, password } — для «Доверять»
-  // Запущены ли недавние комнаты: server → "online" | "offline" | "unknown"
-  // (проверить не удалось) | "checking".
+  // Запущены ли недавние комнаты: server → { state, at }, state — "online",
+  // "offline" или "unknown" (проверить не удалось), at — когда проверили.
   status: new Map(),
   checking: null, // key карточки, которую перепроверяем перед входом
 };
@@ -240,8 +240,17 @@ async function refreshLan() {
   if (lanSearching || $("connect-view").hidden) return;
   lanSearching = true;
   try {
+    const before = join.lan.map((s) => s.address);
     join.lan = await invoke("discover_servers");
     lanSearched = true;
+    // Комната пропала из локальной сети — её прежний статус в недавних
+    // устарел (скорее всего, её закрыли): проверяем сразу.
+    const now = new Set(join.lan.map((s) => s.address));
+    const gone = before.filter((a) => !now.has(a));
+    if (gone.length) {
+      for (const server of gone) forgetStatus(server);
+      checkRecent({ force: true });
+    }
     // Пока вводят пароль или идёт подключение, список не перестраиваем:
     // иначе пропадёт набранный текст.
     if (!join.prompt && !join.busy) renderJoin();
@@ -258,9 +267,9 @@ function startLanSearch() {
   clearInterval(roomCheckTimer);
   renderJoin();
   refreshLan();
-  checkRecent();
+  checkRecent({ force: true });
   lanTimer = setInterval(refreshLan, LAN_REFRESH_MS);
-  roomCheckTimer = setInterval(checkRecent, ROOM_CHECK_MS);
+  roomCheckTimer = setInterval(checkRecent, ROOM_CHECK_TICK_MS);
 }
 
 function stopLanSearch() {
@@ -270,40 +279,86 @@ function stopLanSearch() {
   roomCheckTimer = null;
 }
 
-// Недавние комнаты проверяются в фоне: запущены ли они сейчас. Проверка по
-// коду приглашения идёт через тот же почтовый ящик, что и вход, поэтому
-// не чаще раза в минуту.
-const ROOM_CHECK_MS = 60000;
+// Недавние комнаты проверяются в фоне: запущены ли они сейчас. По адресу
+// проверка дешёвая (только QUIC-рукопожатие) — часто. По коду приглашения
+// каждая проверка — сообщение через ntfy.sh, у которого дневной лимит, и тот
+// же лимит нужен для входа по коду, поэтому редко.
+const ROOM_CHECK_TICK_MS = 15000;
+const CHECK_EVERY_MS = { address: 15000, invite: 120000 };
+// Не чаще этого даже при «срочной» проверке (открыли экран, вернулись в приложение).
+const CHECK_MIN_MS = { address: 0, invite: 30000 };
+// Старше этого ответ уже не показываем как правду — «Проверяю…».
+const STATUS_STALE_MS = { address: 45000, invite: 300000 };
 let roomCheckTimer = null;
 let roomChecking = false;
 
-async function checkRecent(servers = null) {
-  if (roomChecking || $("connect-view").hidden) return;
+const checkKind = (server) => (isInvite(server) ? "invite" : "address");
+
+function forgetStatus(server) {
+  join.status.delete(server);
+}
+
+// Что показать на карточке: устаревший ответ — как «Проверяю…».
+function shownStatus(server) {
+  const status = join.status.get(server);
+  if (!status) return "checking"; // ещё не проверяли — проверка вот-вот будет
+  if (status.state === "unknown") return null;
+  if (Date.now() - status.at > STATUS_STALE_MS[checkKind(server)]) return "checking";
+  return status.state;
+}
+
+function setStatus(server, state) {
+  const old = join.status.get(server);
+  // Не смогли проверить (нет интернета, лимит ntfy) — свежий прежний ответ
+  // лучше, чем никакого.
+  if (state === "unknown" && old && old.state !== "unknown") {
+    if (Date.now() - old.at <= STATUS_STALE_MS[checkKind(server)]) return;
+  }
+  join.status.set(server, { state, at: Date.now() });
+  // Хост открыл комнату — старое «не запущена» под названием больше не верно.
+  if (state !== "offline" && join.errors.get(server) === OFFLINE_TEXT) {
+    join.errors.delete(server);
+  }
+}
+
+// Какие недавние комнаты пора проверить. force — по событию (экран открыт,
+// вернулись в приложение, комната пропала из сети): не ждём обычного срока.
+function dueServers(force) {
   const found = new Set(join.lan.map((s) => s.address));
-  servers ??= recentRooms()
+  const now = Date.now();
+  return recentRooms()
     .map((r) => r.server)
-    .filter((server) => !found.has(server));
+    .filter((server) => !found.has(server))
+    .filter((server) => {
+      const at = join.status.get(server)?.at;
+      if (at === undefined) return true;
+      const kind = checkKind(server);
+      return now - at >= (force ? CHECK_MIN_MS[kind] : CHECK_EVERY_MS[kind]);
+    });
+}
+
+async function checkRecent({ force = false } = {}) {
+  if (roomChecking || $("connect-view").hidden) return;
+  const servers = dueServers(force);
   if (!servers.length) return;
   roomChecking = true;
-  for (const server of servers) {
-    if (!join.status.has(server)) join.status.set(server, "checking");
-  }
   if (!join.prompt && !join.busy) renderJoin();
   try {
     for (const { server, status } of await invoke("check_rooms", { servers })) {
-      join.status.set(server, status);
-      // Хост открыл комнату — старое «не запущена» под названием больше не верно.
-      if (status !== "offline" && join.errors.get(server) === OFFLINE_TEXT) {
-        join.errors.delete(server);
-      }
+      setStatus(server, status);
     }
   } catch {
-    for (const server of servers) join.status.set(server, "unknown");
+    for (const server of servers) setStatus(server, "unknown");
   } finally {
     roomChecking = false;
     if (!join.prompt && !join.busy) renderJoin();
   }
 }
+
+// Вернулись в приложение (на телефоне таймеры, пока оно свёрнуто, стоят).
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) checkRecent({ force: true });
+});
 
 // Нажали на комнату, которая при последней проверке была не запущена:
 // сначала быстро проверяем ещё раз, вместо долгой попытки подключиться.
@@ -317,7 +372,7 @@ async function stillOffline(target) {
   try {
     [{ status }] = await invoke("check_rooms", { servers: [target.server] });
   } catch {}
-  join.status.set(target.server, status);
+  setStatus(target.server, status);
   join.busy = null;
   join.checking = null;
   if (status !== "offline") return false;
@@ -454,7 +509,7 @@ function joinCard(target, busy) {
   const meta = document.createElement("span");
   meta.className = "lan-meta";
   const error = join.errors.get(target.key);
-  const status = target.kind === "recent" ? join.status.get(target.server) : null;
+  const status = target.kind === "recent" ? shownStatus(target.server) : null;
   if (status) {
     ico.classList.add(status);
     const dot = document.createElement("span");
@@ -584,7 +639,7 @@ async function joinTarget(target, typed = null) {
   // старой версии не отвечает на проверку, но впустить может.
   if (
     target.kind === "recent" &&
-    join.status.get(target.server) === "offline" &&
+    shownStatus(target.server) === "offline" &&
     join.errors.get(target.key) !== OFFLINE_TEXT
   ) {
     if (await stillOffline(target)) return;
@@ -611,7 +666,8 @@ async function joinTarget(target, typed = null) {
     });
     if (password) rememberPassword(target.server, password);
     rememberRecent(target, joined);
-    join.status.set(target.server, "online");
+    // Пока мы в комнате, она не проверяется: после выхода — проверить заново.
+    forgetStatus(target.server);
     join.prompt = null;
     join.promptError = "";
     if (manual) closeManual();
@@ -640,7 +696,10 @@ async function joinTarget(target, typed = null) {
       join.prompt = null;
       join.errors.set(target.key, errorText(e));
       // Не вошли — заодно обновим, запущена ли комната.
-      if (target.kind === "recent") setTimeout(() => checkRecent([target.server]));
+      if (target.kind === "recent") {
+        forgetStatus(target.server);
+        setTimeout(() => checkRecent({ force: true }));
+      }
     }
   } finally {
     join.busy = null;
@@ -1097,6 +1156,16 @@ function leaveRoom(reason) {
   call.quality.clear();
   call.peers.clear();
   showView("connect");
+  // Комнату, из которой вышли, могли как раз закрыть: проверяем её сразу и
+  // ещё раз чуть позже — сервер мог ещё отвечать, пока закрывался.
+  const left = call.server;
+  if (left) {
+    forgetStatus(left);
+    setTimeout(() => {
+      forgetStatus(left);
+      checkRecent({ force: true });
+    }, 4000);
+  }
   startLanSearch();
   loadRooms(); // в комнате могли включить интернет или скрыть её из сети
   if (reason) toast(reason);
