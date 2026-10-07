@@ -241,26 +241,22 @@ pub async fn ping_host(mailbox: &Mailbox, topic: &str, wait: Duration) -> anyhow
         }
     }
 
+    // Одно сообщение на проверку: у ntfy.sh дневной лимит сообщений, и он
+    // же нужен для входа по коду. Подписка уже открыта — ответ не потеряется.
     let id = u64::from_le_bytes(crate::random_bytes());
     let ping = serde_json::to_string(&Signal::Ping { id }).expect("сериализация не падает");
-    // Повтор — на случай, если хост пропустил первое сообщение.
-    let mut resend = tokio::time::interval(Duration::from_secs(3));
+    mailbox.publish(topic, &ping).await.context("не удалось связаться с хостом")?;
     loop {
-        tokio::select! {
-            _ = resend.tick() => {
-                mailbox.publish(topic, &ping).await.context("не удалось связаться с хостом")?;
-            }
-            event = tokio::time::timeout_at(deadline, sub.recv()) => match event {
-                Ok(Some(MailboxEvent::Message(text))) => {
-                    if let Ok(Signal::Pong { reply_to }) = serde_json::from_str(&text)
-                        && reply_to == id
-                    {
-                        return Ok(true);
-                    }
+        match tokio::time::timeout_at(deadline, sub.recv()).await {
+            Ok(Some(MailboxEvent::Message(text))) => {
+                if let Ok(Signal::Pong { reply_to }) = serde_json::from_str(&text)
+                    && reply_to == id
+                {
+                    return Ok(true);
                 }
-                Ok(Some(MailboxEvent::Open)) => {}
-                Ok(None) | Err(_) => return Ok(false),
-            },
+            }
+            Ok(Some(MailboxEvent::Open)) => {}
+            Ok(None) | Err(_) => return Ok(false),
         }
     }
 }

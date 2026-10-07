@@ -160,7 +160,13 @@ async fn ntfy_subscription(
 
         let mut pending = Vec::new();
         loop {
-            let chunk = match tokio::time::timeout(SILENCE_TIMEOUT, response.chunk()).await {
+            let chunk = tokio::select! {
+                // Подписка больше не нужна — закрываем соединение сразу, а не
+                // когда в тему придёт следующее сообщение.
+                () = tx.closed() => return,
+                chunk = tokio::time::timeout(SILENCE_TIMEOUT, response.chunk()) => chunk,
+            };
+            let chunk = match chunk {
                 Ok(Ok(Some(chunk))) => chunk,
                 _ => break, // конец потока, ошибка или тишина — переподключаемся
             };
