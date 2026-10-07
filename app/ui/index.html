@@ -31,6 +31,18 @@
           </span>
         </label>
 
+        <!-- Проверка микрофона: запись на несколько секунд, затем она проигрывается. -->
+        <div class="mic-test">
+          <button type="button" id="mic-test-btn" class="mic-test-btn">
+            <span data-icon="mic"></span>
+            <span id="mic-test-label">Проверить микрофон</span>
+          </button>
+          <div class="meter mic-test-meter" aria-hidden="true">
+            <div id="mic-test-bar" class="meter-fill"></div>
+          </div>
+        </div>
+        <p id="mic-test-hint" class="hint mic-test-hint" hidden></p>
+
         <section class="lan">
           <div class="section-head">
             <span>Войти в комнату</span>
@@ -143,6 +155,10 @@
 
       <!-- Нижняя панель, как в Discord: кто вы и иконки управления. -->
       <section class="card dock">
+        <button type="button" id="muted-hint" class="muted-hint" hidden>
+          <span>Вы говорите, а микрофон выключен</span>
+          <b>Включить</b>
+        </button>
         <button type="button" id="me-avatar" class="avatar dock-avatar tip-left" aria-label="Сменить аватарку" data-tip="Сменить аватарку"></button>
         <div class="me-info">
           <div id="me-name" class="me-name"></div>
@@ -259,6 +275,14 @@
             <button type="button" data-value="mint" title="Мята"></button>
             <button type="button" data-value="amber" title="Янтарь"></button>
             <button type="button" data-value="rose" title="Малина"></button>
+            <button type="button" data-value="blue" title="Синий"></button>
+            <button type="button" data-value="teal" title="Бирюза"></button>
+            <button type="button" data-value="green" title="Зелень"></button>
+            <button type="button" data-value="orange" title="Апельсин"></button>
+            <button type="button" data-value="red" title="Гранат"></button>
+            <button type="button" data-value="fuchsia" title="Фуксия"></button>
+            <button type="button" data-value="cocoa" title="Какао"></button>
+            <button type="button" data-value="graphite" title="Графит"></button>
           </div>
         </div>
 

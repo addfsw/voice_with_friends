@@ -37,6 +37,8 @@ const call = {
   me: null, // мы сами: { id, name, admin, muted, deafened, serverMuted }
   peers: new Map(), // id -> такие же сведения о собеседнике
   statusTimer: null,
+  qualityTimer: null,
+  quality: new Map(), // id -> { level: "good" | "fair" | "bad", text } — качество связи
   chat: [], // сообщения чата: { id, from, name, text, timeMs }, старые — первыми
   chatPending: [], // пришли, пока интерфейс ещё не вошёл в комнату
   title: "", // название комнаты для уведомлений Android ("" — неизвестно)
@@ -88,6 +90,11 @@ const ICON_PATHS = {
   "chevron-right": "M8.59 16.59 13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41Z",
   rotate:
     "M16.48 2.52c3.27 1.55 5.61 4.72 5.97 8.48h1.5C23.44 4.84 18.29 0 12 0l-.66.03 3.81 3.81 1.33-1.32Zm-6.25-.77a1.49 1.49 0 0 0-2.12 0L1.75 8.11a1.49 1.49 0 0 0 0 2.12l12.02 12.02c.59.59 1.54.59 2.12 0l6.36-6.36c.59-.59.59-1.54 0-2.12L10.23 1.75Zm4.6 19.44L2.81 9.17l6.36-6.36 12.02 12.02-6.36 6.36ZM7.52 21.48C4.25 19.94 1.91 16.76 1.55 13H.05C.56 19.16 5.71 24 12 24l.66-.03-3.81-3.81-1.33 1.32Z",
+  "volume-off":
+    "M16.5 12A4.5 4.5 0 0 0 14 7.97v2.21l2.45 2.45c.03-.2.05-.41.05-.63Zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.8 8.8 0 0 0 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71ZM4.27 3 3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.99 8.99 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3ZM12 4 9.91 6.09 12 8.18V4Z",
+  signal: "M3 16h3v5H3v-5Zm5.5-4h3v9h-3v-9ZM14 8h3v13h-3V8Zm5.5-4h3v17h-3V4Z",
+  "signal-fair": "M3 16h3v5H3v-5Zm5.5-4h3v9h-3v-9ZM14 8h3v13h-3V8Z",
+  "signal-bad": "M3 16h3v5H3v-5Z",
   window: "M19 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2Zm0 14H5V8h14v10Z",
 };
 
@@ -1007,6 +1014,10 @@ function enterRoom(server, name, joined, title = null) {
   stopLanSearch();
   clearInterval(call.statusTimer);
   call.statusTimer = setInterval(refreshStatus, 100);
+  clearInterval(call.qualityTimer);
+  call.quality.clear();
+  qualityCounters.clear();
+  call.qualityTimer = setInterval(refreshQuality, 2000);
 }
 
 // Сведения о комнате после (пере)подключения.
@@ -1074,12 +1085,16 @@ function leaveRoom(reason) {
   call.hosting = null;
   call.hostRoom = null;
   call.me = null;
+  hideMutedHint();
   closeMenus();
   closeInvite();
   $("leave-sheet").hidden = true;
   stopInternetPolling();
   clearInterval(call.statusTimer);
   call.statusTimer = null;
+  clearInterval(call.qualityTimer);
+  call.qualityTimer = null;
+  call.quality.clear();
   call.peers.clear();
   showView("connect");
   startLanSearch();
@@ -1343,11 +1358,14 @@ function renderPeers() {
   if (sv.view && !call.peers.get(sv.peer)?.sharing) closeScreenView();
   renderDock();
   const list = $("peers");
+  // Открытое меню человека остаётся открытым, когда список перерисовался.
+  const openMenu = list.querySelector(".peer-menu:not([hidden])")?.closest(".peer")?.dataset.id;
   list.innerHTML = "";
   list.append(peerItem(call.me, true));
   for (const peer of [...call.peers.values()].sort((a, b) => a.id - b.id)) {
     list.append(peerItem(peer, false));
   }
+  if (openMenu) list.querySelector(`.peer[data-id="${openMenu}"]`)?.click();
   $("people-count").textContent = String(call.peers.size + 1);
   if (call.peers.size === 0) {
     const empty = document.createElement("li");
@@ -1409,17 +1427,26 @@ function peerItem(peer, isMe) {
     badge.title = isMe ? "Вы показываете экран" : "Показывает экран";
     title.append(badge);
   }
-  if (!isMe) main.append(volumeControl(peer.id, peer.name));
-
   const side = document.createElement("div");
   side.className = "peer-side";
   if (peer.sharing) side.append(watchButton(peer, isMe));
   // Статус — просто значки; свои микрофон и звук переключаются внизу.
   if (peer.muted) side.append(statusIcon(icon("mic", true), isMe ? "Микрофон выключен" : "Выключил микрофон"));
   if (peer.deafened) side.append(statusIcon(icon("headphones", true), isMe ? "Звук выключен" : "Выключил звук"));
+  if (!isMe) side.append(qualityIcon(peer.id));
+  if (!isMe && savedVolumes()[peer.name] === 0) {
+    side.append(statusIcon(icon("volume-off"), "Вы заглушили его для себя"));
+  }
   if (!isMe) {
-    // Права хоста — в меню, чтобы не путать с значками статуса.
-    if (call.me.admin) side.append(hostMenu(peer));
+    // Громкость и права хоста — в меню человека, чтобы список был чистым.
+    const menu = peerMenu(peer);
+    side.append(menu.wrap);
+    li.classList.add("has-menu");
+    li.addEventListener("click", (event) => {
+      if (event.target.closest("button, .menu")) return;
+      event.stopPropagation();
+      menu.toggle();
+    });
   }
 
   li.append(avatar, main, side);
@@ -1446,50 +1473,117 @@ function statusIcon(iconEl, title) {
   return span;
 }
 
-// Меню хоста для участника: заглушить для всех, выгнать.
-function hostMenu(peer) {
+// Меню человека: громкость, «заглушить для себя», а хосту — заглушить для
+// всех и выгнать. Открывается кнопкой «⋮» или нажатием на строку.
+function peerMenu(peer) {
   const wrap = document.createElement("div");
   wrap.className = "menu-wrap";
-  const button = toggleButton(null, icon("more"), false, "Действия хоста", (event) => {
-    event.stopPropagation();
+  const menu = document.createElement("div");
+  menu.className = "menu peer-menu";
+  menu.hidden = true;
+  // Нажатия внутри меню (ползунок, «Точно выгнать?») не должны его закрывать.
+  menu.addEventListener("click", (event) => event.stopPropagation());
+
+  const toggle = () => {
     const open = !menu.hidden;
     closeMenus();
-    menu.hidden = open;
+    if (open) return;
+    // У нижних строк меню открывается вверх, иначе его обрезал бы край списка.
+    const list = $("peers").getBoundingClientRect();
+    const row = wrap.getBoundingClientRect();
+    menu.classList.toggle("up", row.top > list.top + list.height / 2);
+    menu.classList.add("right");
+    // Качество связи — свежее на момент открытия.
+    menu.querySelector(".quality-note")?.remove();
+    const quality = call.quality.get(peer.id);
+    if (quality) title.after(qualityLine(quality));
+    menu.hidden = false;
+  };
+  const button = toggleButton(null, icon("more"), false, "", (event) => {
+    event.stopPropagation();
+    toggle();
   });
   // Без всплывающей подсказки: она закрывала бы открытое меню.
   button.removeAttribute("title");
-  button.setAttribute("aria-label", "Действия хоста");
-  const menu = document.createElement("div");
-  menu.className = "menu";
-  menu.hidden = true;
+  button.setAttribute("aria-label", `Действия: ${peer.name}`);
 
-  const mute = document.createElement("button");
-  mute.type = "button";
-  mute.textContent = peer.serverMuted ? "Вернуть голос" : "Заглушить для всех";
-  mute.addEventListener("click", () => {
+  const title = document.createElement("div");
+  title.className = "menu-title";
+  title.textContent = peer.name;
+
+  const volume = volumeControl(peer.id, peer.name);
+
+  const localMute = document.createElement("button");
+  localMute.type = "button";
+  const mutedForMe = savedVolumes()[peer.name] === 0;
+  localMute.append(icon("volume-off"));
+  localMute.append(mutedForMe ? "Снова слышать" : "Заглушить для себя");
+  localMute.addEventListener("click", () => {
     closeMenus();
-    invoke("set_server_mute", { id: peer.id, muted: !peer.serverMuted });
+    setLocalMute(peer, !mutedForMe);
   });
 
-  // Выгнать — нужно подтвердить вторым нажатием.
-  const kick = document.createElement("button");
-  kick.type = "button";
-  kick.className = "danger-item";
-  kick.textContent = "Выгнать из комнаты";
-  kick.addEventListener("click", (event) => {
-    event.stopPropagation();
-    if (!kick.classList.contains("armed")) {
-      kick.classList.add("armed");
-      kick.textContent = "Точно выгнать?";
-      return;
-    }
-    closeMenus();
-    invoke("kick", { id: peer.id });
-  });
+  // На телефоне подсказку значка не увидеть — качество связи пишем и в меню.
+  menu.append(title, volume, localMute);
 
-  menu.append(mute, kick);
+  if (call.me.admin) {
+    const mute = document.createElement("button");
+    mute.type = "button";
+    mute.append(icon("mic", !peer.serverMuted));
+    mute.append(peer.serverMuted ? "Вернуть голос" : "Заглушить для всех");
+    mute.addEventListener("click", () => {
+      closeMenus();
+      invoke("set_server_mute", { id: peer.id, muted: !peer.serverMuted });
+    });
+
+    // Выгнать — нужно подтвердить вторым нажатием.
+    const kick = document.createElement("button");
+    kick.type = "button";
+    kick.className = "danger-item";
+    kick.textContent = "Выгнать из комнаты";
+    kick.addEventListener("click", () => {
+      if (!kick.classList.contains("armed")) {
+        kick.classList.add("armed");
+        kick.textContent = "Точно выгнать?";
+        return;
+      }
+      closeMenus();
+      invoke("kick", { id: peer.id });
+    });
+
+    const separator = document.createElement("div");
+    separator.className = "menu-sep";
+    menu.append(separator, mute, kick);
+  }
+
   wrap.append(button, menu);
-  return wrap;
+  return { wrap, toggle };
+}
+
+function qualityLine(quality) {
+  const line = document.createElement("div");
+  line.className = `menu-note quality-note ${quality.level}`;
+  line.textContent = quality.text;
+  return line;
+}
+
+// «Заглушить для себя» — громкость 0; прежняя громкость возвращается обратно.
+function setLocalMute(peer, muted) {
+  const volumes = savedVolumes();
+  const before = store.get("volumesBeforeMute", {});
+  let percent;
+  if (muted) {
+    before[peer.name] = volumes[peer.name] || 100;
+    percent = 0;
+  } else {
+    percent = before[peer.name] || 100;
+    delete before[peer.name];
+  }
+  volumes[peer.name] = percent;
+  store.set("volumes", volumes);
+  store.set("volumesBeforeMute", before);
+  invoke("set_volume", { id: peer.id, volume: percent / 100 }).catch(() => {});
+  renderPeers();
 }
 
 function closeMenus() {
@@ -1512,8 +1606,10 @@ function setDeafened(deafened) {
 }
 
 function volumeControl(id, name) {
-  const row = document.createElement("div");
+  const row = document.createElement("label");
   row.className = "peer-volume";
+  const label = document.createElement("span");
+  label.textContent = "Громкость";
   const slider = document.createElement("input");
   slider.type = "range";
   slider.min = 0;
@@ -1530,7 +1626,7 @@ function volumeControl(id, name) {
     store.set("volumes", volumes);
     invoke("set_volume", { id, volume: slider.value / 100 }).catch(() => {});
   });
-  row.append(slider, value);
+  row.append(label, slider, value);
   return row;
 }
 
@@ -1556,6 +1652,7 @@ listen("peer-joined", ({ payload }) => {
 listen("peer-left", ({ payload }) => {
   call.peers.delete(payload.id);
   avatars.delete(payload.id);
+  call.quality.delete(payload.id);
   renderPeers();
 });
 
@@ -2143,7 +2240,93 @@ async function refreshStatus() {
     li.classList.toggle("speaking", active);
   }
   $("room-view").querySelector(".dock").classList.toggle("speaking", status.transmitting);
+  checkTalkingMuted(status.levelDb);
 }
+
+// Говорят с выключенным микрофоном — подсказываем включить. Около секунды
+// голоса громче порога подряд (короткий кашель или стук не в счёт), и не
+// чаще раза в 20 секунд.
+const mutedTalk = { score: 0, quietUntil: 0, timer: null };
+
+function checkTalkingMuted(levelDb) {
+  const me = call.me;
+  if (!me?.muted || me.deafened || me.serverMuted) {
+    mutedTalk.score = 0;
+    hideMutedHint();
+    return;
+  }
+  const threshold = Math.max(store.get("vad", -45), -50);
+  mutedTalk.score = levelDb >= threshold ? mutedTalk.score + 1 : Math.max(0, mutedTalk.score - 0.34);
+  if (mutedTalk.score < 8 || Date.now() < mutedTalk.quietUntil) return;
+  mutedTalk.score = 0;
+  mutedTalk.quietUntil = Date.now() + 20_000;
+  $("muted-hint").hidden = false;
+  clearTimeout(mutedTalk.timer);
+  mutedTalk.timer = setTimeout(hideMutedHint, 6000);
+}
+
+function hideMutedHint() {
+  clearTimeout(mutedTalk.timer);
+  $("muted-hint").hidden = true;
+}
+
+// Качество связи с каждым собеседником — по счётчикам звука за последние
+// 2 секунды: сколько пакетов потерялось или опоздало и какая задержка.
+const qualityCounters = new Map(); // id -> { received, lost, late }
+
+const QUALITY_TEXT = { good: "Связь хорошая", fair: "Связь так себе", bad: "Связь плохая" };
+
+async function refreshQuality() {
+  let stats;
+  try {
+    stats = await invoke("audio_stats");
+  } catch {
+    return;
+  }
+  if (!stats || !call.me) return;
+  for (const peer of stats.peers) {
+    const prev = qualityCounters.get(peer.id) ?? { received: 0, lost: 0, late: 0 };
+    qualityCounters.set(peer.id, { received: peer.received, lost: peer.lost, late: peer.late });
+    const received = peer.received - prev.received;
+    // Человек молчит — звука нет, и судить не по чему: оставляем прежнее.
+    if (received < 10) continue;
+    const lostPct = (100 * Math.max(0, peer.lost - prev.lost)) / received;
+    const latePct = (100 * Math.max(0, peer.late - prev.late)) / received;
+    const delay = Math.round(peer.delayMs);
+    let level = "good";
+    if (lostPct > 5 || latePct > 5 || delay > 300) level = "bad";
+    else if (lostPct > 1.5 || latePct > 2 || delay > 150) level = "fair";
+    const text = `${QUALITY_TEXT[level]}: задержка ${delay} мс, потери ${lostPct.toFixed(1).replace(".", ",")}%`;
+    call.quality.set(peer.id, { level, text });
+  }
+  for (const li of document.querySelectorAll(".peer:not(.me)")) {
+    li.querySelector(".quality")?.replaceWith(qualityIcon(Number(li.dataset.id)));
+  }
+}
+
+// Значок качества связи; пока данных нет — пустое место той же ширины.
+function qualityIcon(id) {
+  const q = call.quality.get(id);
+  const span = document.createElement("span");
+  span.className = "status-icon quality";
+  if (!q) {
+    span.hidden = true;
+    return span;
+  }
+  span.classList.add(q.level);
+  span.title = q.text;
+  span.setAttribute("aria-label", q.text);
+  // Сколько палочек — как у сигнала телефона: не только цветом.
+  const back = icon("signal");
+  back.classList.add("signal-back");
+  span.append(back, icon(q.level === "good" ? "signal" : `signal-${q.level}`));
+  return span;
+}
+
+$("muted-hint").addEventListener("click", () => {
+  hideMutedHint();
+  if (call.me?.muted) setMuted(false);
+});
 
 
 // ---------------------------------------------------------------------------
@@ -2672,8 +2855,96 @@ function audioRoute() {
 }
 
 function prepareAudio() {
+  stopMicTest(false);
   androidBridge?.prepareCall(audioRoute());
 }
+
+// ---------------------------------------------------------------------------
+// Проверка микрофона до входа: запись, затем она проигрывается
+// ---------------------------------------------------------------------------
+
+const micTest = { timer: null, loudest: -120 };
+
+async function startMicTest() {
+  const { input, output } = formValues();
+  // Телефон: режим «разговор» и выбранный динамик — как в звонке.
+  androidBridge?.prepareCall(audioRoute());
+  micTest.loudest = -120;
+  $("mic-test-hint").hidden = true;
+  try {
+    await invoke("mic_test_start", { input, output });
+  } catch (e) {
+    androidBridge?.callEnded();
+    finishMicTest(errorText(e));
+    return;
+  }
+  document.querySelector(".mic-test").classList.add("running");
+  clearInterval(micTest.timer);
+  micTest.timer = setInterval(refreshMicTest, 80);
+}
+
+async function refreshMicTest() {
+  let state;
+  try {
+    state = await invoke("mic_test_status");
+  } catch {
+    return;
+  }
+  if (!micTest.timer) return;
+  const bar = $("mic-test-bar");
+  const label = $("mic-test-label");
+  if (state.phase === "recording") {
+    micTest.loudest = Math.max(micTest.loudest, state.levelDb);
+    bar.style.width = `${dbToPercent(state.levelDb)}%`;
+    bar.classList.toggle("active", state.levelDb > -50);
+    const left = Math.max(1, Math.ceil(4 * (1 - state.progress)));
+    label.textContent = `Скажите что-нибудь… ${left}`;
+  } else if (state.phase === "playing") {
+    bar.style.width = `${Math.round(state.progress * 100)}%`;
+    bar.classList.add("active");
+    label.textContent = "Слушайте, как вас слышно";
+  } else if (state.phase === "failed") {
+    finishMicTest(state.error || "Не удалось открыть микрофон");
+  } else {
+    finishMicTest(
+      micTest.loudest < -55
+        ? "Вас почти не слышно. Проверьте, тот ли микрофон выбран в настройках и не выключен ли он."
+        : null,
+    );
+  }
+}
+
+// Проверка закончилась: `problem` — что сказать, если что-то не так.
+function finishMicTest(problem) {
+  stopMicTest(!call.me);
+  if (problem) {
+    $("mic-test-hint").textContent = problem;
+    $("mic-test-hint").classList.add("error");
+    $("mic-test-hint").hidden = false;
+  }
+}
+
+// Останавливает проверку. `endAudio` — на телефоне выйти из режима «разговор»
+// (не нужно, если сразу начинается звонок).
+function stopMicTest(endAudio) {
+  if (!micTest.timer) return;
+  clearInterval(micTest.timer);
+  micTest.timer = null;
+  invoke("mic_test_stop").catch(() => {});
+  if (endAudio) androidBridge?.callEnded();
+  document.querySelector(".mic-test").classList.remove("running");
+  $("mic-test-label").textContent = "Проверить микрофон";
+  const bar = $("mic-test-bar");
+  bar.style.width = "0";
+  bar.classList.remove("active");
+  $("mic-test-hint").classList.remove("error");
+  $("mic-test-hint").hidden = true;
+}
+
+$("mic-test-btn").addEventListener("click", () => {
+  if (micTest.timer) stopMicTest(true);
+  else startMicTest();
+});
 
 const selectAudioRoute = segmented($("audio-route"), audioRoute(), setAudioRoute);
 

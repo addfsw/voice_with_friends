@@ -108,6 +108,14 @@
 :root[data-accent="mint"] { --accent: #12a37f; --accent-strong: #0e8a6b; }
 :root[data-accent="amber"] { --accent: #e08a00; --accent-strong: #c47700; }
 :root[data-accent="rose"] { --accent: #e5486e; --accent-strong: #cc3359; }
+:root[data-accent="blue"] { --accent: #2f6fed; --accent-strong: #1f5ad6; }
+:root[data-accent="teal"] { --accent: #0e9aa7; --accent-strong: #0b8089; }
+:root[data-accent="green"] { --accent: #2f9e44; --accent-strong: #26853a; }
+:root[data-accent="orange"] { --accent: #e8590c; --accent-strong: #c94a08; }
+:root[data-accent="red"] { --accent: #e03131; --accent-strong: #c22626; }
+:root[data-accent="fuchsia"] { --accent: #c026d3; --accent-strong: #a21caf; }
+:root[data-accent="cocoa"] { --accent: #a0703c; --accent-strong: #8a5d2f; }
+:root[data-accent="graphite"] { --accent: #5f6b7a; --accent-strong: #4b5563; }
 
 /* --- Основа --- */
 
@@ -491,6 +499,55 @@ button.link:hover {
 .who:focus-within {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* Проверка микрофона под именем: кнопка и шкала громкости. */
+.mic-test {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 4px;
+}
+
+.mic-test-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  padding: 6px 12px 6px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mic-test-btn .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.mic-test.running .mic-test-btn {
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.mic-test-meter {
+  flex: 1;
+  min-width: 40px;
+  opacity: 0.5;
+  transition: opacity 120ms;
+}
+
+.mic-test.running .mic-test-meter {
+  opacity: 1;
+}
+
+.mic-test-hint {
+  margin: -4px 4px 0;
+}
+
+.mic-test-hint.error {
+  color: var(--danger);
 }
 
 .avatar.who-avatar {
@@ -1340,10 +1397,69 @@ button.leave:hover {
   color: #f0a020;
 }
 
+.peer.has-menu {
+  cursor: pointer;
+}
+
+/* Меню человека: громкость и действия. */
+.peer-menu {
+  min-width: 250px;
+  text-align: left;
+  cursor: default;
+}
+
+.peer-menu .menu-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .peer-volume {
   display: flex;
   align-items: center;
   gap: 8px;
+  padding: 4px 10px 8px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.menu-note {
+  padding: 0 10px 6px;
+  font-size: 12px;
+  white-space: normal;
+}
+
+.status-icon.quality {
+  position: relative;
+}
+
+.status-icon.quality .icon:not(.signal-back) {
+  position: absolute;
+}
+
+.status-icon.quality .signal-back {
+  opacity: 0.25;
+}
+
+.status-icon.quality.good,
+.quality-note.good {
+  color: var(--speaking);
+}
+
+.status-icon.quality.fair,
+.quality-note.fair {
+  color: var(--warning);
+}
+
+.status-icon.quality.bad,
+.quality-note.bad {
+  color: var(--danger);
+}
+
+.menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
 }
 
 .peer-volume input {
@@ -1430,15 +1546,11 @@ button.leave:hover {
   max-width: 100%;
 }
 
-.peers.tiles .peer-volume {
-  width: 100%;
-}
-
 .peers.tiles .peer-side:empty {
   display: none;
 }
 
-/* Меню хоста — в углу плитки, значки и «Смотреть» — под именем. */
+/* Меню человека — в углу плитки, значки и «Смотреть» — под именем. */
 .peers.tiles .peer-side .menu-wrap {
   position: absolute;
   top: 6px;
@@ -1696,10 +1808,43 @@ button.leave:hover {
 /* Панель управления внизу комнаты */
 
 .dock {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 8px 8px 8px 10px;
+}
+
+/* «Вы говорите, а микрофон выключен» — над панелью, нажатие включает микрофон. */
+.muted-hint {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  z-index: 5;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: max-content;
+  max-width: calc(100% - 16px);
+  padding: 9px 14px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--text);
+  color: var(--bg);
+  font-size: 13px;
+  box-shadow: var(--shadow-pop);
+  animation: rise 180ms ease-out;
+}
+
+.muted-hint b {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  white-space: nowrap;
+}
+
+.muted-hint:hover {
+  filter: brightness(1.1);
 }
 
 .dock-avatar {
@@ -2279,6 +2424,7 @@ button.key.listening {
 
 .swatches {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   padding: 2px;
 }
@@ -2298,6 +2444,14 @@ button.key.listening {
 .swatches button[data-value="mint"] { background: #12a37f; }
 .swatches button[data-value="amber"] { background: #e08a00; }
 .swatches button[data-value="rose"] { background: #e5486e; }
+.swatches button[data-value="blue"] { background: #2f6fed; }
+.swatches button[data-value="teal"] { background: #0e9aa7; }
+.swatches button[data-value="green"] { background: #2f9e44; }
+.swatches button[data-value="orange"] { background: #e8590c; }
+.swatches button[data-value="red"] { background: #e03131; }
+.swatches button[data-value="fuchsia"] { background: #c026d3; }
+.swatches button[data-value="cocoa"] { background: #a0703c; }
+.swatches button[data-value="graphite"] { background: #5f6b7a; }
 
 .swatches button:hover {
   transform: scale(1.08);

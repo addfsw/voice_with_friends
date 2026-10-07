@@ -28,6 +28,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use vwf_client::call::{AudioSettings, Call, CallEvent};
 use vwf_client::cues::Cue;
 use vwf_client::known_servers::KnownServers;
+use vwf_client::mic_test::{MicTest, Phase};
 use vwf_client::net::{Availability, CertificateChanged, Trust};
 use vwf_client::pipeline::{TxMode, TxState};
 use vwf_client::{audio, discovery};
@@ -63,6 +64,8 @@ struct AppState {
     close_to_tray: AtomicBool,
     #[cfg_attr(mobile, allow(dead_code))]
     tray_ready: AtomicBool,
+    /// Проверка микрофона до входа в комнату.
+    mic_test: Mutex<Option<MicTest>>,
 }
 
 /// Ошибки отдаём в интерфейс строкой — он покажет её пользователю.
@@ -105,6 +108,67 @@ async fn list_devices() -> CmdResult<Devices> {
         default_input: list.default_input,
         default_output: list.default_output,
     })
+}
+
+/// Сколько секунд записывается проверка микрофона.
+const MIC_TEST_SECONDS: f32 = 4.0;
+
+/// Проверка микрофона: запись на несколько секунд, затем она проигрывается.
+/// Во время звонка не нужна (там есть индикатор и эхо).
+#[tauri::command]
+async fn mic_test_start(
+    state: State<'_, AppState>,
+    input: Option<String>,
+    output: Option<String>,
+) -> CmdResult<()> {
+    audio_ready()?;
+    if state.call.lock().await.is_some() {
+        return Err("во время разговора проверка не нужна".into());
+    }
+    let non_empty = |s: Option<String>| s.filter(|s| !s.trim().is_empty());
+    // Прежняя проверка останавливается до того, как откроется новая.
+    state.mic_test.lock().unwrap().take();
+    let test = MicTest::start(non_empty(input), non_empty(output), MIC_TEST_SECONDS);
+    *state.mic_test.lock().unwrap() = Some(test);
+    Ok(())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MicTestState {
+    /// "recording", "playing", "done", "failed" или "idle".
+    phase: &'static str,
+    level_db: f32,
+    progress: f32,
+    error: Option<String>,
+}
+
+#[tauri::command]
+fn mic_test_status(state: State<'_, AppState>) -> MicTestState {
+    let test = state.mic_test.lock().unwrap();
+    let Some(test) = test.as_ref() else {
+        return MicTestState { phase: "idle", level_db: -120.0, progress: 0.0, error: None };
+    };
+    let status = test.status();
+    MicTestState {
+        phase: match status.phase {
+            Phase::Recording => "recording",
+            Phase::Playing => "playing",
+            Phase::Done => "done",
+            Phase::Failed => "failed",
+        },
+        level_db: status.level_db,
+        progress: status.progress,
+        error: status.error,
+    }
+}
+
+#[tauri::command]
+async fn mic_test_stop(state: State<'_, AppState>) -> CmdResult<()> {
+    // Остановка ждёт поток проверки — не в главном потоке.
+    let test = state.mic_test.lock().unwrap().take();
+    drop(test);
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -279,6 +343,9 @@ async fn connect(
     // звонка, если он ещё где-то в пути, больше ни на что не влияют.
     let generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
     *state.params.lock().unwrap() = Some(params.clone());
+    // Проверка микрофона заняла бы микрофон и динамики.
+    let test = state.mic_test.lock().unwrap().take();
+    drop(test);
     start_call(&app, &state, &params, generation).await
 }
 
@@ -1068,6 +1135,7 @@ pub fn run() {
             cues: AtomicBool::new(true),
             close_to_tray: AtomicBool::new(true),
             tray_ready: AtomicBool::new(false),
+            mic_test: Mutex::new(None),
         })
         .manage(screen::Screens::default())
         .setup(|app| {
@@ -1118,6 +1186,9 @@ pub fn run() {
             set_noise_suppression,
             set_agc,
             audio_stats,
+            mic_test_start,
+            mic_test_status,
+            mic_test_stop,
             set_cues,
             set_close_to_tray,
             send_chat,
