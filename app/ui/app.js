@@ -572,7 +572,13 @@ function formValues() {
 // Вход: сразу, а если комната с паролем — с запомненным или введённым.
 async function joinTarget(target, typed = null) {
   if (join.busy || roomsBusy || !checkName()) return;
-  if (target.kind === "recent" && join.status.get(target.server) === "offline") {
+  // Повторное нажатие после «не запущена» — всё-таки пробуем войти: хост
+  // старой версии не отвечает на проверку, но впустить может.
+  if (
+    target.kind === "recent" &&
+    join.status.get(target.server) === "offline" &&
+    join.errors.get(target.key) !== OFFLINE_TEXT
+  ) {
     if (await stillOffline(target)) return;
   }
   const manual = target.kind === "manual";
