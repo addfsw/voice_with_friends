@@ -34,6 +34,19 @@
                 <!-- AndroidTV support -->
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
+            <!-- Приглашение в комнату: ссылка poigrulkiny://join/poi-… -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="poigrulkiny" android:host="join" />
+            </intent-filter>
+            <!-- …или текст с кодом, которым поделились из мессенджера. -->
+            <intent-filter android:label="Войти в комнату">
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
         </activity>
 
         <service

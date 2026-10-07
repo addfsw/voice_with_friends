@@ -1,7 +1,11 @@
 package io.github.addfsw.poigrulkiny
 
 import android.Manifest
+import android.content.BroadcastReceiver
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -32,6 +36,17 @@ class MainActivity : TauriActivity() {
   private val callAudio by lazy { CallAudio(this) }
   private val chatNotifier by lazy { ChatNotifier(this) }
   private var webView: WebView? = null
+  /// Приглашение, с которым программу открыли (ссылка или «Поделиться»),
+  /// пока интерфейс его не забрал (takeInvite).
+  @Volatile private var pendingInvite: String? = null
+
+  /// Кнопка микрофона в уведомлении звонка (CallService). Интерфейс
+  /// переключает микрофон и сам сообщает новое состояние через setMuted.
+  private val micToggle = object : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+      webView?.evaluateJavascript("window.onAndroidToggleMic && window.onAndroidToggleMic()", null)
+    }
+  }
 
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
@@ -68,7 +83,26 @@ class MainActivity : TauriActivity() {
       }
     })
 
+    ContextCompat.registerReceiver(
+      this,
+      micToggle,
+      IntentFilter(CallService.ACTION_TOGGLE_MIC),
+      ContextCompat.RECEIVER_NOT_EXPORTED
+    )
+    pendingInvite = inviteText(intent)
     requestPermissions()
+  }
+
+  /// Текст с кодом приглашения: ссылка poigrulkiny://join/poi-… или текст,
+  /// которым поделились из мессенджера. Код в нём ищет интерфейс.
+  private fun inviteText(intent: Intent?): String? {
+    if (intent == null) return null
+    val text = when (intent.action) {
+      Intent.ACTION_VIEW -> intent.dataString
+      Intent.ACTION_SEND -> intent.getStringExtra(Intent.EXTRA_TEXT)
+      else -> null
+    }
+    return text?.takeIf { it.contains("poi-") }
   }
 
   override fun onWebViewCreate(webView: WebView) {
@@ -98,6 +132,11 @@ class MainActivity : TauriActivity() {
   /// Нажатие на уведомление, когда программа уже запущена.
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
+    inviteText(intent)?.let { text ->
+      pendingInvite = text
+      webView?.evaluateJavascript("window.onAndroidInvite && window.onAndroidInvite()", null)
+      return
+    }
     val script = when {
       intent.getBooleanExtra(EXTRA_LEAVE, false) -> "window.onAndroidLeave && window.onAndroidLeave()"
       intent.getBooleanExtra(EXTRA_OPEN_CHAT, false) -> "window.onAndroidOpenChat && window.onAndroidOpenChat()"
@@ -107,6 +146,7 @@ class MainActivity : TauriActivity() {
   }
 
   override fun onDestroy() {
+    unregisterReceiver(micToggle)
     callAudio.stop()
     chatNotifier.clear()
     super.onDestroy()
@@ -142,9 +182,17 @@ class MainActivity : TauriActivity() {
     /// Начался звонок: сервис с уведомлением держит микрофон и сеть в фоне.
     @JavascriptInterface
     fun callStarted(room: String) {
+      // Состояние микрофона интерфейс сообщит сразу после (setMuted).
+      CallService.setMuted(false)
       val intent = Intent(this@MainActivity, CallService::class.java)
         .putExtra(CallService.EXTRA_ROOM, room)
       ContextCompat.startForegroundService(this@MainActivity, intent)
+    }
+
+    /// Микрофон выключили или включили — обновить уведомление звонка.
+    @JavascriptInterface
+    fun setMuted(muted: Boolean) {
+      CallService.setMuted(muted)
     }
 
     @JavascriptInterface
@@ -207,6 +255,31 @@ class MainActivity : TauriActivity() {
           caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "wifi"
         caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "cellular"
         else -> "other"
+      }
+    }
+
+    /// Забрать приглашение, с которым открыли программу (или null).
+    @JavascriptInterface
+    fun takeInvite(): String? {
+      val text = pendingInvite
+      pendingInvite = null
+      return text
+    }
+
+    /// «Поделиться» приглашением: системное меню (мессенджеры и т.п.).
+    @JavascriptInterface
+    fun share(text: String) {
+      runOnUiThread {
+        val send = Intent(Intent.ACTION_SEND)
+          .setType("text/plain")
+          .putExtra(Intent.EXTRA_TEXT, text)
+        // Себя в списке не показываем: «Поигрулькины» принимают приглашения.
+        val chooser = Intent.createChooser(send, "Пригласить в комнату")
+          .putExtra(
+            Intent.EXTRA_EXCLUDE_COMPONENTS,
+            arrayOf(ComponentName(this@MainActivity, MainActivity::class.java))
+          )
+        startActivity(chooser)
       }
     }
 

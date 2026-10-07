@@ -611,6 +611,7 @@ async function joinTarget(target, typed = null) {
     enterRoom(target.server, name, joined, recentRooms()[0]?.title);
   } catch (e) {
     androidBridge?.callEnded();
+    notifiedMuted = null;
     if (e?.kind === "certificateChanged") {
       showCertWarning(e);
     } else if (needsPassword(e)) {
@@ -975,6 +976,7 @@ async function openRoom(room) {
     enterRoom(hosted.localAddress, name, joined);
   } catch (e) {
     androidBridge?.callEnded();
+    notifiedMuted = null;
     if (hosted) await invoke("stop_server").catch(() => {});
     join.errors.set(`room:${room.id}`, errorText(e));
   } finally {
@@ -994,6 +996,7 @@ function enterRoom(server, name, joined, title = null) {
   call.title = call.hosting?.name ?? title ?? "";
   // Android: уведомление «вы в комнате» держит звонок, когда программа свёрнута.
   androidBridge?.callStarted(call.title);
+  notifiedMuted = false;
   setReconnecting(false);
   applyJoined(joined);
   renderHostControls();
@@ -1060,6 +1063,7 @@ listen("call-reconnected", ({ payload }) => {
 function leaveRoom(reason) {
   closeScreenView();
   androidBridge?.callEnded();
+  notifiedMuted = null;
   setReconnecting(false);
   closeShareSheet();
   setSharing(false);
@@ -1269,6 +1273,9 @@ async function copyText(text) {
   toast(`Скопировано: ${text}`);
 }
 
+// Что сейчас написано в уведомлении звонка Android; null — звонка нет.
+let notifiedMuted = null;
+
 // Нижняя панель: кто вы, состояние и иконки управления.
 function renderDock() {
   const me = call.me;
@@ -1294,6 +1301,12 @@ function renderDock() {
       always: "микрофон открыт",
       ptt: key ? `рация: ${keyLabel(key)}` : "рация: клавиша не назначена",
     }[currentMode];
+  }
+
+  // Android: кнопка и строка в уведомлении звонка — как микрофон здесь.
+  if (androidBridge && notifiedMuted !== null && notifiedMuted !== me.muted) {
+    notifiedMuted = me.muted;
+    androidBridge.setMuted(me.muted);
   }
 
   const mic = $("mic-btn");
@@ -1964,6 +1977,11 @@ window.addEventListener("resize", () => sv.view && applyZoom());
 // закрывать нечего — программа сворачивается.
 window.onAndroidBack = () => closeScreenView();
 
+// Android: кнопка микрофона в уведомлении звонка.
+window.onAndroidToggleMic = () => {
+  if (call.me) setMuted(!call.me.muted);
+};
+
 // Android: «Выйти» в уведомлении звонка — как кнопка «Выйти» (хосту — с вопросом).
 window.onAndroidLeave = () => {
   if (call.me) $("leave-btn").click();
@@ -2201,6 +2219,40 @@ $("room-lan").addEventListener("change", async () => {
 });
 
 $("invite-copy").addEventListener("click", () => copyText($("invite-code").textContent));
+
+// Текст приглашения для мессенджера. Пароль — в нём же, чтобы друг вошёл
+// одним нажатием (см. joinFromInvite).
+function inviteMessage() {
+  const room = call.hostRoom?.name ?? call.title;
+  const lines = [
+    `Заходи ко мне в Поигрулькины${room ? `, комната «${room}»` : ""}.`,
+    `Код приглашения: ${$("invite-code").textContent}`,
+  ];
+  const password = call.hostRoom?.password;
+  if (password) lines.push(`Пароль: ${password}`);
+  return lines.join("\n");
+}
+
+$("invite-share").addEventListener("click", () => androidBridge?.share(inviteMessage()));
+
+// Приглашение пришло извне (Android: ссылка или «Поделиться» из
+// мессенджера): находим в тексте код и пароль и входим.
+function joinFromInvite(text) {
+  const code = text?.match(/poi-[A-Za-z0-9_-]+/)?.[0];
+  if (!code) return;
+  if (call.me) {
+    toast("Чтобы войти по приглашению, сначала выйдите из этой комнаты");
+    return;
+  }
+  const password = text.match(/Пароль:[ \t]*(.+)/)?.[1]?.trim() ?? "";
+  openManual();
+  $("server").value = code;
+  $("manual-pass").value = password;
+  // Без имени checkName само подсветит поле, а форма останется заполненной.
+  if ($("name").value.trim()) $("manual-form").requestSubmit();
+}
+
+window.onAndroidInvite = () => joinFromInvite(androidBridge?.takeInvite());
 
 $("echo").addEventListener("change", () => {
   invoke("set_echo", { enabled: $("echo").checked });
@@ -2707,6 +2759,8 @@ async function init() {
   } catch (e) {
     toast(String(e));
   }
+  // Программу открыли ссылкой-приглашением или «Поделиться».
+  if (androidBridge) window.onAndroidInvite();
 }
 
 init();
