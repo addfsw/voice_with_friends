@@ -7,6 +7,7 @@ import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import androidx.annotation.RequiresApi
 
 /// Звук на время звонка: режим «разговор» (в нём телефон включает
@@ -17,9 +18,16 @@ import androidx.annotation.RequiresApi
 /// - `auto` — в гарнитуру или наушники, если подключены, иначе в громкий
 ///   динамик (как громкая связь: телефон можно не держать у уха);
 /// - `speaker` — всегда громкий динамик;
-/// - `earpiece` — динамик у уха, как в обычном звонке.
+/// - `earpiece` — динамик у уха, как в обычном звонке. Тогда, как в
+///   обычном звонке, экран гаснет, когда телефон поднесли к уху (датчик
+///   приближения), чтобы щека не нажимала кнопки.
 class CallAudio(context: Context) {
   private val audio = context.getSystemService(AudioManager::class.java)
+  private val proximity: PowerManager.WakeLock? =
+    context.getSystemService(PowerManager::class.java)
+      ?.takeIf { it.isWakeLockLevelSupported(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK) }
+      ?.newWakeLock(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK, "poigrulkiny:proximity")
+      ?.apply { setReferenceCounted(false) }
   private val handler = Handler(Looper.getMainLooper())
   private var active = false
   private var route = "auto"
@@ -43,6 +51,7 @@ class CallAudio(context: Context) {
     if (!active) return
     active = false
     audio.unregisterAudioDeviceCallback(devices)
+    setProximity(false)
     if (Build.VERSION.SDK_INT >= 31) {
       audio.clearCommunicationDevice()
     } else {
@@ -64,6 +73,19 @@ class CallAudio(context: Context) {
 
   private fun apply() {
     if (Build.VERSION.SDK_INT >= 31) applyModern() else applyLegacy()
+    setProximity(route == "earpiece")
+  }
+
+  /// Гасить экран у уха — только пока звук идёт в динамик у уха.
+  private fun setProximity(on: Boolean) {
+    val lock = proximity ?: return
+    if (on && !lock.isHeld) {
+      // С запасом на самый долгий разговор: снимается при выходе из комнаты.
+      lock.acquire(12 * 60 * 60 * 1000L)
+    } else if (!on && lock.isHeld) {
+      // Экран включится, когда телефон уберут от уха.
+      lock.release(PowerManager.RELEASE_FLAG_WAIT_FOR_NO_PROXIMITY)
+    }
   }
 
   @RequiresApi(31)
