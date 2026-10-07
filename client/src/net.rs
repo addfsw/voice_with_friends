@@ -227,6 +227,18 @@ impl std::fmt::Display for CertificateChanged {
 
 impl std::error::Error for CertificateChanged {}
 
+static APP_VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Платформа и версия программы, которые видят остальные в комнате
+/// (`PeerInfo::app`), например `android 0.1.42`. Задаётся один раз при запуске.
+pub fn set_app_version(app: String) {
+    let _ = APP_VERSION.set(app);
+}
+
+fn app_version() -> String {
+    APP_VERSION.get().cloned().unwrap_or_else(|| format!("cli {}", env!("CARGO_PKG_VERSION")))
+}
+
 /// С чем входить в комнату: секрет хоста (если мы хост) и пароль комнаты.
 #[derive(Clone, Copy, Default, Debug)]
 pub struct Credentials<'a> {
@@ -461,7 +473,7 @@ async fn handshake(
     )
     .await?;
     let password = credentials.password.unwrap_or_default().to_string();
-    vwf_proto::write_msg(&mut send, &ClientMsg::Auth { password }).await?;
+    vwf_proto::write_msg(&mut send, &ClientMsg::Auth { password, app: app_version() }).await?;
 
     let reply = tokio::time::timeout(Duration::from_secs(10), vwf_proto::read_msg(&mut recv))
         .await

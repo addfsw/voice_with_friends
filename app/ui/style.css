@@ -1165,8 +1165,9 @@ button.leave:hover {
   background: var(--surface-2);
 }
 
-/* Android: «Поделиться приглашением» под кодом. */
-#invite-share {
+/* Android: «Поделиться приглашением» под кодом и «Отправить программу». */
+#invite-share,
+#send-app {
   width: 100%;
   margin-top: 8px;
 }

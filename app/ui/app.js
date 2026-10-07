@@ -1014,6 +1014,7 @@ function applyJoined(joined) {
   const server = call.server;
   call.me = joined.me;
   call.peers = new Map(joined.peers.map((p) => [p.id, p]));
+  checkNewerApp();
   $("room-title").textContent = call.hosting?.name ?? "Комната";
   $("server-label").textContent = call.hosting
     ? "ваш сервер"
@@ -1549,6 +1550,7 @@ listen("peer-joined", ({ payload }) => {
   call.peers.set(payload.id, payload);
   applySavedVolume(payload.id, payload.name);
   renderPeers();
+  checkNewerApp();
 });
 
 listen("peer-left", ({ payload }) => {
@@ -2253,6 +2255,54 @@ function joinFromInvite(text) {
 }
 
 window.onAndroidInvite = () => joinFromInvite(androidBridge?.takeInvite());
+
+// ---------------------------------------------------------------------------
+// Версия программы
+// ---------------------------------------------------------------------------
+
+// «android 0.1.42» → { platform: "android", version: [0, 1, 42], text: "0.1.42" }.
+function parseApp(app) {
+  const [platform, text] = (app ?? "").split(" ");
+  if (!platform || !/^\d+(\.\d+)*$/.test(text ?? "")) return null;
+  return { platform, version: text.split(".").map(Number), text };
+}
+
+function newerVersion(a, b) {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const diff = (a[i] ?? 0) - (b[i] ?? 0);
+    if (diff) return diff > 0;
+  }
+  return false;
+}
+
+// О каких версиях уже сказали: подсказка — один раз за запуск программы.
+const announcedVersions = new Set();
+
+// Если у кого-то в комнате та же программа (Android или Windows), но новее,
+// подсказываем попросить её у него.
+function checkNewerApp() {
+  const mine = parseApp(call.me?.app);
+  if (!mine) return;
+  for (const peer of call.peers.values()) {
+    const theirs = parseApp(peer.app);
+    if (!theirs || theirs.platform !== mine.platform) continue;
+    if (!newerVersion(theirs.version, mine.version) || announcedVersions.has(theirs.text)) continue;
+    announcedVersions.add(theirs.text);
+    toast(
+      isAndroid
+        ? `У ${peer.name} программа новее (${theirs.text}). Попросите прислать: Настройки → «Отправить программу другу».`
+        : `У ${peer.name} программа новее (${theirs.text}). Попросите у него новую версию.`,
+    );
+    return;
+  }
+}
+
+window.__TAURI__?.app
+  ?.getVersion()
+  .then((version) => ($("app-version").textContent = version))
+  .catch(() => {});
+
+$("send-app").addEventListener("click", () => androidBridge?.shareApp());
 
 $("echo").addEventListener("change", () => {
   invoke("set_echo", { enabled: $("echo").checked });

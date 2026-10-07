@@ -629,9 +629,14 @@ async fn handle_connection(
     };
 
     if protocol != PROTOCOL_VERSION {
-        let reason = format!(
-            "версия протокола клиента {protocol}, а сервера {PROTOCOL_VERSION}: обновите программу"
-        );
+        // Подсказываем, у кого брать новую программу: у хоста или ему.
+        let advice = if protocol < PROTOCOL_VERSION {
+            "у хоста программа новее — попросите у него новую версию"
+        } else {
+            "у хоста программа старее — отправьте ему новую версию"
+        };
+        let reason =
+            format!("версия протокола клиента {protocol}, а сервера {PROTOCOL_VERSION}: {advice}");
         vwf_proto::write_msg(&mut send, &ServerMsg::Rejected { reason: reason.clone() }).await?;
         let _ = send.finish();
         // Даём сообщению дойти, прежде чем рвать соединение.
@@ -642,7 +647,7 @@ async fn handle_connection(
     let auth = tokio::time::timeout(Duration::from_secs(10), vwf_proto::read_msg(&mut recv))
         .await
         .context("клиент не прислал пароль")??;
-    let Some(ClientMsg::Auth { password }) = auth else {
+    let Some(ClientMsg::Auth { password, app }) = auth else {
         anyhow::bail!("клиент не прислал пароль");
     };
 
@@ -682,7 +687,7 @@ async fn handle_connection(
         let mut room = room.lock().unwrap();
         let id = room.next_id;
         room.next_id += 1;
-        let info = PeerInfo { admin, ..PeerInfo::new(id, name.clone()) };
+        let info = PeerInfo { admin, app: sanitize_app(&app), ..PeerInfo::new(id, name.clone()) };
         let mut peers: Vec<PeerInfo> = room.peers.values().map(|p| p.info.clone()).collect();
         peers.sort_by_key(|p| p.id);
         // Welcome кладём в очередь до того, как участник попадёт в комнату, —
@@ -821,6 +826,12 @@ fn sanitize_chat(text: &str) -> String {
         .collect::<String>()
         .trim_end()
         .to_string()
+}
+
+/// Версия программы участника: без управляющих символов и не длиннее
+/// [`vwf_proto::MAX_APP_CHARS`].
+fn sanitize_app(app: &str) -> String {
+    app.trim().chars().filter(|c| !c.is_control()).take(vwf_proto::MAX_APP_CHARS).collect()
 }
 
 fn sanitize_name(name: &str) -> String {

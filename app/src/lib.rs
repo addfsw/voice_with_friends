@@ -130,6 +130,8 @@ struct Peer {
     deafened: bool,
     server_muted: bool,
     sharing: bool,
+    /// Платформа и версия программы, например `android 0.1.42`.
+    app: String,
 }
 
 impl From<PeerInfo> for Peer {
@@ -142,6 +144,7 @@ impl From<PeerInfo> for Peer {
             deafened: p.deafened,
             server_muted: p.server_muted,
             sharing: p.sharing,
+            app: p.app,
         }
     }
 }
@@ -1071,6 +1074,12 @@ pub fn run() {
             // Файл с запомненными сертификатами — в папке данных программы.
             #[cfg(target_os = "android")]
             android::init(app);
+            // Остальные в комнате видят, у кого программа новее.
+            vwf_client::net::set_app_version(format!(
+                "{} {}",
+                std::env::consts::OS,
+                app.package_info().version
+            ));
             let data_dir = app.path().app_data_dir()?;
             let state = app.state::<AppState>();
             *state.known.lock().unwrap() = KnownServers::load(data_dir.join("known_servers.txt"));

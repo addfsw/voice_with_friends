@@ -15,10 +15,12 @@ import android.os.Build
 import android.os.Bundle
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
+import java.io.File
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -281,6 +283,30 @@ class MainActivity : TauriActivity() {
           )
         startActivity(chooser)
       }
+    }
+
+    /// «Отправить программу другу»: установленный APK — в системное меню
+    /// (Telegram и т.п.). Подписан тем же ключом, поэтому у друга встаёт
+    /// поверх старой версии.
+    @JavascriptInterface
+    fun shareApp() {
+      Thread {
+        val uri = try {
+          val dir = File(cacheDir, "apk").apply { mkdirs() }
+          val apk = File(dir, "Poigrulkiny.apk")
+          File(applicationInfo.sourceDir).copyTo(apk, overwrite = true)
+          FileProvider.getUriForFile(this@MainActivity, "$packageName.fileprovider", apk)
+        } catch (e: Exception) {
+          return@Thread
+        }
+        runOnUiThread {
+          val send = Intent(Intent.ACTION_SEND)
+            .setType("application/vnd.android.package-archive")
+            .putExtra(Intent.EXTRA_STREAM, uri)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+          startActivity(Intent.createChooser(send, "Отправить программу"))
+        }
+      }.start()
     }
 
     @JavascriptInterface
