@@ -214,36 +214,6 @@
         </header>
 
         <div class="group">
-          <div class="group-title">Аватарка</div>
-          <div class="profile-row">
-            <div id="profile-avatar" class="avatar profile-avatar" aria-hidden="true"></div>
-            <div class="profile-actions">
-              <button type="button" id="avatar-pick" class="primary">Выбрать картинку…</button>
-              <button type="button" id="avatar-remove">Убрать</button>
-            </div>
-          </div>
-          <p class="hint">Её увидят все в комнате. Картинка обрежется до квадрата.</p>
-          <input type="file" id="avatar-file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" hidden />
-        </div>
-
-        <div class="group">
-          <div class="group-title">Оформление</div>
-          <div id="theme" class="segmented" role="radiogroup" aria-label="Тема">
-            <button type="button" data-value="system">Как в системе</button>
-            <button type="button" data-value="light">Светлая</button>
-            <button type="button" data-value="dark">Тёмная</button>
-          </div>
-          <div class="swatches" id="accent" role="radiogroup" aria-label="Цвет">
-            <button type="button" data-value="indigo" title="Индиго"></button>
-            <button type="button" data-value="violet" title="Сирень"></button>
-            <button type="button" data-value="sky" title="Небо"></button>
-            <button type="button" data-value="mint" title="Мята"></button>
-            <button type="button" data-value="amber" title="Янтарь"></button>
-            <button type="button" data-value="rose" title="Малина"></button>
-          </div>
-        </div>
-
-        <div class="group">
           <div class="group-title">Звук</div>
           <label class="field desktop-only">
             <span>Микрофон</span>
@@ -260,31 +230,57 @@
               <button type="button" data-value="speaker" title="Всегда громкий динамик">Громкий</button>
               <button type="button" data-value="earpiece" title="Динамик у уха, как в обычном звонке">У уха</button>
             </div>
-            <p class="hint">«Авто» — в наушники, если они подключены, иначе в громкий динамик. Эхо телефон убирает сам.</p>
           </div>
           <label class="switch-row" title="Короткий сигнал, когда кто-то вошёл или вышел, и при нажатии кнопок микрофона и звука">
             <span>Звуки событий</span>
             <input type="checkbox" id="cues" class="switch" />
           </label>
-          <p class="hint desktop-only">Устройства можно менять и во время разговора — связь не прервётся.</p>
         </div>
 
-        <div id="diag" class="group" hidden>
-          <div class="group-title">Диагностика звука</div>
-          <ul id="diag-list" class="diag"></ul>
-          <p class="hint">
-            Если звук прерывается, посмотрите, какие числа растут в этот момент, —
-            по ним видно, где проблема: у микрофона, у вывода или в сети.
-          </p>
+        <div class="group">
+          <div class="group-title">Профиль и оформление</div>
+          <div class="profile-row">
+            <button type="button" id="profile-avatar" class="avatar profile-avatar" title="Выбрать картинку: её увидят все в комнате" aria-label="Выбрать аватарку"></button>
+            <div class="profile-actions">
+              <button type="button" id="avatar-pick" class="link" title="Картинка обрежется до квадрата">Сменить аватарку</button>
+              <button type="button" id="avatar-remove" class="link">Убрать</button>
+            </div>
+          </div>
+          <input type="file" id="avatar-file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" hidden />
+          <div id="theme" class="segmented" role="radiogroup" aria-label="Тема">
+            <button type="button" data-value="system">Как в системе</button>
+            <button type="button" data-value="light">Светлая</button>
+            <button type="button" data-value="dark">Тёмная</button>
+          </div>
+          <div class="swatches" id="accent" role="radiogroup" aria-label="Цвет">
+            <button type="button" data-value="indigo" title="Индиго"></button>
+            <button type="button" data-value="violet" title="Сирень"></button>
+            <button type="button" data-value="sky" title="Небо"></button>
+            <button type="button" data-value="mint" title="Мята"></button>
+            <button type="button" data-value="amber" title="Янтарь"></button>
+            <button type="button" data-value="rose" title="Малина"></button>
+          </div>
         </div>
 
-        <div class="group desktop-only">
-          <div class="group-title">Программа</div>
-          <label class="switch-row" title="Крестик окна прячет программу в трей рядом с часами, разговор продолжается. Выйти — через меню значка в трее">
-            <span>Сворачивать в трей при закрытии</span>
-            <input type="checkbox" id="close-to-tray" class="switch" />
-          </label>
-        </div>
+        <!-- Редкое: открывается по нажатию, чтобы не загромождать окно -->
+        <details id="advanced" class="advanced">
+          <summary>Дополнительно</summary>
+          <div class="advanced-body">
+            <label class="switch-row desktop-only" title="Крестик окна прячет программу в трей рядом с часами, разговор продолжается. Выйти — через меню значка в трее">
+              <span>Сворачивать в трей при закрытии</span>
+              <input type="checkbox" id="close-to-tray" class="switch" />
+            </label>
+
+            <div id="diag" class="group" hidden>
+              <div class="group-title">Диагностика звука</div>
+              <ul id="diag-list" class="diag"></ul>
+              <p class="hint">
+                Если звук прерывается, посмотрите, какие числа растут в этот момент, —
+                по ним видно, где проблема: у микрофона, у вывода или в сети.
+              </p>
+            </div>
+          </div>
+        </details>
       </section>
     </div>
 
