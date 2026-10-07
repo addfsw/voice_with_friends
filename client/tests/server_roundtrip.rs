@@ -32,6 +32,8 @@ async fn voice_is_forwarded_to_others_only() {
     let bob = vwf_client::net::connect(&addr, "Боб").await.unwrap();
     assert_eq!(bob.peers.len(), 1);
     assert_eq!(bob.peers[0].name, "Алиса");
+    // Версию программы собеседника видно (у консольного клиента — «cli …»).
+    assert!(bob.peers[0].app.starts_with("cli "), "{}", bob.peers[0].app);
 
     match timeout(T, alice.next_event()).await.unwrap().unwrap() {
         Some(ServerMsg::PeerJoined(p)) => assert_eq!((p.id, p.name.as_str()), (bob.me.id, "Боб")),

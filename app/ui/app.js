@@ -611,6 +611,7 @@ async function joinTarget(target, typed = null) {
     enterRoom(target.server, name, joined, recentRooms()[0]?.title);
   } catch (e) {
     androidBridge?.callEnded();
+    notifiedMuted = null;
     if (e?.kind === "certificateChanged") {
       showCertWarning(e);
     } else if (needsPassword(e)) {
@@ -975,6 +976,7 @@ async function openRoom(room) {
     enterRoom(hosted.localAddress, name, joined);
   } catch (e) {
     androidBridge?.callEnded();
+    notifiedMuted = null;
     if (hosted) await invoke("stop_server").catch(() => {});
     join.errors.set(`room:${room.id}`, errorText(e));
   } finally {
@@ -994,6 +996,7 @@ function enterRoom(server, name, joined, title = null) {
   call.title = call.hosting?.name ?? title ?? "";
   // Android: уведомление «вы в комнате» держит звонок, когда программа свёрнута.
   androidBridge?.callStarted(call.title);
+  notifiedMuted = false;
   setReconnecting(false);
   applyJoined(joined);
   renderHostControls();
@@ -1011,6 +1014,7 @@ function applyJoined(joined) {
   const server = call.server;
   call.me = joined.me;
   call.peers = new Map(joined.peers.map((p) => [p.id, p]));
+  checkNewerApp();
   $("room-title").textContent = call.hosting?.name ?? "Комната";
   $("server-label").textContent = call.hosting
     ? "ваш сервер"
@@ -1060,6 +1064,7 @@ listen("call-reconnected", ({ payload }) => {
 function leaveRoom(reason) {
   closeScreenView();
   androidBridge?.callEnded();
+  notifiedMuted = null;
   setReconnecting(false);
   closeShareSheet();
   setSharing(false);
@@ -1269,6 +1274,9 @@ async function copyText(text) {
   toast(`Скопировано: ${text}`);
 }
 
+// Что сейчас написано в уведомлении звонка Android; null — звонка нет.
+let notifiedMuted = null;
+
 // Нижняя панель: кто вы, состояние и иконки управления.
 function renderDock() {
   const me = call.me;
@@ -1294,6 +1302,12 @@ function renderDock() {
       always: "микрофон открыт",
       ptt: key ? `рация: ${keyLabel(key)}` : "рация: клавиша не назначена",
     }[currentMode];
+  }
+
+  // Android: кнопка и строка в уведомлении звонка — как микрофон здесь.
+  if (androidBridge && notifiedMuted !== null && notifiedMuted !== me.muted) {
+    notifiedMuted = me.muted;
+    androidBridge.setMuted(me.muted);
   }
 
   const mic = $("mic-btn");
@@ -1536,6 +1550,7 @@ listen("peer-joined", ({ payload }) => {
   call.peers.set(payload.id, payload);
   applySavedVolume(payload.id, payload.name);
   renderPeers();
+  checkNewerApp();
 });
 
 listen("peer-left", ({ payload }) => {
@@ -1964,6 +1979,11 @@ window.addEventListener("resize", () => sv.view && applyZoom());
 // закрывать нечего — программа сворачивается.
 window.onAndroidBack = () => closeScreenView();
 
+// Android: кнопка микрофона в уведомлении звонка.
+window.onAndroidToggleMic = () => {
+  if (call.me) setMuted(!call.me.muted);
+};
+
 // Android: «Выйти» в уведомлении звонка — как кнопка «Выйти» (хосту — с вопросом).
 window.onAndroidLeave = () => {
   if (call.me) $("leave-btn").click();
@@ -2201,6 +2221,88 @@ $("room-lan").addEventListener("change", async () => {
 });
 
 $("invite-copy").addEventListener("click", () => copyText($("invite-code").textContent));
+
+// Текст приглашения для мессенджера. Пароль — в нём же, чтобы друг вошёл
+// одним нажатием (см. joinFromInvite).
+function inviteMessage() {
+  const room = call.hostRoom?.name ?? call.title;
+  const lines = [
+    `Заходи ко мне в Поигрулькины${room ? `, комната «${room}»` : ""}.`,
+    `Код приглашения: ${$("invite-code").textContent}`,
+  ];
+  const password = call.hostRoom?.password;
+  if (password) lines.push(`Пароль: ${password}`);
+  return lines.join("\n");
+}
+
+$("invite-share").addEventListener("click", () => androidBridge?.share(inviteMessage()));
+
+// Приглашение пришло извне (Android: ссылка или «Поделиться» из
+// мессенджера): находим в тексте код и пароль и входим.
+function joinFromInvite(text) {
+  const code = text?.match(/poi-[A-Za-z0-9_-]+/)?.[0];
+  if (!code) return;
+  if (call.me) {
+    toast("Чтобы войти по приглашению, сначала выйдите из этой комнаты");
+    return;
+  }
+  const password = text.match(/Пароль:[ \t]*(.+)/)?.[1]?.trim() ?? "";
+  openManual();
+  $("server").value = code;
+  $("manual-pass").value = password;
+  // Без имени checkName само подсветит поле, а форма останется заполненной.
+  if ($("name").value.trim()) $("manual-form").requestSubmit();
+}
+
+window.onAndroidInvite = () => joinFromInvite(androidBridge?.takeInvite());
+
+// ---------------------------------------------------------------------------
+// Версия программы
+// ---------------------------------------------------------------------------
+
+// «android 0.1.42» → { platform: "android", version: [0, 1, 42], text: "0.1.42" }.
+function parseApp(app) {
+  const [platform, text] = (app ?? "").split(" ");
+  if (!platform || !/^\d+(\.\d+)*$/.test(text ?? "")) return null;
+  return { platform, version: text.split(".").map(Number), text };
+}
+
+function newerVersion(a, b) {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const diff = (a[i] ?? 0) - (b[i] ?? 0);
+    if (diff) return diff > 0;
+  }
+  return false;
+}
+
+// О каких версиях уже сказали: подсказка — один раз за запуск программы.
+const announcedVersions = new Set();
+
+// Если у кого-то в комнате та же программа (Android или Windows), но новее,
+// подсказываем попросить её у него.
+function checkNewerApp() {
+  const mine = parseApp(call.me?.app);
+  if (!mine) return;
+  for (const peer of call.peers.values()) {
+    const theirs = parseApp(peer.app);
+    if (!theirs || theirs.platform !== mine.platform) continue;
+    if (!newerVersion(theirs.version, mine.version) || announcedVersions.has(theirs.text)) continue;
+    announcedVersions.add(theirs.text);
+    toast(
+      isAndroid
+        ? `У ${peer.name} программа новее (${theirs.text}). Попросите прислать: Настройки → «Отправить программу другу».`
+        : `У ${peer.name} программа новее (${theirs.text}). Попросите у него новую версию.`,
+    );
+    return;
+  }
+}
+
+window.__TAURI__?.app
+  ?.getVersion()
+  .then((version) => ($("app-version").textContent = version))
+  .catch(() => {});
+
+$("send-app").addEventListener("click", () => androidBridge?.shareApp());
 
 $("echo").addEventListener("change", () => {
   invoke("set_echo", { enabled: $("echo").checked });
@@ -2707,6 +2809,8 @@ async function init() {
   } catch (e) {
     toast(String(e));
   }
+  // Программу открыли ссылкой-приглашением или «Поделиться».
+  if (androidBridge) window.onAndroidInvite();
 }
 
 init();

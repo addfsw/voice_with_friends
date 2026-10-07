@@ -57,6 +57,20 @@ jobs:
         working-directory: app
         run: npm ci
 
+      # Номер сборки — в версии программы (0.1.<номер запуска>): по ней в
+      # комнате видно, у кого программа новее, а Android ставит новую
+      # версию поверх старой (versionCode растёт).
+      - name: Номер версии
+        working-directory: app
+        run: |
+          node -e '
+            const fs = require("fs");
+            const conf = JSON.parse(fs.readFileSync("tauri.conf.json", "utf8"));
+            conf.version = "0.1." + process.env.GITHUB_RUN_NUMBER;
+            fs.writeFileSync("tauri.conf.json", JSON.stringify(conf, null, 2) + "\n");
+            console.log("Версия", conf.version);
+          '
+
       - name: Сборка APK (arm64 и x86_64)
         working-directory: app
         run: |

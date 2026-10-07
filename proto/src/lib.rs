@@ -21,7 +21,11 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 /// 5 — демонстрация экрана.
 /// 6 — аватарки.
 /// 7 — пароль комнаты (`ClientMsg::Auth` сразу после `Hello`), лимит участников.
-pub const PROTOCOL_VERSION: u32 = 7;
+/// 8 — версия программы участника (`Auth::app`, `PeerInfo::app`).
+pub const PROTOCOL_VERSION: u32 = 8;
+
+/// Максимальная длина строки с версией программы ([`PeerInfo::app`]).
+pub const MAX_APP_CHARS: usize = 40;
 
 /// ALPN-идентификатор для TLS-рукопожатия QUIC.
 pub const ALPN: &[u8] = b"vwf/1";
@@ -88,6 +92,9 @@ pub struct PeerInfo {
     pub server_muted: bool,
     /// Показывает свой экран.
     pub sharing: bool,
+    /// Платформа и версия его программы, например `android 0.1.42`
+    /// (пусто — неизвестно). По ней видно, у кого программа новее.
+    pub app: String,
 }
 
 impl PeerInfo {
@@ -100,6 +107,7 @@ impl PeerInfo {
             deafened: false,
             server_muted: false,
             sharing: false,
+            app: String::new(),
         }
     }
 }
@@ -197,8 +205,11 @@ pub enum ClientMsg {
     RequestKeyframe { id: PeerId },
     /// Своя аватарка (не больше [`MAX_AVATAR_BYTES`]); пустая — убрать.
     SetAvatar { data: Vec<u8> },
-    /// Сразу после `Hello`: пароль комнаты (пустой, если его не знаем).
-    Auth { password: String },
+    /// Сразу после `Hello`: пароль комнаты (пустой, если его не знаем) и
+    /// платформа с версией программы (см. [`PeerInfo::app`]). Отдельно от
+    /// `Hello`, потому что сервер читает его, только когда версии протокола
+    /// совпали.
+    Auth { password: String, app: String },
 }
 
 /// Сообщение в чате комнаты.

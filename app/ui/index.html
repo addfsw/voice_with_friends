@@ -262,6 +262,16 @@
           </div>
         </div>
 
+        <div class="group">
+          <div class="group-title">Программа</div>
+          <p class="hint">Версия <span id="app-version">—</span></p>
+          <button type="button" id="send-app" class="primary android-only">Отправить программу другу</button>
+          <p class="hint android-only">
+            Друг получит файл установки (например, в Telegram) и поставит его поверх
+            старой версии.
+          </p>
+        </div>
+
         <!-- Редкое: открывается по нажатию, чтобы не загромождать окно -->
         <details id="advanced" class="advanced">
           <summary>Дополнительно</summary>
@@ -336,8 +346,13 @@
               <code id="invite-code"></code>
               <button type="button" id="invite-copy" class="icon-btn ghost" data-icon="copy" title="Скопировать код" aria-label="Скопировать код"></button>
             </div>
+            <button type="button" id="invite-share" class="primary android-only">Поделиться приглашением</button>
             <p id="internet-state" class="hint"></p>
             <p class="hint">Друг вставляет код в поле «Сервер». Код постоянный — отправьте его один раз.</p>
+            <p class="hint android-only">
+              На телефоне можно проще: долгое нажатие на сообщение с кодом в мессенджере →
+              «Поделиться» → «Поигрулькины».
+            </p>
           </div>
         </div>
 
