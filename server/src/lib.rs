@@ -178,7 +178,9 @@ impl Server {
             let settings = settings.clone();
             tokio::spawn(async move {
                 let remote = incoming.remote_address();
-                if let Err(e) = handle_connection(incoming, room, settings).await {
+                if let Err(e) = handle_connection(incoming, room, settings).await
+                    && !is_probe(&e)
+                {
                     warn!("{remote}: {e:#}");
                 }
             });
@@ -595,6 +597,15 @@ impl Room {
             other => warn!("id {from}: нет прав на {other:?}"),
         }
     }
+}
+
+/// Клиент только проверил, что сервер запущен, и сразу отключился.
+fn is_probe(e: &anyhow::Error) -> bool {
+    matches!(
+        e.downcast_ref::<quinn::ConnectionError>(),
+        Some(quinn::ConnectionError::ApplicationClosed(close))
+            if close.error_code == vwf_proto::PROBE_CLOSE_CODE.into()
+    )
 }
 
 async fn handle_connection(

@@ -28,7 +28,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use vwf_client::call::{AudioSettings, Call, CallEvent};
 use vwf_client::cues::Cue;
 use vwf_client::known_servers::KnownServers;
-use vwf_client::net::{CertificateChanged, Trust};
+use vwf_client::net::{Availability, CertificateChanged, Trust};
 use vwf_client::pipeline::{TxMode, TxState};
 use vwf_client::{audio, discovery};
 use vwf_proto::{PeerId, PeerInfo};
@@ -283,8 +283,9 @@ async fn connect(
 /// нажал «Выйти» или подключился заново (сменилось поколение), новый звонок
 /// сразу завершается.
 ///
-/// Пока идёт подключение (до 20 с, если сервер не отвечает), `state.call` не
-/// заблокирован: иначе кнопки «Выйти», микрофона и т.п. ждали бы его.
+/// Пока идёт подключение (до 5 с, если сервер не отвечает; по коду приглашения
+/// дольше), `state.call` не заблокирован: иначе кнопки «Выйти», микрофона и
+/// т.п. ждали бы его.
 async fn start_call(
     app: &AppHandle,
     state: &AppState,
@@ -848,6 +849,31 @@ async fn discover_servers() -> CmdResult<Vec<LanServer>> {
         .collect())
 }
 
+/// Запущена ли комната из списка недавних: `online`, `offline` или
+/// `unknown` (проверить не удалось — например, нет интернета у нас).
+#[derive(Serialize)]
+struct RoomCheck {
+    server: String,
+    status: &'static str,
+}
+
+/// Проверяет недавние комнаты разом, не входя в них (несколько секунд).
+#[tauri::command]
+async fn check_rooms(servers: Vec<String>) -> Vec<RoomCheck> {
+    let mut checks = tokio::task::JoinSet::new();
+    for server in servers {
+        checks.spawn(async move {
+            let status = match vwf_client::net::probe(server.trim()).await {
+                Availability::Online => "online",
+                Availability::Offline => "offline",
+                Availability::Unknown => "unknown",
+            };
+            RoomCheck { server, status }
+        });
+    }
+    checks.join_all().await
+}
+
 /// Звуки событий: вход и выход участников, кнопки микрофона и звука.
 #[tauri::command]
 async fn set_cues(state: State<'_, AppState>, enabled: bool) -> CmdResult<()> {
@@ -1097,6 +1123,7 @@ pub fn run() {
             screen::request_keyframe,
             screen::stop_watching,
             discover_servers,
+            check_rooms,
             set_mode,
             set_ptt_key,
             list_rooms,

@@ -62,6 +62,17 @@ async fn guest_joins_by_invite_code() {
     .await
     .expect("хост не узнал свой адрес");
 
+    // Проверка из списка недавних: хост отвечает, а комнаты без хоста нет.
+    use vwf_client::net::{Availability, probe_invite};
+    let wait = Duration::from_secs(3);
+    assert_eq!(probe_invite(&invite.encode(), &mailbox, wait).await, Availability::Online);
+    let closed = Invite::new(vwf_nat::new_room_id(), &fingerprint).encode();
+    assert_eq!(
+        probe_invite(&closed, &mailbox, Duration::from_millis(300)).await,
+        Availability::Offline
+    );
+    assert_eq!(host.status().guests, 0, "проверка — не вход в комнату");
+
     let session = timeout(
         Duration::from_secs(15),
         vwf_client::net::connect_invite(&invite.encode(), "Гость", None, &mailbox),

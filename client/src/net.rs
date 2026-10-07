@@ -275,7 +275,7 @@ pub async fn connect_as(
     let endpoint = quinn::Endpoint::client(bind)?;
 
     let conn = tokio::time::timeout(
-        Duration::from_secs(10),
+        CONNECT_WAIT,
         endpoint.connect_with(client_config()?, addr, SERVER_NAME)?,
     )
     .await
@@ -314,8 +314,7 @@ async fn connect_invite_as(
     let socket = vwf_nat::socket::NatSocket::bind("0.0.0.0:0".parse().unwrap())?;
     let endpoint = socket.endpoint(None)?;
     let found =
-        vwf_nat::rendezvous::find_host(&socket, mailbox, &invite.topic(), Duration::from_secs(20))
-            .await?;
+        vwf_nat::rendezvous::find_host(&socket, mailbox, &invite.topic(), FIND_HOST_WAIT).await?;
 
     let config = client_config()?;
     let mut attempts = tokio::task::JoinSet::new();
@@ -355,6 +354,75 @@ async fn connect_invite_as(
     attempts.abort_all();
 
     handshake(endpoint, conn, addr, name, credentials, Trust::Exact(&invite.fingerprint)).await
+}
+
+/// Запущена ли комната — для списка недавних комнат.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Availability {
+    Online,
+    Offline,
+    /// Проверить не удалось (например, нет интернета у нас самих).
+    Unknown,
+}
+
+/// Сколько ждать ответа на проверку по адресу. QUIC-рукопожатие с живым
+/// сервером занимает доли секунды даже через интернет.
+const PROBE_WAIT: Duration = Duration::from_secs(3);
+/// Сколько ждать ответа хоста через почтовый ящик: обычно 1–2 секунды.
+const PROBE_INVITE_WAIT: Duration = Duration::from_secs(7);
+/// Подключение по адресу: живой сервер отвечает за доли секунды, поэтому
+/// не держим человека долго, если сервер не запущен.
+const CONNECT_WAIT: Duration = Duration::from_secs(5);
+/// Сколько ждать ответа хоста при входе по коду приглашения.
+const FIND_HOST_WAIT: Duration = Duration::from_secs(10);
+
+/// Быстро проверяет, запущена ли комната по адресу или коду приглашения, не
+/// входя в неё: по адресу — только QUIC-рукопожатие, по коду — «ты тут?»
+/// хосту через почтовый ящик (без пробивки NAT).
+pub async fn probe(server: &str) -> Availability {
+    if vwf_nat::invite::looks_like_invite(server) {
+        let Ok(mailbox) = vwf_nat::mailbox::Mailbox::from_env() else {
+            return Availability::Unknown;
+        };
+        return probe_invite(server, &mailbox, PROBE_INVITE_WAIT).await;
+    }
+    probe_address(server, PROBE_WAIT).await
+}
+
+pub async fn probe_address(server: &str, wait: Duration) -> Availability {
+    let Ok(addr) = resolve(server).await else { return Availability::Unknown };
+    let bind: SocketAddr =
+        if addr.is_ipv6() { "[::]:0".parse().unwrap() } else { "0.0.0.0:0".parse().unwrap() };
+    let Ok(endpoint) = quinn::Endpoint::client(bind) else { return Availability::Unknown };
+    let Ok(connecting) = client_config()
+        .and_then(|config| endpoint.connect_with(config, addr, SERVER_NAME).map_err(Into::into))
+    else {
+        return Availability::Unknown;
+    };
+    match tokio::time::timeout(wait, connecting).await {
+        Ok(Ok(conn)) => {
+            conn.close(vwf_proto::PROBE_CLOSE_CODE.into(), b"probe");
+            // Даём закрытию дойти до сервера, но ответ не задерживаем.
+            tokio::spawn(async move {
+                let _ = tokio::time::timeout(Duration::from_secs(1), endpoint.wait_idle()).await;
+            });
+            Availability::Online
+        }
+        _ => Availability::Offline,
+    }
+}
+
+pub async fn probe_invite(
+    code: &str,
+    mailbox: &vwf_nat::mailbox::Mailbox,
+    wait: Duration,
+) -> Availability {
+    let Ok(invite) = vwf_nat::invite::Invite::decode(code) else { return Availability::Unknown };
+    match vwf_nat::rendezvous::ping_host(mailbox, &invite.topic(), wait).await {
+        Ok(true) => Availability::Online,
+        Ok(false) => Availability::Offline,
+        Err(_) => Availability::Unknown,
+    }
 }
 
 /// Общая часть подключения после того, как QUIC-соединение установлено.

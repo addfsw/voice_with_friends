@@ -217,6 +217,10 @@ const join = {
   errors: new Map(), // key → текст ошибки под названием
   lan: [], // последний ответ поиска в локальной сети
   last: null, // последняя попытка: { target, password } — для «Доверять»
+  // Запущены ли недавние комнаты: server → "online" | "offline" | "unknown"
+  // (проверить не удалось) | "checking".
+  status: new Map(),
+  checking: null, // key карточки, которую перепроверяем перед входом
 };
 
 const LAN_REFRESH_MS = 5000;
@@ -243,15 +247,78 @@ async function refreshLan() {
 
 function startLanSearch() {
   clearInterval(lanTimer);
+  clearInterval(roomCheckTimer);
   renderJoin();
   refreshLan();
+  checkRecent();
   lanTimer = setInterval(refreshLan, LAN_REFRESH_MS);
+  roomCheckTimer = setInterval(checkRecent, ROOM_CHECK_MS);
 }
 
 function stopLanSearch() {
   clearInterval(lanTimer);
+  clearInterval(roomCheckTimer);
   lanTimer = null;
+  roomCheckTimer = null;
 }
+
+// Недавние комнаты проверяются в фоне: запущены ли они сейчас. Проверка по
+// коду приглашения идёт через тот же почтовый ящик, что и вход, поэтому
+// не чаще раза в минуту.
+const ROOM_CHECK_MS = 60000;
+let roomCheckTimer = null;
+let roomChecking = false;
+
+async function checkRecent(servers = null) {
+  if (roomChecking || $("connect-view").hidden) return;
+  const found = new Set(join.lan.map((s) => s.address));
+  servers ??= recentRooms()
+    .map((r) => r.server)
+    .filter((server) => !found.has(server));
+  if (!servers.length) return;
+  roomChecking = true;
+  for (const server of servers) {
+    if (!join.status.has(server)) join.status.set(server, "checking");
+  }
+  if (!join.prompt && !join.busy) renderJoin();
+  try {
+    for (const { server, status } of await invoke("check_rooms", { servers })) {
+      join.status.set(server, status);
+      // Хост открыл комнату — старое «не запущена» под названием больше не верно.
+      if (status !== "offline" && join.errors.get(server) === OFFLINE_TEXT) {
+        join.errors.delete(server);
+      }
+    }
+  } catch {
+    for (const server of servers) join.status.set(server, "unknown");
+  } finally {
+    roomChecking = false;
+    if (!join.prompt && !join.busy) renderJoin();
+  }
+}
+
+// Нажали на комнату, которая при последней проверке была не запущена:
+// сначала быстро проверяем ещё раз, вместо долгой попытки подключиться.
+// true — комната по-прежнему не запущена, входить не нужно.
+async function stillOffline(target) {
+  join.busy = target.key;
+  join.checking = target.key;
+  join.errors.delete(target.key);
+  renderJoin();
+  let status = "unknown";
+  try {
+    [{ status }] = await invoke("check_rooms", { servers: [target.server] });
+  } catch {}
+  join.status.set(target.server, status);
+  join.busy = null;
+  join.checking = null;
+  if (status !== "offline") return false;
+  join.errors.set(target.key, OFFLINE_TEXT);
+  renderJoin();
+  return true;
+}
+
+const OFFLINE_TEXT = "Комната сейчас не запущена. Попросите хоста открыть её.";
 
 $("lan-refresh").addEventListener("click", () => {
   $("lan-status").hidden = false;
@@ -354,6 +421,8 @@ function renderJoin() {
   if (input && document.activeElement !== input) input.focus();
 }
 
+const ROOM_STATE = { online: "Запущена", offline: "Не запущена", checking: "Проверяю…" };
+
 function joinCard(target, busy) {
   const li = document.createElement("li");
   li.className = "join-item";
@@ -377,13 +446,32 @@ function joinCard(target, busy) {
   const meta = document.createElement("span");
   meta.className = "lan-meta";
   const error = join.errors.get(target.key);
+  const status = target.kind === "recent" ? join.status.get(target.server) : null;
+  if (status) {
+    ico.classList.add(status);
+    const dot = document.createElement("span");
+    dot.className = "join-dot";
+    ico.append(dot);
+  }
   if (connecting) {
-    meta.textContent = isInvite(target.server) ? "Связываюсь с хостом через интернет…" : "Подключение…";
+    meta.textContent =
+      join.checking === target.key
+        ? "Проверяю, запущена ли комната…"
+        : isInvite(target.server)
+          ? "Связываюсь с хостом через интернет…"
+          : "Подключение…";
   } else if (error) {
     meta.textContent = error;
     meta.classList.add("error");
   } else {
     if (target.password) meta.append(icon("lock"));
+    const state = ROOM_STATE[status];
+    if (state) {
+      const label = document.createElement("span");
+      label.className = `room-state ${status}`;
+      label.textContent = state;
+      meta.append(label, " · ");
+    }
     meta.append(target.meta);
   }
   text.append(name, meta);
@@ -484,6 +572,9 @@ function formValues() {
 // Вход: сразу, а если комната с паролем — с запомненным или введённым.
 async function joinTarget(target, typed = null) {
   if (join.busy || roomsBusy || !checkName()) return;
+  if (target.kind === "recent" && join.status.get(target.server) === "offline") {
+    if (await stillOffline(target)) return;
+  }
   const manual = target.kind === "manual";
   const password = typed ?? savedPasswords()[target.server] ?? null;
   if (target.password && !password) {
@@ -506,6 +597,7 @@ async function joinTarget(target, typed = null) {
     });
     if (password) rememberPassword(target.server, password);
     rememberRecent(target, joined);
+    join.status.set(target.server, "online");
     join.prompt = null;
     join.promptError = "";
     if (manual) closeManual();
@@ -532,6 +624,8 @@ async function joinTarget(target, typed = null) {
     } else {
       join.prompt = null;
       join.errors.set(target.key, errorText(e));
+      // Не вошли — заодно обновим, запущена ли комната.
+      if (target.kind === "recent") setTimeout(() => checkRecent([target.server]));
     }
   } finally {
     join.busy = null;
