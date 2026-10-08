@@ -3306,24 +3306,14 @@ button.key.listening {
   background: var(--room-bg), var(--bg);
 }
 
-/* Список участников компактный: строки ниже, плитки меньше. */
-:root .peer {
-  gap: 10px;
-  padding: 5px 8px 5px 10px;
-}
-
-:root .peers:not(.tiles) .avatar {
-  width: 30px;
-  height: 30px;
-  font-size: 12.5px;
-}
-
+/* Плитки участников компактные; режим «списком» обычного размера. */
 :root .peers.tiles {
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   gap: 8px;
 }
 
 :root .peers.tiles .peer {
+  gap: 10px;
   aspect-ratio: 1;
   max-height: 200px;
   padding: 0;
