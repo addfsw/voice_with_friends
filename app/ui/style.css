@@ -1503,58 +1503,138 @@ button.leave:hover {
   height: 16px;
 }
 
-/* Плитками: крупные аватары в сетке. */
+/* Плитками — «сцена»: большие плитки с фоном цвета аватара (--tile),
+ * имя и значки — плашкой внизу, говорящий — в зелёной рамке. Когда людей
+ * мало, плитки растягиваются на всю ширину. */
 .peers.tiles {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   align-content: start;
-  gap: 8px;
+  gap: 10px;
+  /* Чтобы свечение говорящего не обрезалось краем списка. */
+  padding: 4px;
+  margin: -4px;
 }
 
 .peers.tiles .peer {
   position: relative;
-  flex-direction: column;
-  gap: 8px;
-  padding: 18px 10px 12px;
-  text-align: center;
-  background: var(--surface);
-  border-color: var(--border);
-  border-radius: var(--radius);
+  display: block;
+  padding: 0;
+  aspect-ratio: 4 / 3;
+  max-height: 340px;
+  border: 2px solid transparent;
+  border-radius: 16px;
+  background:
+    radial-gradient(120% 90% at 50% 40%, color-mix(in srgb, var(--tile) 30%, transparent), transparent 70%),
+    color-mix(in srgb, var(--tile) 12%, var(--surface));
+  transition: border-color 120ms, box-shadow 120ms;
 }
 
-.peers.tiles .peer.me {
-  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+.peers.tiles .peer:hover {
+  background:
+    radial-gradient(120% 90% at 50% 40%, color-mix(in srgb, var(--tile) 36%, transparent), transparent 70%),
+    color-mix(in srgb, var(--tile) 16%, var(--surface));
+}
+
+.peers.tiles .peer.speaking {
+  border-color: var(--speaking);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--speaking) 35%, transparent);
+}
+
+.peers.tiles .tile-center {
+  position: absolute;
+  inset: 0 0 34px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
 }
 
 .peers.tiles .avatar {
-  width: 60px;
-  height: 60px;
-  font-size: 22px;
+  width: 76px;
+  height: 76px;
+  font-size: 30px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
 }
 
 .peers.tiles .peer.speaking .avatar {
-  box-shadow: 0 0 0 3px var(--surface), 0 0 0 5px var(--speaking);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
 }
 
-.peers.tiles .peer-main {
-  width: 100%;
-  align-items: center;
+.peers.tiles .badge.off {
+  padding: 2px 8px;
+  border-radius: 99px;
+  background: var(--danger-soft);
+  font-size: 11.5px;
 }
 
-.peers.tiles .peer-name {
-  justify-content: center;
-  max-width: 100%;
-}
-
-.peers.tiles .peer-side:empty {
-  display: none;
-}
-
-/* Меню человека — в углу плитки, значки и «Смотреть» — под именем. */
-.peers.tiles .peer-side .menu-wrap {
+.peers.tiles .tile-top {
   position: absolute;
-  top: 6px;
-  right: 6px;
+  top: 8px;
+  left: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.peers.tiles .tile-bottom {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.peers.tiles .tile-name {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 6px 0 10px;
+  border-radius: 8px;
+  background: rgba(8, 9, 12, 0.55);
+  backdrop-filter: blur(6px);
+  color: #fff;
+}
+
+.peers.tiles .tile-name .peer-name {
+  font-size: 13px;
+}
+
+.peers.tiles .tile-name .you {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.peers.tiles .tile-name .status-icon {
+  width: 20px;
+}
+
+.peers.tiles .tile-name .status-icon .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.peers.tiles .tile-bottom .watch-btn {
+  height: 28px;
+  margin-left: auto;
+}
+
+.peers.tiles .peer > .menu-wrap {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+}
+
+.peers.tiles .peer > .menu-wrap .icon-btn {
+  background: transparent;
+}
+
+.peers.tiles .peer > .menu-wrap .icon-btn:hover {
+  background: rgba(0, 0, 0, 0.25);
 }
 
 .peer-side .menu-wrap .icon-btn {
@@ -1563,6 +1643,22 @@ button.leave:hover {
 
 .peer-side .menu-wrap .icon-btn:hover {
   background: var(--surface-3);
+}
+
+/* Телефон: по две квадратные плитки в ряд. */
+.android .peers.tiles {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.android .peers.tiles .peer {
+  aspect-ratio: 1;
+}
+
+.android .peers.tiles .avatar {
+  width: 64px;
+  height: 64px;
+  font-size: 26px;
 }
 
 .peers.tiles .empty {
