@@ -3111,6 +3111,9 @@ button.key.listening {
 }
 
 .sheet-backdrop.see-through .sheet {
+  /* Во всю ширину окна: кнопки тем раскладываются в больше колонок,
+   * а панель получается ниже и закрывает меньше комнаты. */
+  max-width: none;
   max-height: min(46%, 420px);
   gap: 14px;
   padding-top: 10px;
