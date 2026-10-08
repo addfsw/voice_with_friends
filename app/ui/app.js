@@ -96,6 +96,8 @@ const ICON_PATHS = {
   "signal-fair": "M3 16h3v5H3v-5Zm5.5-4h3v9h-3v-9ZM14 8h3v13h-3V8Z",
   "signal-bad": "M3 16h3v5H3v-5Z",
   window: "M19 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2Zm0 14H5V8h14v10Z",
+  help:
+    "M11 18h2v-2h-2v2Zm1-16a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16Zm0-14a4 4 0 0 0-4 4h2a2 2 0 1 1 4 0c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5a4 4 0 0 0-4-4Z",
 };
 
 // Иконка; `crossed` — перечёркнутая (выключено).
@@ -2797,6 +2799,26 @@ window.addEventListener("keydown", (event) => {
     closeLeaveSheet();
     closeMenus();
   }
+});
+
+// ---------------------------------------------------------------------------
+// Справка «Как это работает»
+// ---------------------------------------------------------------------------
+
+function closeHelp() {
+  $("help").hidden = true;
+}
+
+$("help-btn").addEventListener("click", () => {
+  closeMenus();
+  $("help").hidden = false;
+});
+$("help-close").addEventListener("click", closeHelp);
+$("help").addEventListener("click", (event) => {
+  if (event.target === $("help")) closeHelp();
+});
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeHelp();
 });
 
 // ---------------------------------------------------------------------------

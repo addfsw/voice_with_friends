@@ -19,6 +19,7 @@
           <h1>Поигрулькины</h1>
           <p class="tagline">Голосовая комната для своих</p>
         </div>
+        <button type="button" id="help-btn" class="icon-btn head-btn" data-icon="help" aria-label="Как это работает" data-tip="Как это работает"></button>
         <button type="button" class="icon-btn head-btn open-settings tip-right" data-icon="gear" aria-label="Настройки" data-tip="Настройки"></button>
       </header>
 
@@ -513,6 +514,66 @@
         <span id="sv-title" class="sv-title"></span>
         <button type="button" id="sv-rotate" class="sv-btn" data-icon="rotate" aria-label="Повернуть"></button>
       </header>
+    </div>
+
+    <!-- Справка: как пользоваться программой -->
+    <div id="help" class="sheet-backdrop" hidden>
+      <section class="sheet help" role="dialog" aria-modal="true" aria-labelledby="help-title">
+        <header class="sheet-head">
+          <h2 id="help-title">Как это работает</h2>
+          <button type="button" id="help-close" class="icon-btn ghost" data-icon="close" aria-label="Закрыть"></button>
+        </header>
+
+        <p class="help-lead">
+          Поигрулькины — голосовая комната для своей компании. Один человек
+          открывает комнату у себя (он хост), остальные заходят к нему.
+          Голос идёт напрямую к хосту и зашифрован, чужие серверы его не слышат.
+        </p>
+
+        <div class="group">
+          <div class="group-title">Зайти к друзьям</div>
+          <ol class="help-steps">
+            <li>Впишите своё имя: под ним вас увидят в комнате.</li>
+            <li>Комнаты из вашей сети Wi-Fi сами появятся в списке «Войти в комнату». Нажмите на карточку, и вы внутри.</li>
+            <li>Если друг далеко, попросите у него код приглашения (<code>poi-…</code>) и вставьте его в «Войти по адресу или коду».</li>
+          </ol>
+          <p class="hint">После первого входа комната остаётся в списке, в следующий раз хватит одного нажатия.</p>
+        </div>
+
+        <div class="group">
+          <div class="group-title">Позвать к себе</div>
+          <ol class="help-steps">
+            <li>Нажмите на комнату в «Мои комнаты». Она запустится прямо в программе, отдельный сервер не нужен.</li>
+            <li>В комнате нажмите «Пригласить» и отправьте друзьям код приглашения.</li>
+            <li>Комната работает, пока вы в ней. Вышли — все отключатся, но код останется прежним.</li>
+          </ol>
+          <p class="hint">«Новая» создаёт ещё одну комнату со своим кодом, паролем и лимитом участников: друзья из разных компаний не попадут друг к другу.</p>
+          <p class="hint android-only">На телефоне комната работает, пока он в Wi-Fi. Через мобильный интернет к нему почти никогда не подключиться.</p>
+        </div>
+
+        <div class="group">
+          <div class="group-title">В комнате</div>
+          <ul class="help-keys">
+            <li><span data-icon="mic"></span><span>Включить или выключить микрофон.</span></li>
+            <li><span data-icon="headphones"></span><span>Выключить звук: вы перестанете слышать остальных.</span></li>
+            <li><span data-icon="tune"></span><span>Как передавать голос: <span class="android-only">когда вы говорите или всегда.</span><span class="desktop-only">когда вы говорите, всегда или пока зажата клавиша рации.</span></span></li>
+            <li class="desktop-only"><span data-icon="screen"></span><span>Показать друзьям свой экран или окно.</span></li>
+            <li><span data-icon="more"></span><span>Нажмите на участника: громкость отдельно для него, у хоста ещё «Заглушить для всех» и «Выгнать».</span></li>
+          </ul>
+          <p class="hint">Вкладка «Чат» — переписка внутри комнаты. Пока вы в другой вкладке, на ней появится число новых сообщений.</p>
+        </div>
+
+        <div class="group">
+          <div class="group-title">Если что-то не так</div>
+          <ul class="help-tips">
+            <li>Кнопка «Проверить микрофон» на главном экране запишет несколько секунд и проиграет их: так слышно, как вас слышат другие.</li>
+            <li>Слова обрезаются — понизьте порог в настройках голоса. Передаётся шум комнаты — повысьте.</li>
+            <li class="desktop-only">Говорите в наушниках: иначе звук из колонок попадёт в микрофон и друзья услышат себя.</li>
+            <li class="android-only">Звук не туда — в настройках выберите, куда он идёт: «Авто», «Громкий» или «У уха».</li>
+            <li>Программа предупредила, что сертификат сервера изменился, — спросите у хоста код сервера и сверьте. Не совпал — не подключайтесь.</li>
+          </ul>
+        </div>
+      </section>
     </div>
 
     <div id="toast" class="toast" hidden></div>
