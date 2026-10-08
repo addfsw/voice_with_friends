@@ -5,8 +5,7 @@
  * яркие: synthwave «Синтвейв», cyber «Киберпанк», berry «Малина», lemonade
  * «Лимонад», tangerine «Мандарин», aqua «Аква»;
  * без data-theme — светлая или «Ночь» по системной настройке. Список тем —
- * THEMES в app.js. Цвет акцента — data-accent, фон комнаты — data-room-bg,
- * плотный список — data-density="compact". */
+ * THEMES в app.js. Цвет акцента — data-accent, фон комнаты — data-room-bg. */
 
 /* Golos Text (SIL OFL, см. fonts/OFL.txt) — встроен, интернет не нужен. */
 @font-face {
@@ -3104,7 +3103,7 @@ button.key.listening {
   margin-right: auto;
 }
 
-/* «Оформление» открывается небольшой панелью без затемнения: комната за ней
+/* «Оформление» — невысокая панель снизу без затемнения: комната над ней
  * видна, и выбранная тема или фон сразу видны на ней. */
 .sheet-backdrop.see-through {
   background: transparent;
@@ -3112,23 +3111,26 @@ button.key.listening {
 }
 
 .sheet-backdrop.see-through .sheet {
-  max-height: 46%;
+  max-height: min(46%, 420px);
   gap: 14px;
   padding-top: 10px;
   box-shadow: var(--shadow-pop), 0 0 0 1px var(--border);
 }
 
-:root:not(.android) .sheet-backdrop.see-through {
-  justify-content: flex-end;
-  align-items: flex-start;
-  padding: 64px 16px 16px;
+/* Самый низ настроек: версия и (на телефоне) «Отправить программу другу». */
+.app-row {
+  display: flex;
+  white-space: nowrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
 }
 
-:root:not(.android) .sheet-backdrop.see-through .sheet {
-  max-width: 330px;
-  max-height: min(100%, 480px);
-  border-radius: var(--radius);
-  animation: drop 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
+.app-row .link {
+  margin-left: auto;
+  padding: 0;
 }
 
 /* Строка-ссылка на страницу настроек: значок, название, что выбрано, стрелка. */
@@ -3299,52 +3301,62 @@ button.key.listening {
   background: var(--room-bg), var(--bg);
 }
 
-/* Компактно: строки участников ниже, плитки меньше. */
-:root[data-density="compact"] .peer {
+/* Список участников компактный: строки ниже, плитки меньше. */
+:root .peer {
   gap: 10px;
   padding: 5px 8px 5px 10px;
 }
 
-:root[data-density="compact"] .peers:not(.tiles) .avatar {
+:root .peers:not(.tiles) .avatar {
   width: 30px;
   height: 30px;
   font-size: 12.5px;
 }
 
-:root[data-density="compact"] .peers.tiles {
+:root .peers.tiles {
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   gap: 8px;
 }
 
-:root[data-density="compact"] .peers.tiles .peer {
+:root .peers.tiles .peer {
   aspect-ratio: 1;
   max-height: 200px;
   padding: 0;
 }
 
-:root[data-density="compact"] .peers.tiles .avatar {
+:root .peers.tiles .avatar {
   width: 54px;
   height: 54px;
   font-size: 22px;
 }
 
-:root[data-density="compact"].android .peers.tiles {
+:root.android .peers.tiles {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
 }
 
-:root[data-density="compact"].android .peers.tiles .avatar {
+:root.android .peers.tiles .watch-label {
+  /* В узкой плитке телефона — только значок, чтобы не закрывать имя. */
+  display: none;
+}
+
+:root.android .peers.tiles .watch-btn {
+  flex: none;
+  padding: 0 8px;
+}
+
+:root.android .peers.tiles .avatar {
   width: 44px;
   height: 44px;
   font-size: 18px;
 }
 
-:root[data-density="compact"] .peers.tiles .tile-name {
+:root .peers.tiles .tile-name {
   height: 24px;
   padding: 0 4px 0 7px;
 }
 
-:root[data-density="compact"] .peers.tiles .tile-name .peer-name {
+:root .peers.tiles .tile-name .peer-name {
   font-size: 12px;
 }
 

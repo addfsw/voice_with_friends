@@ -277,6 +277,10 @@
               <span>Звуки событий</span>
               <input type="checkbox" id="cues" class="switch" />
             </label>
+            <label class="switch-row desktop-only" title="Крестик окна прячет программу в трей рядом с часами, разговор продолжается. Выйти — через меню значка в трее">
+              <span>Сворачивать в трей при закрытии</span>
+              <input type="checkbox" id="close-to-tray" class="switch" />
+            </label>
           </div>
 
           <div class="group">
@@ -299,20 +303,6 @@
             </button>
           </div>
 
-          <div class="group">
-            <div class="group-title">Программа</div>
-            <p class="hint">Версия <span id="app-version">—</span></p>
-            <label class="switch-row desktop-only" title="Крестик окна прячет программу в трей рядом с часами, разговор продолжается. Выйти — через меню значка в трее">
-              <span>Сворачивать в трей при закрытии</span>
-              <input type="checkbox" id="close-to-tray" class="switch" />
-            </label>
-            <button type="button" id="send-app" class="primary android-only">Отправить программу другу</button>
-            <p class="hint android-only">
-              Друг получит файл установки (например, в Telegram) и поставит его поверх
-              старой версии.
-            </p>
-          </div>
-
           <div id="diag" class="group" hidden>
             <div class="group-title">Диагностика звука</div>
             <ul id="diag-list" class="diag"></ul>
@@ -320,6 +310,11 @@
               Если звук прерывается, посмотрите, какие числа растут в этот момент, —
               по ним видно, где проблема: у микрофона, у вывода или в сети.
             </p>
+          </div>
+
+          <div class="app-row">
+            <span class="hint">Версия <span id="app-version">—</span></span>
+            <button type="button" id="send-app" class="link android-only" title="Друг получит файл установки (например, в Telegram) и поставит его поверх старой версии">Отправить программу другу</button>
           </div>
         </div>
 
@@ -392,10 +387,6 @@
               <button type="button" data-value="1.1">Крупнее</button>
               <button type="button" data-value="1.25">Крупный</button>
             </div>
-            <label class="switch-row" title="Меньше плитки и строки участников: больше людей помещается на экране">
-              <span>Компактный список участников</span>
-              <input type="checkbox" id="compact" class="switch" />
-            </label>
           </div>
         </div>
       </section>

@@ -1986,7 +1986,12 @@ function watchButton(peer, isMe) {
   button.className = "watch-btn";
   button.title = isMe ? "Посмотреть, что видят остальные" : `Смотреть экран: ${peer.name}`;
   button.append(icon("screen"));
-  if (!isMe) button.append(document.createTextNode("Смотреть"));
+  if (!isMe) {
+    const label = document.createElement("span");
+    label.className = "watch-label";
+    label.textContent = "Смотреть";
+    button.append(label);
+  }
   button.addEventListener("click", () => {
     if (isAndroid) return openScreenView(peer);
     invoke("open_viewer", { id: peer.id, name: peer.name }).catch((e) => toast(errorText(e)));
@@ -3052,7 +3057,7 @@ $("room-bg-file").addEventListener("change", async () => {
   applyRoomBg("image");
 });
 
-// Размер интерфейса (zoom всей страницы) и плотный список участников.
+// Размер интерфейса (zoom всей страницы).
 const UI_SCALES = ["0.9", "1", "1.1", "1.25"];
 
 function applyScale(scale) {
@@ -3061,17 +3066,8 @@ function applyScale(scale) {
   document.documentElement.style.setProperty("--zoom", scale);
 }
 
-function applyDensity(compact) {
-  store.set("compact", compact);
-  $("compact").checked = compact;
-  if (compact) document.documentElement.dataset.density = "compact";
-  else delete document.documentElement.dataset.density;
-}
-
 segmented($("ui-scale"), String(store.get("uiScale", "1")), applyScale);
 applyScale(String(store.get("uiScale", "1")));
-$("compact").addEventListener("change", () => applyDensity($("compact").checked));
-applyDensity(store.get("compact", false));
 
 segmented($("theme"), applyTheme(store.get("theme", "dark")), applyTheme);
 for (const button of $("accent").querySelectorAll("button")) {
