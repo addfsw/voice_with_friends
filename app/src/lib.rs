@@ -128,8 +128,10 @@ async fn mic_test_start(
         return Err("во время разговора проверка не нужна".into());
     }
     let non_empty = |s: Option<String>| s.filter(|s| !s.trim().is_empty());
-    // Прежняя проверка останавливается до того, как откроется новая.
-    state.mic_test.lock().unwrap().take();
+    // Прежняя проверка останавливается до того, как откроется новая. Поток
+    // ждём уже без замка: иначе mic_test_status в главном потоке встанет.
+    let previous = state.mic_test.lock().unwrap().take();
+    drop(previous);
     let test = MicTest::start(non_empty(input), non_empty(output), MIC_TEST_SECONDS);
     *state.mic_test.lock().unwrap() = Some(test);
     Ok(())
