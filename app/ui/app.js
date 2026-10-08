@@ -2884,15 +2884,32 @@ invoke("get_avatar")
   })
   .catch(() => {});
 
-// Тема: system — как в Windows; light/dark — всегда такая.
+// Тема: system — светлая или «Ночь», как в системе; остальные — всегда такие
+// (цвета — в style.css). Значение — тёмная ли тема.
+const THEMES = {
+  light: false,
+  dark: true,
+  black: true,
+  midnight: true,
+  forest: true,
+  paper: false,
+};
+
 function applyTheme(theme) {
+  if (theme !== "system" && !(theme in THEMES)) theme = "dark";
   store.set("theme", theme);
   if (theme === "system") delete document.documentElement.dataset.theme;
   else document.documentElement.dataset.theme = theme;
-  // На Android подложка под системными панелями — в цвет темы.
+  // На Android подложка под системными панелями — в цвет фона темы.
   const dark =
-    theme === "dark" || (theme === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
-  androidBridge?.setTheme(dark);
+    theme === "system" ? matchMedia("(prefers-color-scheme: dark)").matches : THEMES[theme];
+  if (androidBridge?.setThemeColor) {
+    const bg = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
+    androidBridge.setThemeColor(bg, dark);
+  } else {
+    androidBridge?.setTheme(dark);
+  }
+  return theme;
 }
 
 function applyAccent(accent) {
@@ -2903,8 +2920,7 @@ function applyAccent(accent) {
   }
 }
 
-segmented($("theme"), store.get("theme", "dark"), applyTheme);
-if (androidBridge) applyTheme(store.get("theme", "dark"));
+segmented($("theme"), applyTheme(store.get("theme", "dark")), applyTheme);
 for (const button of $("accent").querySelectorAll("button")) {
   button.setAttribute("aria-label", button.title);
   button.addEventListener("click", () => applyAccent(button.dataset.value));

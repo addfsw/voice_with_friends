@@ -1,6 +1,8 @@
 /* --- Цвета ---
- * Тёмная тема «Ночь» — по умолчанию; светлая — выбором в настройках или по
- * системной настройке (data-theme на <html>). Цвет акцента — data-accent. */
+ * Тема — data-theme на <html>: dark «Ночь» (по умолчанию), light «День»,
+ * black «Уголь», midnight «Полночь», forest «Лес», paper «Бумага»; без
+ * data-theme — светлая или «Ночь» по системной настройке. Список тем — THEMES
+ * в app.js. Цвет акцента — data-accent. */
 
 /* Golos Text (SIL OFL, см. fonts/OFL.txt) — встроен, интернет не нужен. */
 @font-face {
@@ -53,10 +55,12 @@
   --accent-soft: color-mix(in srgb, var(--accent) 16%, transparent);
   --accent-text: color-mix(in srgb, var(--accent) 70%, var(--text));
   --danger-soft: color-mix(in srgb, var(--danger) 14%, transparent);
+  --segment-active: var(--surface);
 }
 
+/* Тёмная «Ночь»: по системной настройке (тема «Как в системе») и выбором. */
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
+  :root:not([data-theme]) {
     --bg: #0f1115;
     --surface: #161920;
     --surface-2: #1b1e26;
@@ -76,10 +80,30 @@
     --warning: #f0a92e;
     --accent: #7c6cff;
     --accent-strong: #6c5bf5;
+    --segment-active: var(--surface-3);
     color-scheme: dark;
   }
 }
 
+/* Общее для всех тёмных тем; фон и поверхности — у каждой свои, ниже. */
+:root[data-theme="dark"],
+:root[data-theme="black"],
+:root[data-theme="midnight"],
+:root[data-theme="forest"] {
+  --shadow: none;
+  --shadow-pop: 0 12px 34px rgba(0, 0, 0, 0.55);
+  --backdrop: rgba(0, 0, 0, 0.55);
+  --speaking: #3ddc84;
+  --danger: #ff6b78;
+  --danger-strong: #f04858;
+  --warning: #f0a92e;
+  --accent: #7c6cff;
+  --accent-strong: #6c5bf5;
+  --segment-active: var(--surface-3);
+  color-scheme: dark;
+}
+
+/* «Ночь» — графитовая, по умолчанию. */
 :root[data-theme="dark"] {
   --bg: #0f1115;
   --surface: #161920;
@@ -91,16 +115,67 @@
   --text: #e8eaf0;
   --text-2: #9aa0ad;
   --text-3: #7d8391;
-  --shadow: none;
-  --shadow-pop: 0 12px 34px rgba(0, 0, 0, 0.55);
-  --backdrop: rgba(0, 0, 0, 0.55);
-  --speaking: #3ddc84;
-  --danger: #ff6b78;
-  --danger-strong: #f04858;
-  --warning: #f0a92e;
-  --accent: #7c6cff;
-  --accent-strong: #6c5bf5;
-  color-scheme: dark;
+}
+
+/* «Уголь» — чёрный фон: на OLED-экранах телефонов меньше тратит батарею. */
+:root[data-theme="black"] {
+  --bg: #000000;
+  --surface: #0e0e10;
+  --surface-2: #141417;
+  --surface-3: #222226;
+  --border: #1a1a1e;
+  --field: #000000;
+  --field-border: #2a2a2f;
+  --text: #ececef;
+  --text-2: #9b9da6;
+  --text-3: #7c7e88;
+  --shadow-pop: 0 12px 34px rgba(0, 0, 0, 0.8), 0 0 0 1px #2a2a2f;
+  --backdrop: rgba(0, 0, 0, 0.7);
+}
+
+/* «Полночь» — глубокий синий. */
+:root[data-theme="midnight"] {
+  --bg: #0b1222;
+  --surface: #111a2e;
+  --surface-2: #162139;
+  --surface-3: #213050;
+  --border: #1a2640;
+  --field: #080e1b;
+  --field-border: #25365a;
+  --text: #e6ecf7;
+  --text-2: #94a3bf;
+  --text-3: #7687a6;
+}
+
+/* «Лес» — тёмно-зелёный, приглушённый. */
+:root[data-theme="forest"] {
+  --bg: #0d1310;
+  --surface: #131b17;
+  --surface-2: #18221d;
+  --surface-3: #233029;
+  --border: #1b2520;
+  --field: #090e0b;
+  --field-border: #27352d;
+  --text: #e4ebe6;
+  --text-2: #95a59b;
+  --text-3: #79897f;
+}
+
+/* «Бумага» — светлая, тёплая, мягче для глаз, чем белая. */
+:root[data-theme="paper"] {
+  --bg: #f3eee4;
+  --surface: #fbf8f1;
+  --surface-2: #ece5d8;
+  --surface-3: #e1d8c8;
+  --border: #e2d9c9;
+  --field: #fffdf8;
+  --field-border: #d6cab5;
+  --text: #2a251f;
+  --text-2: #6a6155;
+  --text-3: #8b8173;
+  --shadow: 0 1px 2px rgba(60, 45, 20, 0.07);
+  --shadow-pop: 0 10px 30px rgba(60, 45, 20, 0.18);
+  --backdrop: rgba(40, 30, 15, 0.3);
 }
 
 :root[data-accent="violet"] { --accent: #8b5cf6; --accent-strong: #7c3aed; }
@@ -2323,18 +2398,8 @@ button.invite-btn:hover {
 
 .segmented button.active {
   color: var(--text);
-  background: var(--surface);
+  background: var(--segment-active);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
-}
-
-:root[data-theme="dark"] .segmented button.active {
-  background: var(--surface-3);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .segmented button.active {
-    background: var(--surface-3);
-  }
 }
 
 .slider-row {
@@ -2597,6 +2662,104 @@ button.key.listening {
   flex-direction: column;
   gap: 18px;
   padding-top: 14px;
+}
+
+/* Выбор темы: карточки с маленьким видом окна в цветах своей темы. */
+.themes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 8px;
+}
+
+.themes button {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 6px 6px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 500;
+  text-align: center;
+}
+
+.themes button:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.themes button.active {
+  color: var(--text);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.theme-preview {
+  position: relative;
+  display: block;
+  height: 46px;
+  border-radius: 7px;
+  background: var(--p-bg);
+  box-shadow: inset 0 0 0 1px rgba(127, 127, 127, 0.18);
+  overflow: hidden;
+}
+
+/* Карточка разговора: строка текста и кружок в цвет акцента. */
+.theme-preview i:first-child {
+  position: absolute;
+  inset: 8px 8px auto;
+  height: 22px;
+  border-radius: 5px;
+  background: var(--p-surface);
+}
+
+.theme-preview i:first-child::before {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.theme-preview i:first-child::after {
+  content: "";
+  position: absolute;
+  left: 22px;
+  right: 10px;
+  top: 9px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--p-text);
+  opacity: 0.55;
+}
+
+.theme-preview i:last-child {
+  position: absolute;
+  left: 8px;
+  bottom: 7px;
+  width: 40%;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--p-text);
+  opacity: 0.35;
+}
+
+.themes [data-value="light"] { --p-bg: #f3f4f7; --p-surface: #ffffff; --p-text: #15171c; }
+.themes [data-value="dark"] { --p-bg: #0f1115; --p-surface: #1b1e26; --p-text: #e8eaf0; }
+.themes [data-value="black"] { --p-bg: #000000; --p-surface: #141417; --p-text: #ececef; }
+.themes [data-value="midnight"] { --p-bg: #0b1222; --p-surface: #162139; --p-text: #e6ecf7; }
+.themes [data-value="forest"] { --p-bg: #0d1310; --p-surface: #18221d; --p-text: #e4ebe6; }
+.themes [data-value="paper"] { --p-bg: #f3eee4; --p-surface: #fbf8f1; --p-text: #2a251f; }
+.themes [data-value="system"] {
+  --p-bg: linear-gradient(115deg, #f3f4f7 50%, #0f1115 50%);
+  --p-surface: linear-gradient(115deg, #ffffff 50%, #1b1e26 50%);
+  --p-text: #80858f;
 }
 
 .swatches {
