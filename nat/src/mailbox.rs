@@ -59,9 +59,7 @@ impl Mailbox {
                 .iter()
                 .filter_map(|der| reqwest::Certificate::from_der(der).ok()),
         );
-        let client = builder
-            .build()
-            .context("не удалось создать HTTP-клиент")?;
+        let client = builder.build().context("не удалось создать HTTP-клиент")?;
         Ok(Mailbox::Ntfy { client, base: base.trim_end_matches('/').to_string() })
     }
 
