@@ -16,7 +16,7 @@ mod screen;
 #[cfg(desktop)]
 mod tray;
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -51,6 +51,8 @@ struct AppState {
     /// Своя аватарка (JPEG от окна, пустая — нет) и файл, где она хранится.
     avatar: Mutex<Vec<u8>>,
     avatar_file: Mutex<Option<std::path::PathBuf>>,
+    /// Свой цвет (см. `PeerInfo::color`); окно ставит его при запуске.
+    color: AtomicU8,
     /// Запомненные сертификаты серверов (загружаются при запуске).
     known: Mutex<KnownServers>,
     /// Номер текущего звонка. Растёт при каждом подключении и отключении;
@@ -196,6 +198,8 @@ struct Peer {
     sharing: bool,
     /// Платформа и версия программы, например `android 0.1.42`.
     app: String,
+    /// Свой цвет (номер в палитре окна), 0 — по имени.
+    color: u8,
 }
 
 impl From<PeerInfo> for Peer {
@@ -209,6 +213,7 @@ impl From<PeerInfo> for Peer {
             server_muted: p.server_muted,
             sharing: p.sharing,
             app: p.app,
+            color: p.color,
         }
     }
 }
@@ -446,12 +451,17 @@ async fn start_call(
     if !avatar.is_empty() {
         call.set_avatar(avatar);
     }
+    let color = state.color.load(Ordering::Relaxed);
+    if color != 0 {
+        call.set_color(color);
+    }
     screen::set_requester(app, call.keyframe_requester());
 
     // Сервер ещё не получил наш статус, поэтому mute/deafen берём свои.
     let me = Peer {
         muted: state.tx.muted(),
         deafened: state.deafened.load(Ordering::Relaxed),
+        color,
         ..Peer::from(call.me())
     };
     let joined = Joined {
@@ -793,6 +803,17 @@ async fn set_avatar(state: State<'_, AppState>, data: Vec<u8>) -> CmdResult<Opti
     Ok(url)
 }
 
+/// Свой цвет аватара и плитки, его видят все в комнате (0 — по имени).
+#[tauri::command]
+async fn set_color(state: State<'_, AppState>, color: u8) -> CmdResult<()> {
+    let color = if color <= vwf_proto::PEER_COLORS { color } else { 0 };
+    state.color.store(color, Ordering::Relaxed);
+    if let Some(call) = state.call.lock().await.as_ref() {
+        call.set_color(color);
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn send_chat(state: State<'_, AppState>, text: String) -> CmdResult<()> {
     match state.call.lock().await.as_ref() {
@@ -1126,6 +1147,7 @@ pub fn run() {
             rooms: Mutex::new(None),
             avatar: Mutex::new(Vec::new()),
             avatar_file: Mutex::new(None),
+            color: AtomicU8::new(0),
             known: Mutex::new(KnownServers::in_memory()),
             generation: AtomicU64::new(0),
             params: Mutex::new(None),
@@ -1192,6 +1214,7 @@ pub fn run() {
             send_chat,
             get_avatar,
             set_avatar,
+            set_color,
             open_url,
             screen::screen_sources,
             screen::start_share,

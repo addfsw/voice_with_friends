@@ -580,6 +580,11 @@ impl Room {
                     self.broadcast(from, &ServerMsg::Avatar { id: from, data });
                 }
             }
+            ClientMsg::SetColor { color } => {
+                self.update(from, |p| {
+                    p.color = if color <= vwf_proto::PEER_COLORS { color } else { 0 }
+                });
+            }
             ClientMsg::RequestKeyframe { id } => {
                 if self.peers.get(&from).is_some_and(|p| p.watching.contains(&id)) {
                     self.ask_keyframe(id);

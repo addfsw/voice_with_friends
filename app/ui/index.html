@@ -244,100 +244,163 @@
     <div id="settings" class="sheet-backdrop" hidden>
       <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="settings-title">
         <header class="sheet-head">
+          <button type="button" id="settings-back" class="icon-btn ghost" data-icon="chevron-left" aria-label="Назад" hidden></button>
           <h2 id="settings-title">Настройки</h2>
           <button type="button" id="settings-close" class="icon-btn ghost" data-icon="close" aria-label="Закрыть"></button>
         </header>
 
-        <div class="group">
-          <div class="group-title">Звук</div>
-          <label class="field desktop-only">
-            <span>Микрофон</span>
-            <select id="input"></select>
-          </label>
-          <label class="field desktop-only">
-            <span>Динамики / наушники</span>
-            <select id="output"></select>
-          </label>
-          <div class="field android-only">
-            <span>Куда идёт звук</span>
-            <div id="audio-route" class="segmented" role="radiogroup" aria-label="Куда идёт звук">
-              <button type="button" data-value="auto" title="В наушники, если подключены, иначе в громкий динамик">Авто</button>
-              <button type="button" data-value="speaker" title="Всегда громкий динамик">Громкий</button>
-              <button type="button" data-value="earpiece" title="Динамик у уха, как в обычном звонке">У уха</button>
-            </div>
-          </div>
-          <label class="switch-row" title="Короткий сигнал, когда кто-то вошёл или вышел, и при нажатии кнопок микрофона и звука">
-            <span>Звуки событий</span>
-            <input type="checkbox" id="cues" class="switch" />
-          </label>
-        </div>
+        <div id="settings-main" class="sheet-page">
 
-        <div class="group">
-          <div class="group-title">Профиль и оформление</div>
-          <div class="profile-row">
-            <button type="button" id="profile-avatar" class="avatar profile-avatar" title="Выбрать картинку: её увидят все в комнате" aria-label="Выбрать аватарку"></button>
-            <div class="profile-actions">
-              <button type="button" id="avatar-pick" class="link" title="Картинка обрежется до квадрата">Сменить аватарку</button>
-              <button type="button" id="avatar-remove" class="link">Убрать</button>
-            </div>
-          </div>
-          <input type="file" id="avatar-file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" hidden />
-          <div id="theme" class="themes" role="radiogroup" aria-label="Тема">
-            <button type="button" data-value="system" title="Как в системе: светлая днём, «Ночь» в тёмном режиме"><span class="theme-preview"><i></i><i></i></span><span>Авто</span></button>
-            <button type="button" data-value="light"><span class="theme-preview"><i></i><i></i></span><span>День</span></button>
-            <button type="button" data-value="dark"><span class="theme-preview"><i></i><i></i></span><span>Ночь</span></button>
-            <button type="button" data-value="black"><span class="theme-preview"><i></i><i></i></span><span>Уголь</span></button>
-            <button type="button" data-value="midnight"><span class="theme-preview"><i></i><i></i></span><span>Полночь</span></button>
-            <button type="button" data-value="forest"><span class="theme-preview"><i></i><i></i></span><span>Лес</span></button>
-            <button type="button" data-value="paper"><span class="theme-preview"><i></i><i></i></span><span>Бумага</span></button>
-          </div>
-          <div class="swatches" id="accent" role="radiogroup" aria-label="Цвет">
-            <button type="button" data-value="indigo" title="Индиго"></button>
-            <button type="button" data-value="violet" title="Сирень"></button>
-            <button type="button" data-value="sky" title="Небо"></button>
-            <button type="button" data-value="mint" title="Мята"></button>
-            <button type="button" data-value="amber" title="Янтарь"></button>
-            <button type="button" data-value="rose" title="Малина"></button>
-            <button type="button" data-value="blue" title="Синий"></button>
-            <button type="button" data-value="teal" title="Бирюза"></button>
-            <button type="button" data-value="green" title="Зелень"></button>
-            <button type="button" data-value="orange" title="Апельсин"></button>
-            <button type="button" data-value="red" title="Гранат"></button>
-            <button type="button" data-value="fuchsia" title="Фуксия"></button>
-            <button type="button" data-value="cocoa" title="Какао"></button>
-            <button type="button" data-value="graphite" title="Графит"></button>
-          </div>
-        </div>
-
-        <div class="group">
-          <div class="group-title">Программа</div>
-          <p class="hint">Версия <span id="app-version">—</span></p>
-          <button type="button" id="send-app" class="primary android-only">Отправить программу другу</button>
-          <p class="hint android-only">
-            Друг получит файл установки (например, в Telegram) и поставит его поверх
-            старой версии.
-          </p>
-        </div>
-
-        <!-- Редкое: открывается по нажатию, чтобы не загромождать окно -->
-        <details id="advanced" class="advanced">
-          <summary>Дополнительно</summary>
-          <div class="advanced-body">
-            <label class="switch-row desktop-only" title="Крестик окна прячет программу в трей рядом с часами, разговор продолжается. Выйти — через меню значка в трее">
-              <span>Сворачивать в трей при закрытии</span>
-              <input type="checkbox" id="close-to-tray" class="switch" />
+          <div class="group">
+            <div class="group-title">Звук</div>
+            <label class="field desktop-only">
+              <span>Микрофон</span>
+              <select id="input"></select>
             </label>
+            <label class="field desktop-only">
+              <span>Динамики / наушники</span>
+              <select id="output"></select>
+            </label>
+            <div class="field android-only">
+              <span>Куда идёт звук</span>
+              <div id="audio-route" class="segmented" role="radiogroup" aria-label="Куда идёт звук">
+                <button type="button" data-value="auto" title="В наушники, если подключены, иначе в громкий динамик">Авто</button>
+                <button type="button" data-value="speaker" title="Всегда громкий динамик">Громкий</button>
+                <button type="button" data-value="earpiece" title="Динамик у уха, как в обычном звонке">У уха</button>
+              </div>
+            </div>
+            <label class="switch-row" title="Короткий сигнал, когда кто-то вошёл или вышел, и при нажатии кнопок микрофона и звука">
+              <span>Звуки событий</span>
+              <input type="checkbox" id="cues" class="switch" />
+            </label>
+          </div>
 
-            <div id="diag" class="group" hidden>
-              <div class="group-title">Диагностика звука</div>
-              <ul id="diag-list" class="diag"></ul>
-              <p class="hint">
-                Если звук прерывается, посмотрите, какие числа растут в этот момент, —
-                по ним видно, где проблема: у микрофона, у вывода или в сети.
-              </p>
+          <div class="group">
+            <div class="group-title">Профиль</div>
+            <div class="profile-row">
+              <button type="button" id="profile-avatar" class="avatar profile-avatar" title="Выбрать картинку: её увидят все в комнате" aria-label="Выбрать аватарку"></button>
+              <div class="profile-actions">
+                <button type="button" id="avatar-pick" class="link" title="Картинка обрежется до квадрата">Сменить аватарку</button>
+                <button type="button" id="avatar-remove" class="link">Убрать</button>
+              </div>
+            </div>
+            <input type="file" id="avatar-file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" hidden />
+            <button type="button" id="open-appearance" class="nav-row">
+              <span class="nav-row-icon" data-icon="palette"></span>
+              <span class="nav-row-text">
+                <span>Оформление</span>
+                <span id="appearance-summary" class="hint"></span>
+              </span>
+              <span class="nav-row-chevron" data-icon="chevron-right"></span>
+            </button>
+          </div>
+
+          <div class="group">
+            <div class="group-title">Программа</div>
+            <p class="hint">Версия <span id="app-version">—</span></p>
+            <button type="button" id="send-app" class="primary android-only">Отправить программу другу</button>
+            <p class="hint android-only">
+              Друг получит файл установки (например, в Telegram) и поставит его поверх
+              старой версии.
+            </p>
+          </div>
+
+          <!-- Редкое: открывается по нажатию, чтобы не загромождать окно -->
+          <details id="advanced" class="advanced">
+            <summary>Дополнительно</summary>
+            <div class="advanced-body">
+              <label class="switch-row desktop-only" title="Крестик окна прячет программу в трей рядом с часами, разговор продолжается. Выйти — через меню значка в трее">
+                <span>Сворачивать в трей при закрытии</span>
+                <input type="checkbox" id="close-to-tray" class="switch" />
+              </label>
+
+              <div id="diag" class="group" hidden>
+                <div class="group-title">Диагностика звука</div>
+                <ul id="diag-list" class="diag"></ul>
+                <p class="hint">
+                  Если звук прерывается, посмотрите, какие числа растут в этот момент, —
+                  по ним видно, где проблема: у микрофона, у вывода или в сети.
+                </p>
+              </div>
+            </div>
+          </details>
+        </div>
+
+        <!-- Оформление: отдельная страница настроек, чтобы главная была короткой -->
+        <div id="appearance-page" class="sheet-page" hidden>
+          <div class="group">
+            <div class="group-title">Тема</div>
+            <div id="theme" class="themes" role="radiogroup" aria-label="Тема">
+              <button type="button" data-value="system" title="Как в системе: светлая днём, «Ночь» в тёмном режиме"><span class="theme-preview"><i></i><i></i></span><span>Авто</span></button>
+              <button type="button" data-value="light"><span class="theme-preview"><i></i><i></i></span><span>День</span></button>
+              <button type="button" data-value="dark"><span class="theme-preview"><i></i><i></i></span><span>Ночь</span></button>
+              <button type="button" data-value="black"><span class="theme-preview"><i></i><i></i></span><span>Уголь</span></button>
+              <button type="button" data-value="midnight"><span class="theme-preview"><i></i><i></i></span><span>Полночь</span></button>
+              <button type="button" data-value="forest"><span class="theme-preview"><i></i><i></i></span><span>Лес</span></button>
+              <button type="button" data-value="paper"><span class="theme-preview"><i></i><i></i></span><span>Бумага</span></button>
+              <button type="button" data-value="sakura"><span class="theme-preview"><i></i><i></i></span><span>Сакура</span></button>
+              <button type="button" data-value="ocean"><span class="theme-preview"><i></i><i></i></span><span>Океан</span></button>
+              <button type="button" data-value="sunset"><span class="theme-preview"><i></i><i></i></span><span>Закат</span></button>
+              <button type="button" data-value="neon"><span class="theme-preview"><i></i><i></i></span><span>Неон</span></button>
+              <button type="button" data-value="terminal"><span class="theme-preview"><i></i><i></i></span><span>Терминал</span></button>
             </div>
           </div>
-        </details>
+
+          <div class="group">
+            <div class="group-title">Цвет кнопок</div>
+            <div class="swatches" id="accent" role="radiogroup" aria-label="Цвет кнопок">
+              <button type="button" data-value="indigo" title="Индиго"></button>
+              <button type="button" data-value="violet" title="Сирень"></button>
+              <button type="button" data-value="sky" title="Небо"></button>
+              <button type="button" data-value="mint" title="Мята"></button>
+              <button type="button" data-value="amber" title="Янтарь"></button>
+              <button type="button" data-value="rose" title="Малина"></button>
+              <button type="button" data-value="blue" title="Синий"></button>
+              <button type="button" data-value="teal" title="Бирюза"></button>
+              <button type="button" data-value="green" title="Зелень"></button>
+              <button type="button" data-value="orange" title="Апельсин"></button>
+              <button type="button" data-value="red" title="Гранат"></button>
+              <button type="button" data-value="fuchsia" title="Фуксия"></button>
+              <button type="button" data-value="cocoa" title="Какао"></button>
+              <button type="button" data-value="graphite" title="Графит"></button>
+            </div>
+          </div>
+
+          <div class="group">
+            <div class="group-title">Ваш цвет</div>
+            <p class="hint">Цвет вашей плитки и кружка с буквой. Его видят все в комнате.</p>
+            <div class="swatches peer-colors" id="my-color" role="radiogroup" aria-label="Ваш цвет"></div>
+          </div>
+
+          <div class="group">
+            <div class="group-title">Фон комнаты</div>
+            <div id="room-bg" class="backdrops" role="radiogroup" aria-label="Фон комнаты">
+              <button type="button" data-value="none"><span class="bg-preview"></span><span>Нет</span></button>
+              <button type="button" data-value="aurora"><span class="bg-preview"></span><span>Сияние</span></button>
+              <button type="button" data-value="dusk"><span class="bg-preview"></span><span>Вечер</span></button>
+              <button type="button" data-value="lagoon"><span class="bg-preview"></span><span>Лагуна</span></button>
+              <button type="button" data-value="stars"><span class="bg-preview"></span><span>Звёзды</span></button>
+              <button type="button" data-value="grid"><span class="bg-preview"></span><span>Сетка</span></button>
+              <button type="button" data-value="image" title="Картинка видна только вам"><span class="bg-preview"></span><span>Своя</span></button>
+            </div>
+            <input type="file" id="room-bg-file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" hidden />
+            <p class="hint">Фон видите только вы.</p>
+          </div>
+
+          <div class="group">
+            <div class="group-title">Размер</div>
+            <div id="ui-scale" class="segmented" role="radiogroup" aria-label="Размер интерфейса">
+              <button type="button" data-value="0.9">Мельче</button>
+              <button type="button" data-value="1">Обычный</button>
+              <button type="button" data-value="1.1">Крупнее</button>
+              <button type="button" data-value="1.25">Крупный</button>
+            </div>
+            <label class="switch-row" title="Меньше плитки и строки участников: больше людей помещается на экране">
+              <span>Компактный список участников</span>
+              <input type="checkbox" id="compact" class="switch" />
+            </label>
+          </div>
+        </div>
       </section>
     </div>
 
