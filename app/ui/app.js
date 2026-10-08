@@ -1252,9 +1252,8 @@ $("invite-settings").addEventListener("click", () => {
 function showLocked(locked) {
   const button = $("lock-btn");
   button.setAttribute("aria-pressed", String(locked));
-  button.dataset.tip = locked ? "Вход закрыт. Нажмите, чтобы открыть" : "Никого больше не пускать";
-  button.replaceChildren(icon(locked ? "lock" : "lock-open"));
-  $("room-locked").hidden = !locked;
+  button.title = locked ? "Новые участники не войдут. Нажмите, чтобы открыть вход" : "Нажмите, чтобы никого больше не пускать";
+  button.replaceChildren(icon(locked ? "lock" : "lock-open"), locked ? "вход закрыт" : "вход открыт");
 }
 
 $("lock-btn").addEventListener("click", async () => {

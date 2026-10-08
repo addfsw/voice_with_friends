@@ -116,15 +116,14 @@
           <div id="room-title" class="room-title">Комната</div>
           <div class="room-sub">
             <span id="server-label"></span>
-            <span id="room-locked" class="room-locked" hidden>вход закрыт</span>
+            <!-- Хосту: открыт ли вход в комнату; нажатие переключает. -->
+            <button type="button" id="lock-btn" class="lock-chip" aria-pressed="false" hidden></button>
             <span id="server-code" class="mono"
                   title="Код сертификата сервера: его можно сверить с хостом"></span>
           </div>
         </div>
-        <button type="button" id="lock-btn" class="icon-btn head-btn" aria-pressed="false" aria-label="Никого больше не пускать" data-tip="Никого больше не пускать" hidden></button>
-        <button type="button" id="invite-btn" class="icon-btn head-btn invite-btn" data-icon="person-add" aria-label="Пригласить друзей" data-tip="Пригласить друзей" hidden></button>
-        <button type="button" class="icon-btn head-btn open-settings" data-icon="gear" aria-label="Настройки" data-tip="Настройки"></button>
-        <button type="button" id="leave-btn" class="icon-btn head-btn leave tip-right" data-icon="logout" aria-label="Выйти" data-tip="Выйти"></button>
+        <button type="button" id="invite-btn" class="head-btn invite-btn" data-icon="person-add" data-tip="Пригласить друзей" hidden>Пригласить</button>
+        <button type="button" class="icon-btn head-btn open-settings tip-right" data-icon="gear" aria-label="Настройки" data-tip="Настройки"></button>
       </header>
 
       <div id="reconnect-banner" class="banner" hidden>
@@ -217,6 +216,8 @@
               </label>
             </div>
           </div>
+          <!-- Выход — внизу, рядом с микрофоном, как «положить трубку». -->
+          <button type="button" id="leave-btn" class="dock-btn leave tip-right" data-icon="logout" aria-label="Выйти" data-tip="Выйти"></button>
         </div>
       </section>
     </main>
