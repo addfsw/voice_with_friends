@@ -268,10 +268,14 @@
             </div>
           </div>
           <input type="file" id="avatar-file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" hidden />
-          <div id="theme" class="segmented" role="radiogroup" aria-label="Тема">
-            <button type="button" data-value="system">Как в системе</button>
-            <button type="button" data-value="light">Светлая</button>
-            <button type="button" data-value="dark">Тёмная</button>
+          <div id="theme" class="themes" role="radiogroup" aria-label="Тема">
+            <button type="button" data-value="system" title="Как в системе: светлая днём, «Ночь» в тёмном режиме"><span class="theme-preview"><i></i><i></i></span><span>Авто</span></button>
+            <button type="button" data-value="light"><span class="theme-preview"><i></i><i></i></span><span>День</span></button>
+            <button type="button" data-value="dark"><span class="theme-preview"><i></i><i></i></span><span>Ночь</span></button>
+            <button type="button" data-value="black"><span class="theme-preview"><i></i><i></i></span><span>Уголь</span></button>
+            <button type="button" data-value="midnight"><span class="theme-preview"><i></i><i></i></span><span>Полночь</span></button>
+            <button type="button" data-value="forest"><span class="theme-preview"><i></i><i></i></span><span>Лес</span></button>
+            <button type="button" data-value="paper"><span class="theme-preview"><i></i><i></i></span><span>Бумага</span></button>
           </div>
           <div class="swatches" id="accent" role="radiogroup" aria-label="Цвет">
             <button type="button" data-value="indigo" title="Индиго"></button>

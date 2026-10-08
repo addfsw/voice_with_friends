@@ -155,8 +155,8 @@ class MainActivity : TauriActivity() {
   }
 
   /// Цвет подложки под системными панелями — как фон интерфейса.
-  fun setDarkTheme(dark: Boolean) {
-    window.decorView.setBackgroundColor(if (dark) Color.rgb(15, 17, 21) else Color.rgb(243, 244, 247))
+  fun setDarkTheme(dark: Boolean, background: Int = if (dark) Color.rgb(15, 17, 21) else Color.rgb(243, 244, 247)) {
+    window.decorView.setBackgroundColor(background)
     val controller = WindowCompat.getInsetsController(window, window.decorView)
     controller.isAppearanceLightStatusBars = !dark
     controller.isAppearanceLightNavigationBars = !dark
@@ -312,6 +312,17 @@ class MainActivity : TauriActivity() {
     @JavascriptInterface
     fun setTheme(dark: Boolean) {
       runOnUiThread { setDarkTheme(dark) }
+    }
+
+    /// Тема с фоном `#rrggbb` (--bg из style.css): у тем свой цвет фона.
+    @JavascriptInterface
+    fun setThemeColor(background: String, dark: Boolean) {
+      val color = try {
+        Color.parseColor(background)
+      } catch (e: IllegalArgumentException) {
+        null
+      }
+      runOnUiThread { if (color != null) setDarkTheme(dark, color) else setDarkTheme(dark) }
     }
   }
 }

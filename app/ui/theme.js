@@ -11,7 +11,8 @@
   };
   const root = document.documentElement;
   const theme = read("theme", "dark");
-  if (theme === "light" || theme === "dark") root.dataset.theme = theme;
+  // Список тем — THEMES в app.js; "system" — без data-theme.
+  if (theme !== "system") root.dataset.theme = theme;
   root.dataset.accent = read("accent", "indigo");
   // Телефон: без трея, рации по клавише, показа экрана и своих комнат.
   if (/Android/i.test(navigator.userAgent)) root.classList.add("android");
