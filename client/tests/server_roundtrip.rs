@@ -535,6 +535,37 @@ async fn avatars_reach_everyone_and_newcomers() {
 }
 
 #[tokio::test]
+async fn own_color_reaches_everyone_and_newcomers() {
+    use vwf_proto::ClientMsg;
+
+    let addr = start_server(false).await.to_string();
+    let alice = vwf_client::net::connect(&addr, "Алиса").await.unwrap();
+    let mut bob = vwf_client::net::connect(&addr, "Боб").await.unwrap();
+    let alice_id = alice.me.id;
+
+    // Алиса выбрала цвет — Боб видит его в её статусе.
+    alice.control().send(ClientMsg::SetColor { color: 5 });
+    expect_event(
+        &mut bob,
+        |e| matches!(e, ServerMsg::PeerUpdated(p) if p.id == alice_id && p.color == 5),
+    )
+    .await;
+
+    // Новичок получает цвет сразу в Welcome.
+    let carol = vwf_client::net::connect(&addr, "Кэрол").await.unwrap();
+    let seen = carol.peers.iter().find(|p| p.id == alice_id).unwrap();
+    assert_eq!(seen.color, 5);
+
+    // Неизвестный номер цвета сервер превращает в «по имени».
+    alice.control().send(ClientMsg::SetColor { color: vwf_proto::PEER_COLORS + 1 });
+    expect_event(
+        &mut bob,
+        |e| matches!(e, ServerMsg::PeerUpdated(p) if p.id == alice_id && p.color == 0),
+    )
+    .await;
+}
+
+#[tokio::test]
 async fn password_and_capacity() {
     use vwf_client::net::{Credentials, Trust, connect_as};
 

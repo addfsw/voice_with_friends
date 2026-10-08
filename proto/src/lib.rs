@@ -22,7 +22,12 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 /// 6 — аватарки.
 /// 7 — пароль комнаты (`ClientMsg::Auth` сразу после `Hello`), лимит участников.
 /// 8 — версия программы участника (`Auth::app`, `PeerInfo::app`).
-pub const PROTOCOL_VERSION: u32 = 8;
+/// 9 — свой цвет участника (`ClientMsg::SetColor`, `PeerInfo::color`).
+pub const PROTOCOL_VERSION: u32 = 9;
+
+/// Сколько своих цветов можно выбрать: `PeerInfo::color` от 1 до этого
+/// числа (0 — цвет по имени, как раньше). Сами цвета — в программе.
+pub const PEER_COLORS: u8 = 16;
 
 /// Максимальная длина строки с версией программы ([`PeerInfo::app`]).
 pub const MAX_APP_CHARS: usize = 40;
@@ -95,6 +100,8 @@ pub struct PeerInfo {
     /// Платформа и версия его программы, например `android 0.1.42`
     /// (пусто — неизвестно). По ней видно, у кого программа новее.
     pub app: String,
+    /// Свой цвет аватара и плитки: 1..=[`PEER_COLORS`], 0 — по имени.
+    pub color: u8,
 }
 
 impl PeerInfo {
@@ -108,6 +115,7 @@ impl PeerInfo {
             server_muted: false,
             sharing: false,
             app: String::new(),
+            color: 0,
         }
     }
 }
@@ -210,6 +218,8 @@ pub enum ClientMsg {
     /// `Hello`, потому что сервер читает его, только когда версии протокола
     /// совпали.
     Auth { password: String, app: String },
+    /// Свой цвет (см. [`PeerInfo::color`]): его видят все в комнате.
+    SetColor { color: u8 },
 }
 
 /// Сообщение в чате комнаты.
