@@ -295,7 +295,9 @@ const CHECK_MIN_MS = { address: 0, invite: 30000 };
 // Старше этого ответ уже не показываем как правду — «Проверяю…».
 const STATUS_STALE_MS = { address: 45000, invite: 300000 };
 let roomCheckTimer = null;
-let roomChecking = false;
+// Комнаты, проверка которых ещё идёт: каждая проверяется отдельно, чтобы
+// быстрый ответ (по адресу) не ждал медленного (по коду приглашения).
+const roomsChecking = new Set();
 
 const checkKind = (server) => (isInvite(server) ? "invite" : "address");
 
@@ -333,7 +335,7 @@ function dueServers(force) {
   const now = Date.now();
   return recentRooms()
     .map((r) => r.server)
-    .filter((server) => !found.has(server))
+    .filter((server) => !found.has(server) && !roomsChecking.has(server))
     .filter((server) => {
       const at = join.status.get(server)?.at;
       if (at === undefined) return true;
@@ -342,22 +344,21 @@ function dueServers(force) {
     });
 }
 
-async function checkRecent({ force = false } = {}) {
-  if (roomChecking || $("connect-view").hidden) return;
-  const servers = dueServers(force);
-  if (!servers.length) return;
-  roomChecking = true;
-  if (!join.prompt && !join.busy) renderJoin();
+function checkRecent({ force = false } = {}) {
+  if ($("connect-view").hidden) return;
+  for (const server of dueServers(force)) checkRoom(server);
+}
+
+// Проверяет одну комнату и сразу показывает ответ.
+async function checkRoom(server) {
+  roomsChecking.add(server);
+  let status = "unknown";
   try {
-    for (const { server, status } of await invoke("check_rooms", { servers })) {
-      setStatus(server, status);
-    }
-  } catch {
-    for (const server of servers) setStatus(server, "unknown");
-  } finally {
-    roomChecking = false;
-    if (!join.prompt && !join.busy) renderJoin();
-  }
+    [{ status }] = await invoke("check_rooms", { servers: [server] });
+  } catch {}
+  roomsChecking.delete(server);
+  setStatus(server, status);
+  if (!join.prompt && !join.busy) renderJoin();
 }
 
 // Вернулись в приложение (на телефоне таймеры, пока оно свёрнуто, стоят).
