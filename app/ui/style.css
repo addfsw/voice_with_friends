@@ -3041,3 +3041,99 @@ html:not(.android) .android-only {
   width: 22px;
   height: 22px;
 }
+
+/* --- Справка «Как это работает» --- */
+
+.help-lead {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.help-steps,
+.help-keys,
+.help-tips {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+/* Шаги — с номером в кружке цвета оформления. */
+.help-steps {
+  counter-reset: step;
+}
+
+.help-steps li {
+  position: relative;
+  padding-left: 32px;
+  counter-increment: step;
+}
+
+.help-steps li::before {
+  content: counter(step);
+  position: absolute;
+  left: 0;
+  top: -1px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.help-steps code {
+  font-size: 12.5px;
+}
+
+/* Кнопки комнаты — с теми же значками, что в нижней панели. */
+.help-keys li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.help-keys li > [data-icon] {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  color: var(--text-2);
+  background: var(--surface-2);
+}
+
+.help-keys li > [data-icon] .icon {
+  width: 18px;
+  height: 18px;
+}
+
+.help-keys li > span:last-child {
+  padding-top: 5px;
+}
+
+.help-tips li {
+  position: relative;
+  padding-left: 16px;
+}
+
+.help-tips li::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 0.6em;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
