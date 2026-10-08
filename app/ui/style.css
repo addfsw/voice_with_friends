@@ -3234,38 +3234,44 @@ button.key.listening {
  * чтобы текст читался в любой теме. */
 .backdrops [data-value="aurora"],
 :root[data-room-bg="aurora"] #room-view {
-  --room-bg: radial-gradient(55% 45% at 10% 0%, rgba(61, 220, 132, 0.22), transparent 70%),
-    radial-gradient(50% 50% at 90% 15%, rgba(124, 108, 255, 0.26), transparent 70%),
-    radial-gradient(70% 50% at 50% 105%, rgba(11, 143, 216, 0.22), transparent 70%);
+  /* Северное сияние: зелёные и бирюзовые ленты наискосок по верху. */
+  --room-bg: linear-gradient(162deg, transparent 6%, rgba(52, 211, 153, 0.30) 20%, transparent 36%),
+    linear-gradient(172deg, transparent 18%, rgba(45, 212, 191, 0.22) 32%, transparent 48%),
+    radial-gradient(45% 35% at 85% 0%, rgba(167, 139, 250, 0.22), transparent 70%);
 }
 
 .backdrops [data-value="dusk"],
 :root[data-room-bg="dusk"] #room-view {
-  --room-bg: radial-gradient(60% 50% at 0% 100%, rgba(232, 89, 12, 0.26), transparent 70%),
-    radial-gradient(60% 50% at 100% 0%, rgba(214, 64, 159, 0.26), transparent 70%),
-    linear-gradient(180deg, rgba(139, 92, 246, 0.1), transparent);
+  /* Закат: тёплый горизонт снизу, солнце по центру. */
+  --room-bg: radial-gradient(40% 30% at 50% 100%, rgba(251, 191, 36, 0.34), transparent 75%),
+    linear-gradient(0deg, rgba(249, 115, 22, 0.30) 0%, rgba(236, 72, 153, 0.16) 38%, transparent 70%);
 }
 
 .backdrops [data-value="lagoon"],
 :root[data-room-bg="lagoon"] #room-view {
-  --room-bg: radial-gradient(70% 55% at 100% 100%, rgba(14, 154, 167, 0.28), transparent 70%),
-    radial-gradient(55% 45% at 0% 10%, rgba(47, 111, 237, 0.24), transparent 70%);
+  /* Лагуна: всё в бирюзе, светлый блик сверху, глубина снизу. */
+  --room-bg: radial-gradient(50% 40% at 15% 0%, rgba(165, 243, 252, 0.22), transparent 70%),
+    linear-gradient(180deg, rgba(6, 182, 212, 0.12), rgba(8, 145, 178, 0.32));
+}
+
+/* Звёзды: точки на двух сетках разного шага, чтобы узор не повторялся явно.
+ * Размер плитки внутри самой переменной, иначе shorthand background его сбрасывает. */
+.backdrops [data-value="stars"] {
+  --star-a: 22px;
+  --star-b: 31px;
 }
 
 .backdrops [data-value="stars"],
 :root[data-room-bg="stars"] #room-view {
-  --star: color-mix(in srgb, var(--text) 45%, transparent);
-  --room-bg: radial-gradient(1.2px 1.2px at 12% 18%, var(--star), transparent 100%),
-    radial-gradient(1px 1px at 32% 72%, var(--star), transparent 100%),
-    radial-gradient(1.4px 1.4px at 58% 28%, var(--star), transparent 100%),
-    radial-gradient(1px 1px at 78% 62%, var(--star), transparent 100%),
-    radial-gradient(1.2px 1.2px at 90% 12%, var(--star), transparent 100%),
-    radial-gradient(1px 1px at 46% 92%, var(--star), transparent 100%),
-    radial-gradient(70% 60% at 50% 0%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 70%);
-}
-
-:root[data-room-bg="stars"] #room-view {
-  background-size: 180px 180px, 180px 180px, 180px 180px, 180px 180px, 180px 180px, 180px 180px, 100% 100%;
+  --star: color-mix(in srgb, var(--text) 70%, transparent);
+  --room-bg: radial-gradient(circle 1.4px at 12% 18%, var(--star) 90%, transparent) 0 0 / var(--star-a, 170px) var(--star-a, 170px),
+    radial-gradient(circle 1px at 38% 66%, var(--star) 90%, transparent) 0 0 / var(--star-a, 170px) var(--star-a, 170px),
+    radial-gradient(circle 1.8px at 70% 34%, var(--star) 90%, transparent) 0 0 / var(--star-a, 170px) var(--star-a, 170px),
+    radial-gradient(circle 1px at 86% 84%, var(--star) 90%, transparent) 0 0 / var(--star-a, 170px) var(--star-a, 170px),
+    radial-gradient(circle 1.2px at 24% 52%, var(--star) 90%, transparent) 0 0 / var(--star-b, 243px) var(--star-b, 243px),
+    radial-gradient(circle 1px at 58% 8%, var(--star) 90%, transparent) 0 0 / var(--star-b, 243px) var(--star-b, 243px),
+    radial-gradient(circle 1.5px at 92% 58%, var(--star) 90%, transparent) 0 0 / var(--star-b, 243px) var(--star-b, 243px),
+    radial-gradient(70% 60% at 50% 0%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 70%);
 }
 
 .backdrops [data-value="grid"],
@@ -3276,11 +3282,7 @@ button.key.listening {
     radial-gradient(80% 60% at 50% 0%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 70%);
 }
 
-.backdrops [data-value="stars"] .bg-preview {
-  background-size: 24px 24px, 24px 24px, 24px 24px, 24px 24px, 24px 24px, 24px 24px, 100% 100%;
-  background-color: var(--bg);
-}
-
+.backdrops [data-value="stars"] .bg-preview,
 .backdrops [data-value="grid"] .bg-preview {
   background: var(--room-bg), var(--bg);
 }
