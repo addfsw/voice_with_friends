@@ -138,10 +138,12 @@ impl Rooms {
         id: &str,
         change: impl FnOnce(&mut RoomConfig),
     ) -> anyhow::Result<RoomConfig> {
-        let room = self.list.iter_mut().find(|r| r.id == id).context("комната не найдена")?;
-        change(room);
+        let slot = self.list.iter_mut().find(|r| r.id == id).context("комната не найдена")?;
+        // Правка проверяется на копии: неверное имя не должно остаться в списке.
+        let mut room = slot.clone();
+        change(&mut room);
         room.name = clean_name(&room.name)?;
-        let room = room.clone();
+        *slot = room.clone();
         self.save()?;
         Ok(room)
     }
@@ -196,6 +198,8 @@ mod tests {
         assert_eq!((games.password.as_str(), games.max_peers, games.internet), ("тайна", 4, true));
         assert_ne!(rooms.invite_file(&games.id), rooms.invite_file(&first.id));
         rooms.update(&games.id, |r| r.lan = false).unwrap();
+        assert!(rooms.update(&games.id, |r| r.name = "  ".into()).is_err());
+        assert_eq!(rooms.list()[1].name, "Игры с Саней", "неудачная правка не остаётся");
 
         let again = Rooms::load(&dir, "другое имя");
         let names: Vec<_> = again.list().into_iter().map(|r| (r.name, r.lan)).collect();
