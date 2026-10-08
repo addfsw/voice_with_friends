@@ -1516,8 +1516,33 @@ function peerItem(peer, isMe) {
     });
   }
 
-  li.append(avatar, main, side);
+  if ($("peers").classList.contains("tiles")) tileLayout(li, peer, avatar, main, side);
+  else li.append(avatar, main, side);
   return li;
+}
+
+// Плитка «сцена»: фон цвета аватара, вверху — «в эфире» и связь, в центре —
+// аватар, внизу — плашка с именем и значками, справа от неё «Смотреть».
+function tileLayout(li, peer, avatar, main, side) {
+  li.style.setProperty("--tile", avatarColor(peer.name));
+  const box = (className, ...children) => {
+    const div = document.createElement("div");
+    div.className = className;
+    div.append(...children.filter(Boolean));
+    return div;
+  };
+  const icons = side.querySelectorAll(".status-icon:not(.quality)");
+  const parts = [
+    box("tile-top", main.querySelector(".badge.live"), side.querySelector(".quality")),
+    box("tile-center", avatar, main.querySelector(".badge.off")),
+    box(
+      "tile-bottom",
+      box("tile-name", main.querySelector(".peer-name"), ...icons),
+      side.querySelector(".watch-btn"),
+    ),
+    side.querySelector(".menu-wrap"),
+  ];
+  li.append(...parts.filter(Boolean));
 }
 
 function toggleButton(id, iconEl, off, title, onClick) {
@@ -1564,7 +1589,12 @@ function peerMenu(peer) {
     menu.querySelector(".quality-note")?.remove();
     const quality = call.quality.get(peer.id);
     if (quality) title.after(qualityLine(quality));
+    menu.style.right = "";
     menu.hidden = false;
+    // У плитки в левом ряду меню шире самой плитки — сдвигаем, чтобы не
+    // уходило за левый край окна.
+    const left = menu.getBoundingClientRect().left;
+    if (left < 8) menu.style.right = `${left - 8}px`;
   };
   const button = toggleButton(null, icon("more"), false, "", (event) => {
     event.stopPropagation();
@@ -1777,6 +1807,8 @@ const selectTab = segmented($("room-tabs"), "people", showTab);
 function setPeerLayout(layout) {
   store.set("peerLayout", layout);
   $("peers").classList.toggle("tiles", layout === "tiles");
+  // Плитка и строка устроены по-разному — собираем участников заново.
+  if (call.me) renderPeers();
 }
 
 segmented($("peer-layout"), store.get("peerLayout", "list"), setPeerLayout);
