@@ -220,8 +220,21 @@
               </label>
             </div>
           </div>
-          <!-- Выход — внизу, рядом с микрофоном, как «положить трубку». -->
-          <button type="button" id="leave-btn" class="dock-btn leave tip-right" data-icon="logout" aria-label="Выйти" data-tip="Выйти"></button>
+          <!-- Выход — внизу, рядом с микрофоном, как «положить трубку».
+               Хосту — с вопросом прямо над кнопкой: закрытие отключит всех. -->
+          <div class="menu-wrap leave-wrap">
+            <button type="button" id="leave-btn" class="dock-btn leave tip-right" data-icon="logout" aria-label="Выйти" data-tip="Выйти" aria-haspopup="dialog" aria-expanded="false"></button>
+            <div id="leave-menu" class="menu up right leave-menu" role="alertdialog" aria-labelledby="leave-title" aria-describedby="leave-text" hidden>
+              <div id="leave-title" class="leave-title">Закрыть комнату?</div>
+              <p id="leave-text" class="leave-text">
+                Все отключатся. Код приглашения и адреса не изменятся.
+              </p>
+              <div class="leave-actions">
+                <button type="button" id="leave-cancel">Отмена</button>
+                <button type="button" id="leave-confirm" class="danger">Закрыть</button>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
     </main>
@@ -479,23 +492,6 @@
     </div>
 
     <!-- Подтверждение: закрыть свою комнату -->
-    <div id="leave-sheet" class="sheet-backdrop pop" hidden>
-      <section class="sheet" role="alertdialog" aria-modal="true" aria-labelledby="leave-title" aria-describedby="leave-text">
-        <header class="sheet-head">
-          <h2 id="leave-title">Закрыть комнату?</h2>
-          <button type="button" id="leave-close" class="icon-btn ghost" data-icon="close" aria-label="Отмена"></button>
-        </header>
-        <p id="leave-text" class="hint">
-          Все участники отключатся. Код приглашения и адреса не изменятся:
-          откроете комнату снова — друзья зайдут как обычно.
-        </p>
-        <div class="cert-actions">
-          <button type="button" id="leave-cancel">Отмена</button>
-          <button type="button" id="leave-confirm" class="danger">Закрыть комнату</button>
-        </div>
-      </section>
-    </div>
-
     <!-- Чужой экран на телефоне (на компьютере — отдельное окно viewer.html). -->
     <div id="screen-view" class="screen-view" hidden>
       <div id="sv-stage" class="sv-stage">

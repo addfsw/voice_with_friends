@@ -1147,7 +1147,6 @@ function leaveRoom(reason) {
   hideMutedHint();
   closeMenus();
   closeInvite();
-  $("leave-sheet").hidden = true;
   stopInternetPolling();
   clearInterval(call.statusTimer);
   call.statusTimer = null;
@@ -1181,27 +1180,26 @@ async function leave() {
   }
 }
 
-// Хосту закрытие комнаты отключает всех, поэтому сначала спрашиваем.
-$("leave-btn").addEventListener("click", () => {
+// Хосту закрытие комнаты отключает всех, поэтому сначала спрашиваем —
+// прямо над кнопкой, как меню. Повторное нажатие на кнопку закрывает вопрос.
+$("leave-btn").addEventListener("click", (event) => {
   if (!call.hosting) return leave();
+  event.stopPropagation();
+  const open = $("leave-menu").hidden;
+  closeMenus();
   closeInvite();
-  $("leave-sheet").hidden = false;
+  if (!open) return;
+  $("leave-menu").hidden = false;
+  $("leave-btn").setAttribute("aria-expanded", "true");
   $("leave-confirm").focus();
 });
 
-function closeLeaveSheet() {
-  $("leave-sheet").hidden = true;
-}
-
+$("leave-menu").addEventListener("click", (event) => event.stopPropagation());
 $("leave-confirm").addEventListener("click", () => {
-  closeLeaveSheet();
+  closeMenus();
   leave();
 });
-$("leave-cancel").addEventListener("click", closeLeaveSheet);
-$("leave-close").addEventListener("click", closeLeaveSheet);
-$("leave-sheet").addEventListener("click", (event) => {
-  if (event.target === $("leave-sheet")) closeLeaveSheet();
-});
+$("leave-cancel").addEventListener("click", closeMenus);
 
 // Кнопки шапки и окно «Пригласить друзей» для своей комнаты.
 function renderHostControls() {
@@ -1686,6 +1684,7 @@ function setLocalMute(peer, muted) {
 function closeMenus() {
   for (const menu of document.querySelectorAll(".menu")) menu.hidden = true;
   $("address-btn").setAttribute("aria-expanded", "false");
+  $("leave-btn").setAttribute("aria-expanded", "false");
 }
 
 document.addEventListener("click", closeMenus);
@@ -2794,7 +2793,6 @@ window.addEventListener("keydown", (event) => {
     closeShareSheet();
     if ($("address-menu").hidden) closeInvite();
     closeRoomSheet();
-    closeLeaveSheet();
     closeMenus();
   }
 });

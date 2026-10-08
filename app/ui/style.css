@@ -1202,7 +1202,7 @@ button.invite-btn:hover {
 /* Выйти можно и во время переподключения: кнопка выхода остаётся живой. */
 #room-view.reconnecting .peers,
 #room-view.reconnecting .dock > :not(.dock-buttons),
-#room-view.reconnecting .dock-buttons > :not(.leave) {
+#room-view.reconnecting .dock-buttons > :not(.leave-wrap) {
   opacity: 0.5;
   pointer-events: none;
 }
@@ -1937,6 +1937,49 @@ button.invite-btn:hover {
 .menu .danger-item.armed {
   background: var(--danger);
   color: #fff;
+}
+
+/* Вопрос «Закрыть комнату?» над кнопкой выхода */
+.leave-menu {
+  width: 260px;
+  padding: 12px;
+  gap: 4px;
+}
+
+.leave-title {
+  font-weight: 650;
+}
+
+.leave-text {
+  margin: 0 0 8px;
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.leave-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.menu .leave-actions button {
+  flex: 1;
+  justify-content: center;
+  padding: 8px 12px;
+  background: var(--surface-2);
+}
+
+.menu .leave-actions button:hover {
+  background: var(--surface-3);
+}
+
+.menu .leave-actions button.danger {
+  color: #fff;
+  background: var(--danger);
+}
+
+.menu .leave-actions button.danger:hover {
+  background: var(--danger-strong);
 }
 
 /* Панель управления внизу комнаты */
