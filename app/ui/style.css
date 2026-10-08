@@ -1,8 +1,10 @@
 /* --- Цвета ---
  * Тема — data-theme на <html>: dark «Ночь» (по умолчанию), light «День»,
- * black «Уголь», midnight «Полночь», forest «Лес», paper «Бумага»; без
- * data-theme — светлая или «Ночь» по системной настройке. Список тем — THEMES
- * в app.js. Цвет акцента — data-accent. */
+ * black «Уголь», midnight «Полночь», forest «Лес», paper «Бумага», sakura
+ * «Сакура», ocean «Океан», sunset «Закат», neon «Неон», terminal «Терминал»;
+ * без data-theme — светлая или «Ночь» по системной настройке. Список тем —
+ * THEMES в app.js. Цвет акцента — data-accent, фон комнаты — data-room-bg,
+ * плотный список — data-density="compact". */
 
 /* Golos Text (SIL OFL, см. fonts/OFL.txt) — встроен, интернет не нужен. */
 @font-face {
@@ -89,7 +91,11 @@
 :root[data-theme="dark"],
 :root[data-theme="black"],
 :root[data-theme="midnight"],
-:root[data-theme="forest"] {
+:root[data-theme="forest"],
+:root[data-theme="ocean"],
+:root[data-theme="sunset"],
+:root[data-theme="neon"],
+:root[data-theme="terminal"] {
   --shadow: none;
   --shadow-pop: 0 12px 34px rgba(0, 0, 0, 0.55);
   --backdrop: rgba(0, 0, 0, 0.55);
@@ -178,6 +184,150 @@
   --backdrop: rgba(40, 30, 15, 0.3);
 }
 
+/* «Сакура» — светлая, розоватая. */
+:root[data-theme="sakura"] {
+  --bg: #fbf0f3;
+  --surface: #fffafb;
+  --surface-2: #f6e5eb;
+  --surface-3: #efd6df;
+  --border: #f0dbe3;
+  --field: #ffffff;
+  --field-border: #e6c8d3;
+  --text: #2e1f25;
+  --text-2: #7a5a66;
+  --text-3: #9c7f89;
+  --shadow: 0 1px 2px rgba(120, 40, 70, 0.07);
+  --shadow-pop: 0 10px 30px rgba(120, 40, 70, 0.18);
+  --backdrop: rgba(60, 20, 35, 0.3);
+}
+
+/* «Океан» — глубокий сине-зелёный. */
+:root[data-theme="ocean"] {
+  --bg: #061a1f;
+  --surface: #0b242b;
+  --surface-2: #0f2c34;
+  --surface-3: #173b45;
+  --border: #12313a;
+  --field: #04131a;
+  --field-border: #1d4450;
+  --text: #e2f1f3;
+  --text-2: #8fb0b6;
+  --text-3: #6f9299;
+}
+
+:root[data-theme="ocean"] body {
+  background: linear-gradient(180deg, #072129, #04141a 70%);
+}
+
+/* «Закат» — тёплый сливовый с оранжевым отсветом снизу. */
+:root[data-theme="sunset"] {
+  --bg: #1b1120;
+  --surface: #24172a;
+  --surface-2: #2b1c31;
+  --surface-3: #3a2742;
+  --border: #2f2036;
+  --field: #140c18;
+  --field-border: #43304b;
+  --text: #f6e9ee;
+  --text-2: #c09fb0;
+  --text-3: #9a7f8e;
+}
+
+:root[data-theme="sunset"] body {
+  background:
+    radial-gradient(120% 60% at 50% 120%, rgba(232, 89, 12, 0.28), transparent 70%),
+    linear-gradient(170deg, #1b1120, #24111c 60%, #2a1414);
+}
+
+/* «Неон» — почти чёрный, кнопки и говорящие светятся цветом акцента. */
+:root[data-theme="neon"] {
+  --bg: #07070d;
+  --surface: #0f0f1a;
+  --surface-2: #141424;
+  --surface-3: #20203a;
+  --border: #22223d;
+  --field: #05050a;
+  --field-border: #2e2e55;
+  --text: #f0f0ff;
+  --text-2: #a3a3c8;
+  --text-3: #7d7da6;
+  --speaking: #2bffb0;
+  --shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.8), 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent),
+    0 0 30px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+:root[data-theme="neon"] body {
+  background:
+    radial-gradient(60% 45% at 0% 0%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 70%),
+    radial-gradient(55% 45% at 100% 100%, rgba(0, 220, 255, 0.1), transparent 70%),
+    #07070d;
+}
+
+:root[data-theme="neon"] .card,
+:root[data-theme="neon"] .dock {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+}
+
+:root[data-theme="neon"] .primary:not(:disabled) {
+  box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+:root[data-theme="neon"] .peers.tiles .peer:not(.speaking) {
+  border-color: color-mix(in srgb, var(--tile) 45%, transparent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--tile) 22%, transparent);
+}
+
+:root[data-theme="neon"] .peers.tiles .peer.speaking {
+  box-shadow: 0 0 14px color-mix(in srgb, var(--speaking) 60%, transparent);
+}
+
+:root[data-theme="neon"] .tabs button.active {
+  text-shadow: 0 0 12px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+
+/* «Терминал» — зелёный на чёрном, моноширинный шрифт и прямые углы. */
+:root[data-theme="terminal"] {
+  --bg: #030703;
+  --surface: #08100a;
+  --surface-2: #0c170e;
+  --surface-3: #142616;
+  --border: #133017;
+  --field: #020502;
+  --field-border: #1e4a24;
+  --text: #b8f5be;
+  --text-2: #6fbf78;
+  --text-3: #4e8f56;
+  --speaking: #59ff6e;
+  --radius: 4px;
+  --radius-sm: 3px;
+  --font: var(--mono);
+}
+
+:root[data-theme="terminal"] .sheet,
+:root[data-theme="terminal"] .peer,
+:root[data-theme="terminal"] .peers.tiles .peer,
+:root[data-theme="terminal"] .peers.tiles .tile-name,
+:root[data-theme="terminal"] .menu,
+:root[data-theme="terminal"] .theme-preview,
+:root[data-theme="terminal"] .backdrops button,
+:root[data-theme="terminal"] .bg-preview {
+  border-radius: 4px;
+}
+
+:root[data-theme="terminal"] .avatar {
+  border-radius: 6px;
+}
+
+:root[data-theme="terminal"] body::after {
+  /* Строки старого монитора. */
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  pointer-events: none;
+  background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.18) 0 1px, transparent 1px 3px);
+}
+
 :root[data-accent="violet"] { --accent: #8b5cf6; --accent-strong: #7c3aed; }
 :root[data-accent="sky"] { --accent: #0b8fd8; --accent-strong: #0577b8; }
 :root[data-accent="mint"] { --accent: #12a37f; --accent-strong: #0e8a6b; }
@@ -196,6 +346,12 @@
 
 * {
   box-sizing: border-box;
+}
+
+/* Размер интерфейса — zoom всей страницы (--zoom ставят theme.js и app.js).
+ * Высота делится на него, чтобы окно по-прежнему занимало ровно экран. */
+html {
+  zoom: var(--zoom, 1);
 }
 
 html,
@@ -1624,9 +1780,10 @@ button.invite-btn:hover {
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   align-content: start;
   gap: 10px;
-  /* Чтобы свечение говорящего не обрезалось краем списка. */
-  padding: 4px;
-  margin: -4px;
+  /* Чтобы свечение говорящего не обрезалось краем списка (на фоне комнаты
+   * обрезанное свечение видно прямоугольником). */
+  padding: 12px;
+  margin: -12px;
 }
 
 .peers.tiles .peer {
@@ -2756,6 +2913,31 @@ button.key.listening {
 .themes [data-value="midnight"] { --p-bg: #0b1222; --p-surface: #162139; --p-text: #e6ecf7; }
 .themes [data-value="forest"] { --p-bg: #0d1310; --p-surface: #18221d; --p-text: #e4ebe6; }
 .themes [data-value="paper"] { --p-bg: #f3eee4; --p-surface: #fbf8f1; --p-text: #2a251f; }
+.themes [data-value="sakura"] { --p-bg: #fbf0f3; --p-surface: #fffafb; --p-text: #2e1f25; }
+.themes [data-value="ocean"] { --p-bg: linear-gradient(180deg, #072129, #04141a); --p-surface: #0f2c34; --p-text: #e2f1f3; }
+.themes [data-value="sunset"] {
+  --p-bg: radial-gradient(120% 70% at 50% 130%, rgba(232, 89, 12, 0.5), transparent 70%), #1b1120;
+  --p-surface: #2b1c31;
+  --p-text: #f6e9ee;
+}
+.themes [data-value="neon"] {
+  --p-bg: radial-gradient(80% 80% at 0% 0%, color-mix(in srgb, var(--accent) 35%, transparent), transparent 70%),
+    radial-gradient(70% 70% at 100% 100%, rgba(0, 220, 255, 0.25), transparent 70%), #07070d;
+  --p-surface: #141424;
+  --p-text: #f0f0ff;
+}
+.themes [data-value="neon"] .theme-preview i:first-child {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 60%, transparent), 0 0 8px color-mix(in srgb, var(--accent) 50%, transparent);
+}
+.themes [data-value="terminal"] { --p-bg: #030703; --p-surface: #0c170e; --p-text: #59ff6e; }
+.themes [data-value="terminal"] .theme-preview,
+.themes [data-value="terminal"] .theme-preview i:first-child,
+.themes [data-value="terminal"] .theme-preview i:first-child::before {
+  border-radius: 2px;
+}
+.themes [data-value="terminal"] > span:last-child {
+  font-family: var(--mono);
+}
 .themes [data-value="system"] {
   --p-bg: linear-gradient(115deg, #f3f4f7 50%, #0f1115 50%);
   --p-surface: linear-gradient(115deg, #ffffff 50%, #1b1e26 50%);
@@ -2799,6 +2981,247 @@ button.key.listening {
 
 .swatches button.active {
   box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent);
+}
+
+/* Свой цвет: «Авто» (по имени) — разноцветный круг с буквой. */
+.peer-colors button[data-value="0"] {
+  display: grid;
+  place-items: center;
+  background: conic-gradient(#e5484d, #e08a00, #2f9e6e, #0b8fd8, #8b5cf6, #e5484d);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* Страницы настроек: главная и «Оформление». */
+.sheet-page {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.sheet-head #settings-back {
+  margin: 0 -4px 0 -8px;
+}
+
+.sheet-head #settings-back:not([hidden]) + h2 {
+  margin-right: auto;
+}
+
+/* Строка-ссылка на страницу настроек: значок, название, что выбрано, стрелка. */
+.nav-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 10px 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  font-weight: 500;
+  text-align: left;
+}
+
+.nav-row:hover {
+  background: var(--surface-3);
+}
+
+.nav-row-icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.nav-row-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.nav-row-text .hint {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-row-chevron {
+  color: var(--text-3);
+}
+
+/* Фон комнаты: карточки с маленьким видом фона. */
+.backdrops {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 8px;
+}
+
+.backdrops button {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  padding: 5px 5px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.backdrops button:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.backdrops button.active {
+  color: var(--text);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.bg-preview {
+  display: block;
+  height: 40px;
+  border-radius: 6px;
+  background: var(--room-bg, none) center / cover, var(--bg);
+  box-shadow: inset 0 0 0 1px rgba(127, 127, 127, 0.18);
+}
+
+.backdrops [data-value="image"] .bg-preview {
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+}
+
+.backdrops [data-value="image"]:not(.has-image) .bg-preview {
+  background: var(--surface-3);
+}
+
+/* Фоны (и для превью, и для комнаты). Мягкие пятна цвета поверх фона темы,
+ * чтобы текст читался в любой теме. */
+.backdrops [data-value="aurora"],
+:root[data-room-bg="aurora"] #room-view {
+  --room-bg: radial-gradient(55% 45% at 10% 0%, rgba(61, 220, 132, 0.22), transparent 70%),
+    radial-gradient(50% 50% at 90% 15%, rgba(124, 108, 255, 0.26), transparent 70%),
+    radial-gradient(70% 50% at 50% 105%, rgba(11, 143, 216, 0.22), transparent 70%);
+}
+
+.backdrops [data-value="dusk"],
+:root[data-room-bg="dusk"] #room-view {
+  --room-bg: radial-gradient(60% 50% at 0% 100%, rgba(232, 89, 12, 0.26), transparent 70%),
+    radial-gradient(60% 50% at 100% 0%, rgba(214, 64, 159, 0.26), transparent 70%),
+    linear-gradient(180deg, rgba(139, 92, 246, 0.1), transparent);
+}
+
+.backdrops [data-value="lagoon"],
+:root[data-room-bg="lagoon"] #room-view {
+  --room-bg: radial-gradient(70% 55% at 100% 100%, rgba(14, 154, 167, 0.28), transparent 70%),
+    radial-gradient(55% 45% at 0% 10%, rgba(47, 111, 237, 0.24), transparent 70%);
+}
+
+.backdrops [data-value="stars"],
+:root[data-room-bg="stars"] #room-view {
+  --star: color-mix(in srgb, var(--text) 45%, transparent);
+  --room-bg: radial-gradient(1.2px 1.2px at 12% 18%, var(--star), transparent 100%),
+    radial-gradient(1px 1px at 32% 72%, var(--star), transparent 100%),
+    radial-gradient(1.4px 1.4px at 58% 28%, var(--star), transparent 100%),
+    radial-gradient(1px 1px at 78% 62%, var(--star), transparent 100%),
+    radial-gradient(1.2px 1.2px at 90% 12%, var(--star), transparent 100%),
+    radial-gradient(1px 1px at 46% 92%, var(--star), transparent 100%),
+    radial-gradient(70% 60% at 50% 0%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 70%);
+}
+
+:root[data-room-bg="stars"] #room-view {
+  background-size: 180px 180px, 180px 180px, 180px 180px, 180px 180px, 180px 180px, 180px 180px, 100% 100%;
+}
+
+.backdrops [data-value="grid"],
+:root[data-room-bg="grid"] #room-view {
+  --line: color-mix(in srgb, var(--text) 7%, transparent);
+  --room-bg: linear-gradient(var(--line) 1px, transparent 1px) 0 0 / 26px 26px,
+    linear-gradient(90deg, var(--line) 1px, transparent 1px) 0 0 / 26px 26px,
+    radial-gradient(80% 60% at 50% 0%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 70%);
+}
+
+.backdrops [data-value="stars"] .bg-preview {
+  background-size: 60px 40px, 60px 40px, 60px 40px, 60px 40px, 60px 40px, 60px 40px, 100% 100%;
+  background-color: var(--bg);
+}
+
+.backdrops [data-value="grid"] .bg-preview {
+  background: var(--room-bg), var(--bg);
+}
+
+/* Своя картинка: приглушена цветом фона темы, чтобы плитки и текст читались. */
+.backdrops [data-value="image"].has-image .bg-preview,
+:root[data-room-bg="image"] #room-view {
+  --room-bg: linear-gradient(color-mix(in srgb, var(--bg) 76%, transparent), color-mix(in srgb, var(--bg) 76%, transparent)),
+    var(--room-image) center / cover no-repeat;
+}
+
+:root[data-room-bg] #room-view {
+  background: var(--room-bg, none), var(--bg);
+}
+
+:root[data-room-bg="grid"] #room-view,
+:root[data-room-bg="image"] #room-view {
+  background: var(--room-bg), var(--bg);
+}
+
+/* Компактно: строки участников ниже, плитки меньше. */
+:root[data-density="compact"] .peer {
+  gap: 10px;
+  padding: 5px 8px 5px 10px;
+}
+
+:root[data-density="compact"] .peers:not(.tiles) .avatar {
+  width: 30px;
+  height: 30px;
+  font-size: 12.5px;
+}
+
+:root[data-density="compact"] .peers.tiles {
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+}
+
+:root[data-density="compact"] .peers.tiles .peer {
+  aspect-ratio: 1;
+  max-height: 200px;
+  padding: 0;
+}
+
+:root[data-density="compact"] .peers.tiles .avatar {
+  width: 54px;
+  height: 54px;
+  font-size: 22px;
+}
+
+:root[data-density="compact"].android .peers.tiles {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+:root[data-density="compact"].android .peers.tiles .avatar {
+  width: 44px;
+  height: 44px;
+  font-size: 18px;
+}
+
+:root[data-density="compact"] .peers.tiles .tile-name {
+  height: 24px;
+  padding: 0 4px 0 7px;
+}
+
+:root[data-density="compact"] .peers.tiles .tile-name .peer-name {
+  font-size: 12px;
 }
 
 @keyframes fade {
