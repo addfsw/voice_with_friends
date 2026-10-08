@@ -379,9 +379,9 @@ pub enum Availability {
 
 /// Сколько ждать ответа на проверку по адресу. QUIC-рукопожатие с живым
 /// сервером занимает доли секунды даже через интернет.
-const PROBE_WAIT: Duration = Duration::from_secs(3);
+const PROBE_WAIT: Duration = Duration::from_millis(1500);
 /// Сколько ждать ответа хоста через почтовый ящик: обычно 1–2 секунды.
-const PROBE_INVITE_WAIT: Duration = Duration::from_secs(7);
+const PROBE_INVITE_WAIT: Duration = Duration::from_secs(4);
 /// Подключение по адресу: живой сервер отвечает за доли секунды, поэтому
 /// не держим человека долго, если сервер не запущен.
 const CONNECT_WAIT: Duration = Duration::from_secs(5);
