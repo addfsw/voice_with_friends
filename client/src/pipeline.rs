@@ -1,6 +1,6 @@
 //! Голосовой конвейер.
 //!
-//! Передача:  микрофон → [кольцевой буфер] → кадры по 20 мс → VAD → Opus → отправка
+//! Передача:  микрофон → [кольцевой буфер] → кадры по 20 мс → эхо → шум → VAD → Opus → отправка
 //! Приём:     пакет → джиттер-буфер участника → декодер Opus → микшер → [кольцевой буфер] → динамики
 //!
 //! Обе половины работают в своих потоках и общаются с аудиоколбэками
@@ -33,6 +33,9 @@ const WAKE_TIMEOUT: Duration = Duration::from_millis(20);
 const MAX_PACKET: usize = 1275;
 /// Сколько своего голоса может ждать микшера в режиме «слышать себя».
 const MONITOR_MAX_SAMPLES: usize = FRAME_SAMPLES * 2;
+/// Сколько звука собеседников может ждать эхоподавителя. Обычно он забирает
+/// его каждые 20 мс; копится, только если кодер не работает.
+const ECHO_REF_MAX_SAMPLES: usize = SAMPLE_RATE as usize / 2;
 
 // ---------------------------------------------------------------------------
 // Передача
@@ -90,8 +93,14 @@ pub struct TxState {
     level_db_bits: AtomicU32,
     /// «Слышать себя»: свой голос сразу идёт и в свои динамики.
     monitor: AtomicBool,
-    /// Свой голос, ещё не забранный микшером (см. [`Mixer::attach_monitor`]).
+    /// Свой голос, ещё не забранный микшером (см. [`Mixer::attach_tx`]).
     monitor_buf: Mutex<VecDeque<f32>>,
+    /// Эхоподавление: голоса собеседников, попавшие из динамиков обратно
+    /// в микрофон, вычитаются. Только на компьютере — на телефоне это делает
+    /// сама система в режиме звонка.
+    echo_cancellation: AtomicBool,
+    /// Что микшер отправил в динамики и эхоподавитель ещё не забрал.
+    echo_ref: Mutex<VecDeque<f32>>,
 }
 
 impl TxState {
@@ -107,6 +116,8 @@ impl TxState {
             level_db_bits: AtomicU32::new((-120f32).to_bits()),
             monitor: AtomicBool::new(false),
             monitor_buf: Mutex::new(VecDeque::new()),
+            echo_cancellation: AtomicBool::new(true),
+            echo_ref: Mutex::new(VecDeque::new()),
         }
     }
 
@@ -175,6 +186,28 @@ impl TxState {
         // Часы микрофона и динамиков чуть расходятся; лишнее выбрасываем,
         // чтобы задержка не копилась.
         let extra = buf.len().saturating_sub(MONITOR_MAX_SAMPLES);
+        buf.drain(..extra);
+    }
+
+    pub fn echo_cancellation(&self) -> bool {
+        self.echo_cancellation.load(Ordering::Relaxed)
+    }
+
+    pub fn set_echo_cancellation(&self, enabled: bool) {
+        self.echo_cancellation.store(enabled, Ordering::Relaxed);
+        if !enabled {
+            self.echo_ref.lock().unwrap().clear();
+        }
+    }
+
+    /// Кладёт кадр, ушедший в динамики, в очередь эхоподавителя.
+    fn push_echo_ref(&self, frame: &[f32]) {
+        if !ECHO_CANCELLER_AVAILABLE || !self.echo_cancellation() {
+            return;
+        }
+        let mut buf = self.echo_ref.lock().unwrap();
+        buf.extend(frame);
+        let extra = buf.len().saturating_sub(ECHO_REF_MAX_SAMPLES);
         buf.drain(..extra);
     }
 
@@ -247,6 +280,77 @@ impl NoiseSuppressor {
             }
         }
         voice
+    }
+}
+
+/// Есть ли эхоподавитель в этой сборке.
+const ECHO_CANCELLER_AVAILABLE: bool = cfg!(not(target_os = "android"));
+
+/// Эхоподавитель AEC3 из WebRTC (крейт `sonora`, перенос на Rust) — тот же,
+/// что в Chrome и Discord.
+///
+/// Без него на компьютере с колонками собеседники слышат себя: их голос
+/// выходит из колонок, попадает в микрофон и уходит обратно к ним. AEC3 знает,
+/// что именно сыграли колонки (микшер кладёт каждый кадр в
+/// [`TxState::push_echo_ref`]), сам находит задержку до микрофона и вычитает
+/// этот звук из записи. В наушниках эха нет, и он почти ничего не меняет.
+#[cfg(not(target_os = "android"))]
+struct EchoCanceller {
+    apm: sonora::AudioProcessing,
+    render: Vec<f32>,
+    input: [f32; AEC_FRAME],
+    output: [f32; AEC_FRAME],
+}
+
+/// AEC3 обрабатывает звук кусками по 10 мс.
+#[cfg(not(target_os = "android"))]
+const AEC_FRAME: usize = SAMPLE_RATE as usize / 100;
+#[cfg(not(target_os = "android"))]
+const _: () = assert!(FRAME_SAMPLES.is_multiple_of(AEC_FRAME));
+
+#[cfg(not(target_os = "android"))]
+impl EchoCanceller {
+    fn new() -> Self {
+        let config = sonora::Config {
+            echo_canceller: Some(sonora::config::EchoCanceller {
+                // Быстрее замечает наушники (эха нет) и тогда почти не трогает голос.
+                transparent_mode: sonora::config::TransparentModeType::Hmm,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let stream = sonora::StreamConfig::new(SAMPLE_RATE, 1);
+        let apm = sonora::AudioProcessing::builder()
+            .config(config)
+            .capture_config(stream)
+            .render_config(stream)
+            .build();
+        Self {
+            apm,
+            render: Vec::with_capacity(ECHO_REF_MAX_SAMPLES),
+            input: [0.0; AEC_FRAME],
+            output: [0.0; AEC_FRAME],
+        }
+    }
+
+    /// Сначала отдаёт AEC3 всё, что за это время ушло в динамики, потом
+    /// убирает эхо из кадра с микрофона.
+    fn process(&mut self, state: &TxState, frame: &mut [f32; FRAME_SAMPLES]) {
+        {
+            let mut buf = state.echo_ref.lock().unwrap();
+            let n = buf.len() / AEC_FRAME * AEC_FRAME;
+            self.render.clear();
+            self.render.extend(buf.drain(..n));
+        }
+        for chunk in self.render.chunks_exact(AEC_FRAME) {
+            let _ = self.apm.process_render_f32(&[chunk], &mut [&mut self.output]);
+        }
+        for chunk in frame.chunks_exact_mut(AEC_FRAME) {
+            self.input.copy_from_slice(chunk);
+            if self.apm.process_capture_f32(&[&self.input], &mut [&mut self.output]).is_ok() {
+                chunk.copy_from_slice(&self.output);
+            }
+        }
     }
 }
 
@@ -390,6 +494,8 @@ impl Transmitter {
         let thread_next_seq = next_seq.clone();
         let thread = thread::Builder::new().name("vwf-encoder".into()).spawn(move || {
             let mut vad = Vad::default();
+            #[cfg(not(target_os = "android"))]
+            let mut echo: Option<EchoCanceller> = None;
             let mut denoiser = NoiseSuppressor::new();
             let mut agc = Agc::default();
             let mut frame = [0f32; FRAME_SAMPLES];
@@ -400,6 +506,7 @@ impl Transmitter {
             // Пока запускались вывод и микшер, микрофон уже что-то записал.
             // Это старый звук: отправлять его — значит начать разговор с задержкой.
             capture.clear();
+            state.echo_ref.lock().unwrap().clear();
             while !thread_stop.load(Ordering::Relaxed) {
                 if capture.occupied_len() < FRAME_SAMPLES {
                     wakeup.wait(WAKE_TIMEOUT);
@@ -408,6 +515,15 @@ impl Transmitter {
                 capture.pop_slice(&mut frame);
                 let seq = next_seq.fetch_add(1, Ordering::Relaxed);
 
+                // Эхо убираем первым: шумодаву и детектору речи нужен уже
+                // только свой голос. Выключили — забываем состояние, чтобы
+                // после включения начать с чистого листа.
+                #[cfg(not(target_os = "android"))]
+                if state.echo_cancellation() {
+                    echo.get_or_insert_with(EchoCanceller::new).process(&state, &mut frame);
+                } else {
+                    echo = None;
+                }
                 // Шум убираем до детектора речи: тогда гул комнаты не включает
                 // передачу, и индикатор громкости показывает то, что услышат другие.
                 let voice_probability =
@@ -530,8 +646,9 @@ pub struct Mixer {
     cues_enabled: AtomicBool,
     /// Ещё не сыгранная часть звуков событий.
     cue: Mutex<VecDeque<f32>>,
-    /// Откуда брать свой голос для «слышать себя».
-    monitor: OnceLock<Arc<TxState>>,
+    /// Состояние передачи: оттуда берётся свой голос для «слышать себя»,
+    /// туда кладётся сыгранный звук для эхоподавителя.
+    tx: OnceLock<Arc<TxState>>,
     /// Накопилось ли своего голоса с запасом (см. `mix_monitor`).
     monitor_primed: AtomicBool,
 }
@@ -546,16 +663,18 @@ impl Mixer {
             delay,
             cues_enabled: AtomicBool::new(true),
             cue: Mutex::new(VecDeque::new()),
-            monitor: OnceLock::new(),
+            tx: OnceLock::new(),
             monitor_primed: AtomicBool::new(false),
         }
     }
 
-    /// Подмешивать свой голос из `state`, когда там включено «слышать себя».
-    /// Голос берётся прямо с микрофона, а не возвращается через сервер,
-    /// поэтому задержка — только буферы своей звуковой карты.
-    pub fn attach_monitor(&self, state: Arc<TxState>) {
-        let _ = self.monitor.set(state);
+    /// Связывает микшер с передачей того же звонка:
+    /// - подмешивает свой голос из `state`, когда там включено «слышать себя».
+    ///   Голос берётся прямо с микрофона, а не возвращается через сервер,
+    ///   поэтому задержка — только буферы своей звуковой карты;
+    /// - отдаёт эхоподавителю всё, что играют динамики.
+    pub fn attach_tx(&self, state: Arc<TxState>) {
+        let _ = self.tx.set(state);
     }
 
     /// Включает или выключает звуки событий.
@@ -682,12 +801,18 @@ impl Mixer {
             }
         }
         drop(speakers);
-        self.mix_monitor(out, deafened);
         let mut cue = self.cue.lock().unwrap();
         let n = cue.len().min(FRAME_SAMPLES);
         for (o, s) in out.iter_mut().zip(cue.drain(..n)) {
             *o += s;
         }
+        drop(cue);
+        // Свой голос эхоподавителю не показываем: он звучит в динамиках
+        // почти одновременно с микрофоном, и AEC3 начал бы глушить сам голос.
+        if let Some(tx) = self.tx.get() {
+            tx.push_echo_ref(out);
+        }
+        self.mix_monitor(out, deafened);
         // Если несколько человек кричат одновременно, сумма может выйти за [-1, 1].
         for s in out.iter_mut() {
             *s = s.clamp(-1.0, 1.0);
@@ -698,7 +823,7 @@ impl Mixer {
     /// независимо, поэтому после паузы сначала копим полтора кадра: иначе
     /// микшер то и дело заставал бы очередь пустой и голос шёл бы с щелчками.
     fn mix_monitor(&self, out: &mut [f32; FRAME_SAMPLES], deafened: bool) {
-        let Some(state) = self.monitor.get() else { return };
+        let Some(state) = self.tx.get() else { return };
         let mut buf = state.monitor_buf.lock().unwrap();
         if deafened {
             buf.clear();
@@ -791,6 +916,83 @@ mod tests {
             let t = (start + i) as f32 / SAMPLE_RATE as f32;
             0.5 * (2.0 * std::f32::consts::PI * 440.0 * t).sin()
         })
+    }
+
+    /// Шум с «речевой» огибающей: AEC3 сходится по широкополосному сигналу.
+    fn far_end(len: usize) -> Vec<f32> {
+        let mut seed = 1u32;
+        (0..len)
+            .map(|i| {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let noise = (seed >> 8) as f32 / (1 << 24) as f32 - 0.5;
+                let envelope = 0.6 + 0.4 * (i as f32 / 4_000.0).sin();
+                0.3 * noise * envelope
+            })
+            .collect()
+    }
+
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn echo_canceller_removes_speaker_echo() {
+        let state = TxState::default();
+        let mut echo = EchoCanceller::new();
+        // Эхо приходит в микрофон через 60 мс, тише в 4 раза.
+        let delay = SAMPLE_RATE as usize * 60 / 1000;
+        let seconds = 6;
+        let render = far_end(SAMPLE_RATE as usize * seconds + delay);
+        let (mut before, mut after) = (0f32, 0f32);
+        let frames = SAMPLE_RATE as usize * seconds / FRAME_SAMPLES;
+        for k in 0..frames {
+            let at = k * FRAME_SAMPLES;
+            state.push_echo_ref(&render[delay + at..delay + at + FRAME_SAMPLES]);
+            let mut frame: [f32; FRAME_SAMPLES] = std::array::from_fn(|i| 0.25 * render[at + i]);
+            // Последние две секунды — после того как AEC3 нашёл задержку.
+            let measure = k >= frames - 2 * SAMPLE_RATE as usize / FRAME_SAMPLES;
+            if measure {
+                before += frame.iter().map(|s| s * s).sum::<f32>();
+            }
+            echo.process(&state, &mut frame);
+            if measure {
+                after += frame.iter().map(|s| s * s).sum::<f32>();
+            }
+        }
+        let reduction_db = 10.0 * (before / after.max(1e-12)).log10();
+        assert!(reduction_db > 20.0, "эхо ослаблено всего на {reduction_db:.1} дБ");
+    }
+
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn echo_canceller_keeps_near_end_voice_without_echo() {
+        // Колонки молчат (или наушники): голос из микрофона должен пройти.
+        let state = TxState::default();
+        let mut echo = EchoCanceller::new();
+        let silence = [0f32; FRAME_SAMPLES];
+        // «Голос»: основной тон 150 Гц и обертоны до 4 кГц.
+        let voice: Vec<f32> = (0..SAMPLE_RATE as usize * 3)
+            .map(|i| {
+                let t = i as f32 / SAMPLE_RATE as f32;
+                (1..=26)
+                    .map(|h| {
+                        let f = 150.0 * h as f32;
+                        0.1 / h as f32 * (2.0 * std::f32::consts::PI * f * t).sin()
+                    })
+                    .sum::<f32>()
+            })
+            .collect();
+        let (mut before, mut after) = (0f32, 0f32);
+        for (k, chunk) in voice.chunks_exact(FRAME_SAMPLES).enumerate() {
+            state.push_echo_ref(&silence);
+            let mut frame: [f32; FRAME_SAMPLES] = chunk.try_into().unwrap();
+            if k >= 100 {
+                before += frame.iter().map(|s| s * s).sum::<f32>();
+            }
+            echo.process(&state, &mut frame);
+            if k >= 100 {
+                after += frame.iter().map(|s| s * s).sum::<f32>();
+            }
+        }
+        let loss_db = 10.0 * (before / after.max(1e-12)).log10();
+        assert!(loss_db.abs() < 1.0, "голос изменился на {loss_db:.1} дБ");
     }
 
     #[test]
@@ -912,7 +1114,7 @@ mod tests {
         };
         let state = Arc::new(TxState::default());
         let mixer = Mixer::new(Delay::default());
-        mixer.attach_monitor(state.clone());
+        mixer.attach_tx(state.clone());
 
         state.push_monitor(&sine_frame(0));
         state.push_monitor(&sine_frame(0));

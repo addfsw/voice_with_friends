@@ -5,7 +5,7 @@ members = ["proto", "nat", "server", "client", "app"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.91"
 license = "MIT"
 
 [workspace.dependencies]
@@ -30,6 +30,8 @@ quinn = { version = "0.11", default-features = false, features = ["runtime-tokio
 rcgen = "0.14"
 ringbuf = "0.5"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+# Эхоподавление на компьютере: WebRTC AEC3, перенесённый на Rust (без C++).
+sonora = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
@@ -51,6 +53,17 @@ opt-level = 3
 [profile.dev.package.rustfft]
 opt-level = 3
 [profile.dev.package.realfft]
+opt-level = 3
+# Эхоподавитель тоже работает на каждом кадре.
+[profile.dev.package.sonora]
+opt-level = 3
+[profile.dev.package.sonora-aec3]
+opt-level = 3
+[profile.dev.package.sonora-common-audio]
+opt-level = 3
+[profile.dev.package.sonora-fft]
+opt-level = 3
+[profile.dev.package.sonora-simd]
 opt-level = 3
 
 # То же для демонстрации экрана: кодек, JPEG и масштабирование кадров

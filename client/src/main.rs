@@ -98,6 +98,9 @@ struct AudioArgs {
     /// Без автоусиления тихого голоса.
     #[arg(long)]
     no_agc: bool,
+    /// Без эхоподавления.
+    #[arg(long)]
+    no_aec: bool,
     /// Постоянная задержка джиттер-буфера, мс. По умолчанию подстраивается под сеть
     /// сама: в локальной сети это ~10 мс, в плохом Wi-Fi больше.
     #[arg(long)]
@@ -131,6 +134,7 @@ impl AudioArgs {
         let state = TxState::new(mode, self.vad_db);
         state.set_noise_suppression(!self.no_denoise);
         state.set_agc(!self.no_agc);
+        state.set_echo_cancellation(!self.no_aec);
         Arc::new(state)
     }
 }

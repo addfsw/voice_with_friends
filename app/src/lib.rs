@@ -957,6 +957,12 @@ fn set_monitor(state: State<'_, AppState>, enabled: bool) {
     state.tx.set_monitor(enabled);
 }
 
+/// Эхоподавление (на телефоне его всегда делает система).
+#[tauri::command]
+fn set_echo_cancellation(state: State<'_, AppState>, enabled: bool) {
+    state.tx.set_echo_cancellation(enabled);
+}
+
 #[tauri::command]
 fn set_noise_suppression(state: State<'_, AppState>, enabled: bool) {
     state.tx.set_noise_suppression(enabled);
@@ -1180,6 +1186,7 @@ pub fn run() {
             set_input_device,
             set_output_device,
             set_vad_threshold,
+            set_echo_cancellation,
             set_noise_suppression,
             set_agc,
             set_monitor,
