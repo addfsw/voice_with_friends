@@ -2930,49 +2930,6 @@ button.key.listening {
   font-size: 12.5px;
 }
 
-/* «Дополнительно»: редкие настройки, свёрнуты по умолчанию. */
-.advanced {
-  border-top: 1px solid var(--border);
-  padding-top: 12px;
-}
-
-.advanced > summary {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  list-style: none;
-  cursor: pointer;
-  color: var(--text-2);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.advanced > summary::-webkit-details-marker {
-  display: none;
-}
-
-.advanced > summary::after {
-  content: "";
-  width: 6px;
-  height: 6px;
-  margin-left: 2px;
-  border: solid currentColor;
-  border-width: 0 1.5px 1.5px 0;
-  transform: translateY(-2px) rotate(45deg);
-  transition: transform 120ms;
-}
-
-.advanced[open] > summary::after {
-  transform: translateY(1px) rotate(-135deg);
-}
-
-.advanced-body {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-  padding-top: 14px;
-}
-
 /* Выбор темы: компактные кнопки — кружок в цветах темы и название. */
 .themes {
   display: grid;

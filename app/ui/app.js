@@ -2766,8 +2766,6 @@ async function refreshDiagnostics() {
     stats = null;
   }
   $("diag").hidden = !stats;
-  // На телефоне трея нет — без разговора в «Дополнительно» пусто.
-  if (isAndroid) $("advanced").hidden = !stats;
   if (!stats) return;
   const list = $("diag-list");
   list.innerHTML = "";

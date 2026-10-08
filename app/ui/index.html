@@ -302,6 +302,10 @@
           <div class="group">
             <div class="group-title">Программа</div>
             <p class="hint">Версия <span id="app-version">—</span></p>
+            <label class="switch-row desktop-only" title="Крестик окна прячет программу в трей рядом с часами, разговор продолжается. Выйти — через меню значка в трее">
+              <span>Сворачивать в трей при закрытии</span>
+              <input type="checkbox" id="close-to-tray" class="switch" />
+            </label>
             <button type="button" id="send-app" class="primary android-only">Отправить программу другу</button>
             <p class="hint android-only">
               Друг получит файл установки (например, в Telegram) и поставит его поверх
@@ -309,25 +313,14 @@
             </p>
           </div>
 
-          <!-- Редкое: открывается по нажатию, чтобы не загромождать окно -->
-          <details id="advanced" class="advanced">
-            <summary>Дополнительно</summary>
-            <div class="advanced-body">
-              <label class="switch-row desktop-only" title="Крестик окна прячет программу в трей рядом с часами, разговор продолжается. Выйти — через меню значка в трее">
-                <span>Сворачивать в трей при закрытии</span>
-                <input type="checkbox" id="close-to-tray" class="switch" />
-              </label>
-
-              <div id="diag" class="group" hidden>
-                <div class="group-title">Диагностика звука</div>
-                <ul id="diag-list" class="diag"></ul>
-                <p class="hint">
-                  Если звук прерывается, посмотрите, какие числа растут в этот момент, —
-                  по ним видно, где проблема: у микрофона, у вывода или в сети.
-                </p>
-              </div>
-            </div>
-          </details>
+          <div id="diag" class="group" hidden>
+            <div class="group-title">Диагностика звука</div>
+            <ul id="diag-list" class="diag"></ul>
+            <p class="hint">
+              Если звук прерывается, посмотрите, какие числа растут в этот момент, —
+              по ним видно, где проблема: у микрофона, у вывода или в сети.
+            </p>
+          </div>
         </div>
 
         <!-- Оформление: отдельная страница настроек, чтобы главная была короткой -->
