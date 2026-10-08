@@ -35,6 +35,11 @@ jpeg-encoder = "0.7"
 # Захват экрана. На Windows — xcap (DXGI для мониторов, GDI для окон).
 # В Linux xcap требует PipeWire, а нам Linux нужен только для проверок,
 # поэтому там свой простой захват через X11.
+# Эхоподавление (WebRTC AEC3). На Android эхо убирает сам телефон в режиме
+# звонка, поэтому там он не нужен.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+sonora.workspace = true
+
 [target.'cfg(windows)'.dependencies]
 xcap = { version = "0.9", default-features = false }
 

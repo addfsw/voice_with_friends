@@ -2646,6 +2646,12 @@ $("agc").addEventListener("change", () => {
   invoke("set_agc", { enabled });
 });
 
+$("aec").addEventListener("change", () => {
+  const enabled = $("aec").checked;
+  store.set("aec", enabled);
+  invoke("set_echo_cancellation", { enabled });
+});
+
 $("denoise").addEventListener("change", () => {
   const enabled = $("denoise").checked;
   store.set("denoise", enabled);
@@ -3190,6 +3196,8 @@ async function init() {
   const denoise = store.get("denoise", true);
   const agc = store.get("agc", true);
   $("agc").checked = agc;
+  const aec = store.get("aec", true);
+  $("aec").checked = aec;
   const cues = store.get("cues", true);
   $("cues").checked = cues;
   const closeToTray = store.get("closeToTray", true);
@@ -3209,6 +3217,7 @@ async function init() {
     await invoke("set_noise_suppression", { enabled: denoise });
     await invoke("set_cues", { enabled: cues });
     await invoke("set_agc", { enabled: agc });
+    await invoke("set_echo_cancellation", { enabled: aec });
     await invoke("set_close_to_tray", { enabled: closeToTray });
     await invoke("set_vad_threshold", { db: vad });
     await invoke("set_ptt_key", { key: pttKey });
