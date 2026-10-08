@@ -114,7 +114,7 @@ async fn list_devices() -> CmdResult<Devices> {
 const MIC_TEST_SECONDS: f32 = 4.0;
 
 /// Проверка микрофона: запись на несколько секунд, затем она проигрывается.
-/// Во время звонка не нужна (там есть индикатор и эхо).
+/// Во время звонка не нужна (там есть индикатор и «слышать себя»).
 #[tauri::command]
 async fn mic_test_start(
     state: State<'_, AppState>,
@@ -660,15 +660,6 @@ async fn set_lock(state: State<'_, AppState>, locked: bool) -> CmdResult<()> {
     Ok(())
 }
 
-/// Только для своей комнаты: эхо — каждый слышит сам себя (проверка связи).
-#[tauri::command]
-async fn set_echo(state: State<'_, AppState>, enabled: bool) -> CmdResult<()> {
-    if let Some(server) = state.host.lock().await.as_ref() {
-        server.set_echo(enabled);
-    }
-    Ok(())
-}
-
 /// Только для своей комнаты: доступ через интернет (пробивка NAT, код приглашения).
 #[tauri::command]
 async fn set_internet(state: State<'_, AppState>, enabled: bool) -> CmdResult<InternetStatus> {
@@ -960,6 +951,12 @@ fn set_agc(state: State<'_, AppState>, enabled: bool) {
     state.tx.set_agc(enabled);
 }
 
+/// «Слышать себя»: свой голос сразу звучит в своих динамиках.
+#[tauri::command]
+fn set_monitor(state: State<'_, AppState>, enabled: bool) {
+    state.tx.set_monitor(enabled);
+}
+
 #[tauri::command]
 fn set_noise_suppression(state: State<'_, AppState>, enabled: bool) {
     state.tx.set_noise_suppression(enabled);
@@ -1185,6 +1182,7 @@ pub fn run() {
             set_vad_threshold,
             set_noise_suppression,
             set_agc,
+            set_monitor,
             audio_stats,
             mic_test_start,
             mic_test_status,
@@ -1214,7 +1212,6 @@ pub fn run() {
             start_server,
             stop_server,
             set_lock,
-            set_echo,
             set_internet,
             internet_status,
             set_server_mute,

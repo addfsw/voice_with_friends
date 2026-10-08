@@ -83,6 +83,7 @@ impl AudioEngine {
     ) -> anyhow::Result<Self> {
         let mixer = Arc::new(Mixer::new(settings.jitter));
         mixer.set_cues_enabled(settings.cues);
+        mixer.attach_monitor(tx_state.clone());
         let output = start_output(&mixer, settings, settings.output.as_deref())?;
         let send: SendVoice = Arc::new(send);
         let input = start_input(&tx_state, settings, &send, settings.input.as_deref(), 0)?;
