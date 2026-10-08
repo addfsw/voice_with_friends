@@ -215,6 +215,10 @@
                 <span>Усиление голоса</span>
                 <input type="checkbox" id="agc" class="switch" />
               </label>
+              <label class="switch-row" title="Ваш голос сразу звучит у вас — так, как его слышат другие. Лучше в наушниках, иначе динамики засвистят">
+                <span>Слышать себя</span>
+                <input type="checkbox" id="monitor" class="switch" />
+              </label>
             </div>
           </div>
         </div>
@@ -409,10 +413,6 @@
         </div>
 
         <div class="group">
-          <label class="switch-row" title="Сервер возвращает каждому его собственный голос: удобно проверить звук, пока никого нет">
-            <span>Эхо: каждый слышит себя</span>
-            <input type="checkbox" id="echo" class="switch" />
-          </label>
           <p class="hint">
             Код сервера <code id="host-code"></code> — для сверки, если программа
             друга предупредит о смене сертификата.

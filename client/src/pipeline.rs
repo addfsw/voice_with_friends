@@ -10,7 +10,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -31,6 +31,8 @@ use crate::resample::Resampler;
 const WAKE_TIMEOUT: Duration = Duration::from_millis(20);
 /// Максимальный размер Opus-пакета (с запасом; реальные — 60–150 байт).
 const MAX_PACKET: usize = 1275;
+/// Сколько своего голоса может ждать микшера в режиме «слышать себя».
+const MONITOR_MAX_SAMPLES: usize = FRAME_SAMPLES * 2;
 
 // ---------------------------------------------------------------------------
 // Передача
@@ -86,6 +88,10 @@ pub struct TxState {
     transmitting: AtomicBool,
     /// Громкость последнего кадра с микрофона, dBFS.
     level_db_bits: AtomicU32,
+    /// «Слышать себя»: свой голос сразу идёт и в свои динамики.
+    monitor: AtomicBool,
+    /// Свой голос, ещё не забранный микшером (см. [`Mixer::attach_monitor`]).
+    monitor_buf: Mutex<VecDeque<f32>>,
 }
 
 impl TxState {
@@ -99,6 +105,8 @@ impl TxState {
             agc: AtomicBool::new(true),
             transmitting: AtomicBool::new(false),
             level_db_bits: AtomicU32::new((-120f32).to_bits()),
+            monitor: AtomicBool::new(false),
+            monitor_buf: Mutex::new(VecDeque::new()),
         }
     }
 
@@ -144,6 +152,30 @@ impl TxState {
 
     pub fn set_agc(&self, enabled: bool) {
         self.agc.store(enabled, Ordering::Relaxed);
+    }
+
+    pub fn monitor(&self) -> bool {
+        self.monitor.load(Ordering::Relaxed)
+    }
+
+    pub fn set_monitor(&self, enabled: bool) {
+        self.monitor.store(enabled, Ordering::Relaxed);
+        if !enabled {
+            self.monitor_buf.lock().unwrap().clear();
+        }
+    }
+
+    /// Кладёт отправленный кадр в очередь «слышать себя».
+    fn push_monitor(&self, frame: &[f32]) {
+        if !self.monitor() {
+            return;
+        }
+        let mut buf = self.monitor_buf.lock().unwrap();
+        buf.extend(frame);
+        // Часы микрофона и динамиков чуть расходятся; лишнее выбрасываем,
+        // чтобы задержка не копилась.
+        let extra = buf.len().saturating_sub(MONITOR_MAX_SAMPLES);
+        buf.drain(..extra);
     }
 
     pub fn transmitting(&self) -> bool {
@@ -393,6 +425,7 @@ impl Transmitter {
                 if state.agc() {
                     agc.process(&mut frame, level, speech);
                 }
+                state.push_monitor(&frame);
 
                 match encoder.encode_float(&frame, &mut packet) {
                     Ok(len) => send(seq, &packet[..len]),
@@ -497,6 +530,10 @@ pub struct Mixer {
     cues_enabled: AtomicBool,
     /// Ещё не сыгранная часть звуков событий.
     cue: Mutex<VecDeque<f32>>,
+    /// Откуда брать свой голос для «слышать себя».
+    monitor: OnceLock<Arc<TxState>>,
+    /// Накопилось ли своего голоса с запасом (см. `mix_monitor`).
+    monitor_primed: AtomicBool,
 }
 
 impl Mixer {
@@ -509,7 +546,16 @@ impl Mixer {
             delay,
             cues_enabled: AtomicBool::new(true),
             cue: Mutex::new(VecDeque::new()),
+            monitor: OnceLock::new(),
+            monitor_primed: AtomicBool::new(false),
         }
+    }
+
+    /// Подмешивать свой голос из `state`, когда там включено «слышать себя».
+    /// Голос берётся прямо с микрофона, а не возвращается через сервер,
+    /// поэтому задержка — только буферы своей звуковой карты.
+    pub fn attach_monitor(&self, state: Arc<TxState>) {
+        let _ = self.monitor.set(state);
     }
 
     /// Включает или выключает звуки событий.
@@ -636,6 +682,7 @@ impl Mixer {
             }
         }
         drop(speakers);
+        self.mix_monitor(out, deafened);
         let mut cue = self.cue.lock().unwrap();
         let n = cue.len().min(FRAME_SAMPLES);
         for (o, s) in out.iter_mut().zip(cue.drain(..n)) {
@@ -644,6 +691,30 @@ impl Mixer {
         // Если несколько человек кричат одновременно, сумма может выйти за [-1, 1].
         for s in out.iter_mut() {
             *s = s.clamp(-1.0, 1.0);
+        }
+    }
+
+    /// Подмешивает свой голос («слышать себя»). Кодер и микшер просыпаются
+    /// независимо, поэтому после паузы сначала копим полтора кадра: иначе
+    /// микшер то и дело заставал бы очередь пустой и голос шёл бы с щелчками.
+    fn mix_monitor(&self, out: &mut [f32; FRAME_SAMPLES], deafened: bool) {
+        let Some(state) = self.monitor.get() else { return };
+        let mut buf = state.monitor_buf.lock().unwrap();
+        if deafened {
+            buf.clear();
+        }
+        if !self.monitor_primed.load(Ordering::Relaxed) {
+            if buf.len() < FRAME_SAMPLES * 3 / 2 {
+                return;
+            }
+            self.monitor_primed.store(true, Ordering::Relaxed);
+        }
+        if buf.len() < FRAME_SAMPLES {
+            self.monitor_primed.store(false, Ordering::Relaxed);
+        }
+        let n = buf.len().min(FRAME_SAMPLES);
+        for (o, s) in out.iter_mut().zip(buf.drain(..n)) {
+            *o += s;
         }
     }
 
@@ -830,6 +901,41 @@ mod tests {
         assert!(state.should_transmit(&mut vad, false));
         state.set_muted(true);
         assert!(!state.should_transmit(&mut vad, true));
+    }
+
+    #[test]
+    fn monitor_plays_own_voice_only_when_enabled() {
+        let loud = |mixer: &Mixer| {
+            let mut out = [0f32; FRAME_SAMPLES];
+            mixer.mix_frame(&mut out);
+            level_db(&out) > -20.0
+        };
+        let state = Arc::new(TxState::default());
+        let mixer = Mixer::new(Delay::default());
+        mixer.attach_monitor(state.clone());
+
+        state.push_monitor(&sine_frame(0));
+        state.push_monitor(&sine_frame(0));
+        assert!(!loud(&mixer), "выключено — себя не слышно");
+
+        state.set_monitor(true);
+        state.push_monitor(&sine_frame(0));
+        assert!(!loud(&mixer), "сначала копим запас");
+        state.push_monitor(&sine_frame(0));
+        assert!(loud(&mixer));
+        assert!(loud(&mixer));
+        assert!(!loud(&mixer), "очередь кончилась — тишина");
+
+        for _ in 0..10 {
+            state.push_monitor(&sine_frame(0));
+        }
+        assert!(
+            state.monitor_buf.lock().unwrap().len() <= MONITOR_MAX_SAMPLES,
+            "задержка не копится"
+        );
+
+        mixer.set_deafened(true);
+        assert!(!loud(&mixer), "при выключенном звуке молчит и свой голос");
     }
 
     #[test]

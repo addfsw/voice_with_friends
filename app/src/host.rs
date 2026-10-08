@@ -64,7 +64,6 @@ pub struct HostedServer {
     /// заглушать и выгонять. Каждый запуск комнаты — новый.
     admin_token: String,
     fingerprint: String,
-    echo: Arc<AtomicBool>,
     locked: Arc<AtomicBool>,
     lan: Arc<AtomicBool>,
     access: Arc<vwf_server::Access>,
@@ -120,7 +119,6 @@ impl HostedServer {
         let invite = Invite::new(load_or_create_room(&room_file)?, &fingerprint);
         let code = vwf_proto::short_fingerprint(&fingerprint);
         let endpoint = server.endpoint().clone();
-        let echo = server.echo_switch();
         let locked = server.lock_switch();
         let lan = server.discovery_switch();
         lan.store(room.lan, Ordering::Relaxed);
@@ -147,7 +145,6 @@ impl HostedServer {
             task,
             admin_token,
             fingerprint,
-            echo,
             locked,
             lan,
             access,
@@ -189,11 +186,6 @@ impl HostedServer {
             status.guests = host.guests;
         }
         status
-    }
-
-    /// Эхо: сервер возвращает каждому его собственный голос.
-    pub fn set_echo(&self, enabled: bool) {
-        self.echo.store(enabled, Ordering::Relaxed);
     }
 
     /// «Никого больше не пускать»: новые участники получают отказ.

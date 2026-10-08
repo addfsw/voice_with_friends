@@ -1214,7 +1214,6 @@ function renderHostControls() {
   if (!hosting) return;
   showLocked(false); // новая комната всегда с открытым входом
   $("host-code").textContent = call.hosting.code;
-  $("echo").checked = false; // и без эха
   $("room-lan").checked = call.hostRoom.lan;
   // Раньше «доступ через интернет» запоминался для всех комнат сразу.
   const legacy = call.hostRoom.id === "default" && store.get("internet", false);
@@ -2556,8 +2555,9 @@ window.__TAURI__?.app
 
 $("send-app").addEventListener("click", () => androidBridge?.shareApp());
 
-$("echo").addEventListener("change", () => {
-  invoke("set_echo", { enabled: $("echo").checked });
+// Не запоминается: забытый включённым, свой голос в ушах только путает.
+$("monitor").addEventListener("change", () => {
+  invoke("set_monitor", { enabled: $("monitor").checked });
 });
 
 // Переключатель из нескольких кнопок (режим передачи, тема).
