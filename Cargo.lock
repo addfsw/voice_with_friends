@@ -5944,6 +5944,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+ "webpki-root-certs",
 ]
 
 [[package]]

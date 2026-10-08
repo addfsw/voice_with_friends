@@ -48,10 +48,18 @@ impl Mailbox {
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| DEFAULT_URL.to_string());
         crate::install_crypto_provider();
-        let client = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(10))
-            .build()
-            .context("не удалось создать HTTP-клиент")?;
+        let builder = reqwest::Client::builder().connect_timeout(Duration::from_secs(10));
+        // На Android reqwest по умолчанию проверяет сертификат через Java
+        // (rustls-platform-verifier), а её без инициализации из JNI нет: TLS-
+        // рукопожатие с ntfy.sh паниковало, и вход по коду приглашения с
+        // телефона зависал. Проверяем по встроенному списку корневых сертификатов.
+        #[cfg(target_os = "android")]
+        let builder = builder.tls_certs_only(
+            webpki_root_certs::TLS_SERVER_ROOT_CERTS
+                .iter()
+                .filter_map(|der| reqwest::Certificate::from_der(der).ok()),
+        );
+        let client = builder.build().context("не удалось создать HTTP-клиент")?;
         Ok(Mailbox::Ntfy { client, base: base.trim_end_matches('/').to_string() })
     }
 

@@ -17,3 +17,8 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+
+# На Android системный проверяльщик сертификатов reqwest требует JNI-инициализации
+# и Kotlin-библиотеки в APK; вместо него — встроенный список корневых сертификатов.
+[target.'cfg(target_os = "android")'.dependencies]
+webpki-root-certs = "1"
