@@ -987,11 +987,6 @@ button.add-room svg {
   height: 16px;
 }
 
-.room-locked {
-  color: var(--accent-text);
-  font-weight: 600;
-}
-
 .divider {
   display: flex;
   align-items: center;
@@ -1059,6 +1054,7 @@ button.add-room svg {
 
 .room-sub {
   display: flex;
+  align-items: center;
   gap: 8px;
   color: var(--text-2);
   font-size: 12px;
@@ -1071,9 +1067,34 @@ button.add-room svg {
   text-overflow: ellipsis;
 }
 
-/* Короткие подписи не сжимаются: уступает код сертификата. */
-.room-sub .room-locked {
+/* Плашка «вход открыт / закрыт» не сжимается: уступает код сертификата. */
+.lock-chip {
+  position: relative;
+  display: inline-flex;
   flex: none;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 8px 0 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.lock-chip .icon {
+  width: 13px;
+  height: 13px;
+}
+
+.lock-chip:hover {
+  color: var(--text);
+  background: var(--surface-3);
+}
+
+.lock-chip[aria-pressed="true"] {
+  color: var(--danger);
+  background: var(--danger-soft);
 }
 
 .room-sub #server-code {
@@ -1110,28 +1131,43 @@ button.add-room svg {
   bottom: auto;
 }
 
-.head-btn[aria-pressed="true"] {
-  color: var(--accent-text);
-  background: var(--accent-soft);
-}
-
+/* «Пригласить» — главная кнопка хоста, с подписью. */
 button.invite-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  width: auto;
+  padding: 0 14px 0 11px;
   color: #fff;
   background: var(--accent);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+button.invite-btn .icon {
+  width: 18px;
+  height: 18px;
 }
 
 button.invite-btn:hover {
+  color: #fff;
   background: var(--accent-strong);
 }
 
-button.leave {
-  color: var(--danger);
-  background: var(--danger-soft);
-}
-
-button.leave:hover {
+/* «Выйти» в нижней панели — красная, как «положить трубку». */
+.dock-btn.leave {
+  width: 44px;
+  margin-left: 4px;
+  border-radius: 10px;
   color: #fff;
   background: var(--danger);
+}
+
+.dock-btn.leave:hover {
+  color: #fff;
+  background: var(--danger);
+  filter: brightness(1.1);
 }
 
 /* Плашка «переподключаюсь» */
@@ -1163,8 +1199,10 @@ button.leave:hover {
   }
 }
 
+/* Выйти можно и во время переподключения: кнопка выхода остаётся живой. */
 #room-view.reconnecting .peers,
-#room-view.reconnecting .dock {
+#room-view.reconnecting .dock > :not(.dock-buttons),
+#room-view.reconnecting .dock-buttons > :not(.leave) {
   opacity: 0.5;
   pointer-events: none;
 }
@@ -2589,6 +2627,14 @@ html:not(.android) .android-only {
 .android .head-btn {
   width: 40px;
   height: 40px;
+}
+
+.android .dock-btn.leave {
+  width: 48px;
+}
+
+.android button.invite-btn {
+  width: auto;
 }
 
 .android .view {
