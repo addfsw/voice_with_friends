@@ -151,37 +151,6 @@ function avatarColor(name) {
   return palette[hash % palette.length];
 }
 
-// Свои цвета участников: номер 1..16 приходит от сервера (PeerInfo::color,
-// их число — PEER_COLORS в протоколе), 0 — цвет по имени.
-const PEER_COLORS = [
-  ["#5b5bd6", "Индиго"],
-  ["#8b5cf6", "Сирень"],
-  ["#c026d3", "Фуксия"],
-  ["#d6409f", "Малина"],
-  ["#e5484d", "Гранат"],
-  ["#e5622c", "Апельсин"],
-  ["#e08a00", "Янтарь"],
-  ["#c9a227", "Горчица"],
-  ["#65a30d", "Лайм"],
-  ["#2f9e6e", "Зелень"],
-  ["#12a37f", "Мята"],
-  ["#0e9aa7", "Бирюза"],
-  ["#0b8fd8", "Небо"],
-  ["#2f6fed", "Синий"],
-  ["#a0703c", "Какао"],
-  ["#5f6b7a", "Графит"],
-];
-
-function colorOf(peer) {
-  return PEER_COLORS[(peer?.color ?? 0) - 1]?.[0] ?? avatarColor(peer?.name ?? "?");
-}
-
-// Свой цвет, выбранный в «Оформлении».
-function myColor() {
-  const color = store.get("myColor", 0);
-  return Number.isInteger(color) && color >= 0 && color <= PEER_COLORS.length ? color : 0;
-}
-
 // Аватарки участников: id → data:-адрес картинки. Своя — отдельно, она
 // есть и до подключения.
 const avatars = new Map();
@@ -191,16 +160,15 @@ function avatarOf(id) {
   return call.me && id === call.me.id ? myAvatar : avatars.get(id) ?? null;
 }
 
-// Аватар: картинка, если есть, иначе первая буква имени на цветном круге
-// (цвет — свой цвет участника или по имени).
-function paintAvatar(el, name, url, color = avatarColor(name)) {
+// Аватар: картинка, если есть, иначе первая буква имени на цветном круге.
+function paintAvatar(el, name, url) {
   el.classList.toggle("has-image", Boolean(url));
   if (url) {
     el.textContent = "";
     el.style.background = `center / cover no-repeat url("${url}")`;
   } else {
     el.textContent = initial(name);
-    el.style.background = color;
+    el.style.background = avatarColor(name);
   }
 }
 
@@ -845,8 +813,7 @@ $("cert-trust").addEventListener("click", async () => {
 
 // Аватар рядом с именем — как его увидят в комнате.
 function renderWho() {
-  const name = $("name").value.trim() || "?";
-  paintAvatar($("who-avatar"), name, myAvatar, colorOf({ name, color: myColor() }));
+  paintAvatar($("who-avatar"), $("name").value.trim() || "?", myAvatar);
 }
 
 $("name").addEventListener("input", renderWho);
@@ -1399,7 +1366,7 @@ let notifiedMuted = null;
 function renderDock() {
   const me = call.me;
   if (!me) return;
-  paintAvatar($("me-avatar"), me.name, myAvatar, colorOf(me));
+  paintAvatar($("me-avatar"), me.name, myAvatar);
   $("me-name").textContent = me.name;
 
   const status = $("me-status");
@@ -1488,7 +1455,7 @@ function peerItem(peer, isMe) {
 
   const avatar = document.createElement("div");
   avatar.className = "avatar";
-  paintAvatar(avatar, peer.name, isMe ? myAvatar : avatars.get(peer.id), colorOf(peer));
+  paintAvatar(avatar, peer.name, isMe ? myAvatar : avatars.get(peer.id));
 
   const main = document.createElement("div");
   main.className = "peer-main";
@@ -1560,7 +1527,7 @@ function peerItem(peer, isMe) {
 // Плитка «сцена»: фон цвета аватара, вверху — «в эфире» и связь, в центре —
 // аватар, внизу — плашка с именем и значками, справа от неё «Смотреть».
 function tileLayout(li, peer, avatar, main, side) {
-  li.style.setProperty("--tile", colorOf(peer));
+  li.style.setProperty("--tile", avatarColor(peer.name));
   const box = (className, ...children) => {
     const div = document.createElement("div");
     div.className = className;
@@ -1920,10 +1887,7 @@ function renderChat(forceBottom) {
       group.className = "msg-group";
       const avatar = document.createElement("div");
       avatar.className = "avatar";
-      // Цвет — пока автор в комнате; ушедший — по имени.
-      const author = call.me?.id === message.from ? call.me : call.peers.get(message.from);
-      const color = author?.name === message.name ? colorOf(author) : avatarColor(message.name);
-      paintAvatar(avatar, message.name, avatarOf(message.from), color);
+      paintAvatar(avatar, message.name, avatarOf(message.from));
       body = document.createElement("div");
       body.className = "msg-body";
       const head = document.createElement("div");
@@ -2766,6 +2730,8 @@ function showSettingsPage(appearance) {
   $("appearance-page").hidden = !appearance;
   $("settings-back").hidden = !appearance;
   $("settings-title").textContent = appearance ? "Оформление" : "Настройки";
+  // «Оформление» — небольшая панель без затемнения, чтобы видеть изменения.
+  $("settings").classList.toggle("see-through", appearance);
   $("settings").querySelector(".sheet").scrollTop = 0;
 }
 
@@ -2800,8 +2766,6 @@ async function refreshDiagnostics() {
     stats = null;
   }
   $("diag").hidden = !stats;
-  // На телефоне трея нет — без разговора в «Дополнительно» пусто.
-  if (isAndroid) $("advanced").hidden = !stats;
   if (!stats) return;
   const list = $("diag-list");
   list.innerHTML = "";
@@ -2891,8 +2855,7 @@ listen("peer-avatar", ({ payload }) => {
 });
 
 function renderProfile() {
-  const name = $("name").value.trim() || "?";
-  paintAvatar($("profile-avatar"), name, myAvatar, colorOf({ name, color: myColor() }));
+  paintAvatar($("profile-avatar"), $("name").value.trim() || "?", myAvatar);
   $("avatar-remove").hidden = !myAvatar;
   renderWho();
 }
@@ -2979,6 +2942,12 @@ const THEMES = {
   sunset: true,
   neon: true,
   terminal: true,
+  synthwave: true,
+  cyber: true,
+  berry: true,
+  lemonade: false,
+  tangerine: false,
+  aqua: false,
 };
 
 function applyTheme(theme) {
@@ -3020,50 +2989,6 @@ function renderAppearanceSummary() {
   const bg = store.get("roomBg", "none");
   if (bg !== "none") parts.push(`фон: ${label($("room-bg"), bg).toLowerCase()}`);
   $("appearance-summary").textContent = parts.filter(Boolean).join(" · ");
-}
-
-// Свой цвет: виден всем в комнате (сервер рассылает его вместе со статусом).
-function renderMyColor() {
-  const color = myColor();
-  for (const button of $("my-color").querySelectorAll("button")) {
-    const active = Number(button.dataset.value) === color;
-    button.classList.toggle("active", active);
-    button.setAttribute("aria-checked", active);
-  }
-}
-
-function setMyColor(color) {
-  store.set("myColor", color);
-  renderMyColor();
-  renderProfile();
-  invoke("set_color", { color }).catch((e) => toast(errorText(e)));
-  if (call.me) {
-    call.me = { ...call.me, color };
-    renderPeers();
-    if (currentTab === "chat") renderChat(false);
-  }
-}
-
-{
-  const auto = document.createElement("button");
-  auto.type = "button";
-  auto.dataset.value = "0";
-  auto.title = "По имени";
-  auto.textContent = "A";
-  $("my-color").append(auto);
-  PEER_COLORS.forEach(([hex, title], i) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.dataset.value = String(i + 1);
-    button.title = title;
-    button.style.background = hex;
-    $("my-color").append(button);
-  });
-  for (const button of $("my-color").querySelectorAll("button")) {
-    button.setAttribute("role", "radio");
-    button.setAttribute("aria-label", button.title);
-    button.addEventListener("click", () => setMyColor(Number(button.dataset.value)));
-  }
 }
 
 // Фон комнаты — только у себя. Своя картинка уменьшается и хранится в
@@ -3154,7 +3079,6 @@ for (const button of $("accent").querySelectorAll("button")) {
   button.addEventListener("click", () => applyAccent(button.dataset.value));
 }
 applyAccent(store.get("accent", "indigo"));
-renderMyColor();
 applyRoomBg(store.get("roomBg", "none"));
 
 // Устройства. kind — "input" (микрофон) или "output" (динамики/наушники);
@@ -3418,7 +3342,6 @@ async function init() {
   try {
     await invoke("set_noise_suppression", { enabled: denoise });
     await invoke("set_cues", { enabled: cues });
-    await invoke("set_color", { color: myColor() });
     await invoke("set_agc", { enabled: agc });
     await invoke("set_echo_cancellation", { enabled: aec });
     await invoke("set_close_to_tray", { enabled: closeToTray });

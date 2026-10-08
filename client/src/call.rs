@@ -457,11 +457,6 @@ impl Call {
         }
     }
 
-    /// Свой цвет для остальных (см. [`PeerInfo::color`]).
-    pub fn set_color(&self, color: u8) {
-        self.control.send(ClientMsg::SetColor { color });
-    }
-
     pub fn send_chat(&self, text: &str) {
         let text: String = text.trim().chars().take(vwf_proto::MAX_CHAT_CHARS).collect();
         if !text.is_empty() {

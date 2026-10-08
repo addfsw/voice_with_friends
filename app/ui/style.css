@@ -1,7 +1,9 @@
 /* --- Цвета ---
  * Тема — data-theme на <html>: dark «Ночь» (по умолчанию), light «День»,
  * black «Уголь», midnight «Полночь», forest «Лес», paper «Бумага», sakura
- * «Сакура», ocean «Океан», sunset «Закат», neon «Неон», terminal «Терминал»;
+ * «Сакура», ocean «Океан», sunset «Закат», neon «Неон», terminal «Терминал»,
+ * яркие: synthwave «Синтвейв», cyber «Киберпанк», berry «Малина», lemonade
+ * «Лимонад», tangerine «Мандарин», aqua «Аква»;
  * без data-theme — светлая или «Ночь» по системной настройке. Список тем —
  * THEMES в app.js. Цвет акцента — data-accent, фон комнаты — data-room-bg,
  * плотный список — data-density="compact". */
@@ -95,7 +97,10 @@
 :root[data-theme="ocean"],
 :root[data-theme="sunset"],
 :root[data-theme="neon"],
-:root[data-theme="terminal"] {
+:root[data-theme="terminal"],
+:root[data-theme="synthwave"],
+:root[data-theme="cyber"],
+:root[data-theme="berry"] {
   --shadow: none;
   --shadow-pop: 0 12px 34px rgba(0, 0, 0, 0.55);
   --backdrop: rgba(0, 0, 0, 0.55);
@@ -308,9 +313,8 @@
 :root[data-theme="terminal"] .peers.tiles .peer,
 :root[data-theme="terminal"] .peers.tiles .tile-name,
 :root[data-theme="terminal"] .menu,
-:root[data-theme="terminal"] .theme-preview,
-:root[data-theme="terminal"] .backdrops button,
-:root[data-theme="terminal"] .bg-preview {
+:root[data-theme="terminal"] .themes button,
+:root[data-theme="terminal"] .backdrops button {
   border-radius: 4px;
 }
 
@@ -326,6 +330,154 @@
   z-index: 1000;
   pointer-events: none;
   background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.18) 0 1px, transparent 1px 3px);
+}
+
+/* --- Яркие темы --- */
+
+/* «Синтвейв» — фиолетовый закат 80-х: розовое небо сверху, сетка снизу. */
+:root[data-theme="synthwave"] {
+  --bg: #1a0b33;
+  --surface: #241046;
+  --surface-2: #2c1454;
+  --surface-3: #3d1e6e;
+  --border: #3a1d66;
+  --field: #140828;
+  --field-border: #4e2a85;
+  --text: #fbeaff;
+  --text-2: #d0a8e8;
+  --text-3: #a582c0;
+  --speaking: #2de2e6;
+}
+
+:root[data-theme="synthwave"] body {
+  background:
+    linear-gradient(transparent 70%, rgba(255, 56, 189, 0.12)),
+    radial-gradient(90% 55% at 50% 0%, rgba(255, 56, 189, 0.35), transparent 70%),
+    radial-gradient(70% 50% at 50% 110%, rgba(45, 226, 230, 0.22), transparent 70%),
+    #1a0b33;
+}
+
+/* «Киберпанк» — чёрный с кислотно-жёлтым и бирюзой. */
+:root[data-theme="cyber"] {
+  --bg: #0b0b10;
+  --surface: #14141c;
+  --surface-2: #1a1a24;
+  --surface-3: #272733;
+  --border: #33331a;
+  --field: #08080c;
+  --field-border: #4a4a20;
+  --text: #fdf7c3;
+  --text-2: #c9c27a;
+  --text-3: #9a9560;
+  --speaking: #00f0ff;
+}
+
+:root[data-theme="cyber"] body {
+  background:
+    radial-gradient(60% 45% at 100% 0%, rgba(252, 238, 10, 0.16), transparent 70%),
+    radial-gradient(55% 45% at 0% 100%, rgba(0, 240, 255, 0.14), transparent 70%),
+    #0b0b10;
+}
+
+:root[data-theme="cyber"] .card,
+:root[data-theme="cyber"] .dock {
+  border-color: rgba(252, 238, 10, 0.35);
+}
+
+:root[data-theme="cyber"] .peers.tiles .peer:not(.speaking) {
+  border-color: rgba(252, 238, 10, 0.25);
+}
+
+/* «Малина» — насыщенный тёмно-розовый. */
+:root[data-theme="berry"] {
+  --bg: #2a0619;
+  --surface: #3a0a24;
+  --surface-2: #450d2b;
+  --surface-3: #5c143b;
+  --border: #561238;
+  --field: #200413;
+  --field-border: #74204d;
+  --text: #ffe6f2;
+  --text-2: #f0a3c8;
+  --text-3: #c47b9e;
+}
+
+:root[data-theme="berry"] body {
+  background:
+    radial-gradient(70% 55% at 0% 0%, rgba(255, 64, 160, 0.3), transparent 70%),
+    radial-gradient(60% 50% at 100% 100%, rgba(255, 140, 60, 0.18), transparent 70%),
+    #2a0619;
+}
+
+/* «Лимонад» — светлая, солнечно-жёлтая с зеленью. */
+:root[data-theme="lemonade"] {
+  --bg: #fff9c9;
+  --surface: #fffde8;
+  --surface-2: #fbf1a8;
+  --surface-3: #f3e47e;
+  --border: #efe08a;
+  --field: #ffffff;
+  --field-border: #e2d06a;
+  --text: #2c2a0a;
+  --text-2: #6b6520;
+  --text-3: #8f8838;
+  --shadow: 0 1px 2px rgba(120, 100, 0, 0.1);
+  --shadow-pop: 0 10px 30px rgba(120, 100, 0, 0.22);
+  --backdrop: rgba(60, 50, 0, 0.3);
+}
+
+:root[data-theme="lemonade"] body {
+  background:
+    radial-gradient(70% 55% at 100% 0%, rgba(160, 230, 60, 0.4), transparent 70%),
+    #fff9c9;
+}
+
+/* «Мандарин» — светлая, сочно-оранжевая. */
+:root[data-theme="tangerine"] {
+  --bg: #ffe7cf;
+  --surface: #fff6ec;
+  --surface-2: #ffdcb8;
+  --surface-3: #ffca94;
+  --border: #fbd2a6;
+  --field: #ffffff;
+  --field-border: #f5b77a;
+  --text: #33190a;
+  --text-2: #8a4a1e;
+  --text-3: #a86a3c;
+  --shadow: 0 1px 2px rgba(150, 70, 0, 0.1);
+  --shadow-pop: 0 10px 30px rgba(150, 70, 0, 0.22);
+  --backdrop: rgba(70, 30, 0, 0.3);
+}
+
+:root[data-theme="tangerine"] body {
+  background:
+    radial-gradient(70% 55% at 0% 100%, rgba(255, 110, 30, 0.35), transparent 70%),
+    radial-gradient(60% 50% at 100% 0%, rgba(255, 200, 40, 0.35), transparent 70%),
+    #ffe7cf;
+}
+
+/* «Аква» — светлая, яркая бирюза. */
+:root[data-theme="aqua"] {
+  --bg: #d6f7f4;
+  --surface: #f0fdfb;
+  --surface-2: #c4efeb;
+  --surface-3: #a6e3de;
+  --border: #b4e8e3;
+  --field: #ffffff;
+  --field-border: #8fd6d0;
+  --text: #06302e;
+  --text-2: #2c6e69;
+  --text-3: #4f8c87;
+  --shadow: 0 1px 2px rgba(0, 90, 90, 0.1);
+  --shadow-pop: 0 10px 30px rgba(0, 90, 90, 0.2);
+  --backdrop: rgba(0, 40, 40, 0.3);
+}
+
+:root[data-theme="aqua"] body {
+  background:
+    radial-gradient(70% 55% at 100% 100%, rgba(0, 190, 210, 0.35), transparent 70%),
+    radial-gradient(60% 50% at 0% 0%, rgba(60, 120, 255, 0.2), transparent 70%),
+    #d6f7f4;
 }
 
 :root[data-accent="violet"] { --accent: #8b5cf6; --accent-strong: #7c3aed; }
@@ -2778,74 +2930,38 @@ button.key.listening {
   font-size: 12.5px;
 }
 
-/* «Дополнительно»: редкие настройки, свёрнуты по умолчанию. */
-.advanced {
-  border-top: 1px solid var(--border);
-  padding-top: 12px;
-}
-
-.advanced > summary {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  list-style: none;
-  cursor: pointer;
-  color: var(--text-2);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.advanced > summary::-webkit-details-marker {
-  display: none;
-}
-
-.advanced > summary::after {
-  content: "";
-  width: 6px;
-  height: 6px;
-  margin-left: 2px;
-  border: solid currentColor;
-  border-width: 0 1.5px 1.5px 0;
-  transform: translateY(-2px) rotate(45deg);
-  transition: transform 120ms;
-}
-
-.advanced[open] > summary::after {
-  transform: translateY(1px) rotate(-135deg);
-}
-
-.advanced-body {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-  padding-top: 14px;
-}
-
-/* Выбор темы: карточки с маленьким видом окна в цветах своей темы. */
+/* Выбор темы: компактные кнопки — кружок в цветах темы и название. */
 .themes {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 6px;
 }
 
 .themes button {
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 6px;
-  padding: 6px 6px 7px;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  height: 34px;
+  padding: 0 8px 0 5px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: 99px;
   background: var(--surface-2);
   color: var(--text-2);
   font-size: 12.5px;
   font-weight: 500;
-  text-align: center;
+  text-align: left;
+}
+
+.themes button > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .themes button:hover {
   color: var(--text);
-  background: var(--surface-2);
+  background: var(--surface-3);
 }
 
 .themes button.active {
@@ -2854,57 +2970,41 @@ button.key.listening {
   box-shadow: 0 0 0 1px var(--accent);
 }
 
+/* Кружок: фон темы, полоска «карточки» и точка акцента. */
 .theme-preview {
   position: relative;
-  display: block;
-  height: 46px;
-  border-radius: 7px;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
   background: var(--p-bg);
-  box-shadow: inset 0 0 0 1px rgba(127, 127, 127, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(127, 127, 127, 0.3);
   overflow: hidden;
 }
 
-/* Карточка разговора: строка текста и кружок в цвет акцента. */
 .theme-preview i:first-child {
   position: absolute;
-  inset: 8px 8px auto;
-  height: 22px;
-  border-radius: 5px;
+  left: 4px;
+  right: 4px;
+  top: 9px;
+  height: 7px;
+  border-radius: 3px;
   background: var(--p-surface);
 }
 
 .theme-preview i:first-child::before {
   content: "";
   position: absolute;
-  left: 6px;
-  top: 6px;
-  width: 10px;
-  height: 10px;
+  left: 2px;
+  top: 1.5px;
+  width: 4px;
+  height: 4px;
   border-radius: 50%;
   background: var(--accent);
 }
 
-.theme-preview i:first-child::after {
-  content: "";
-  position: absolute;
-  left: 22px;
-  right: 10px;
-  top: 9px;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--p-text);
-  opacity: 0.55;
-}
-
 .theme-preview i:last-child {
-  position: absolute;
-  left: 8px;
-  bottom: 7px;
-  width: 40%;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--p-text);
-  opacity: 0.35;
+  display: none;
 }
 
 .themes [data-value="light"] { --p-bg: #f3f4f7; --p-surface: #ffffff; --p-text: #15171c; }
@@ -2930,6 +3030,12 @@ button.key.listening {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 60%, transparent), 0 0 8px color-mix(in srgb, var(--accent) 50%, transparent);
 }
 .themes [data-value="terminal"] { --p-bg: #030703; --p-surface: #0c170e; --p-text: #59ff6e; }
+.themes [data-value="synthwave"] { --p-bg: linear-gradient(180deg, #ff38bd, #1a0b33 75%); --p-surface: #2c1454; --p-text: #fbeaff; }
+.themes [data-value="cyber"] { --p-bg: linear-gradient(135deg, #fcee0a 0 30%, #0b0b10 30%); --p-surface: #1a1a24; --p-text: #fdf7c3; }
+.themes [data-value="berry"] { --p-bg: radial-gradient(90% 90% at 0% 0%, #ff40a0, #2a0619 75%); --p-surface: #450d2b; --p-text: #ffe6f2; }
+.themes [data-value="lemonade"] { --p-bg: radial-gradient(90% 90% at 100% 0%, #a0e63c, #fff9c9 70%); --p-surface: #fffde8; --p-text: #2c2a0a; }
+.themes [data-value="tangerine"] { --p-bg: radial-gradient(100% 100% at 0% 100%, #ff6e1e, #ffe7cf 75%); --p-surface: #fff6ec; --p-text: #33190a; }
+.themes [data-value="aqua"] { --p-bg: radial-gradient(100% 100% at 100% 100%, #00bed2, #d6f7f4 75%); --p-surface: #f0fdfb; --p-text: #06302e; }
 .themes [data-value="terminal"] .theme-preview,
 .themes [data-value="terminal"] .theme-preview i:first-child,
 .themes [data-value="terminal"] .theme-preview i:first-child::before {
@@ -2983,16 +3089,6 @@ button.key.listening {
   box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent);
 }
 
-/* Свой цвет: «Авто» (по имени) — разноцветный круг с буквой. */
-.peer-colors button[data-value="0"] {
-  display: grid;
-  place-items: center;
-  background: conic-gradient(#e5484d, #e08a00, #2f9e6e, #0b8fd8, #8b5cf6, #e5484d);
-  color: #fff;
-  font-size: 11px;
-  font-weight: 700;
-}
-
 /* Страницы настроек: главная и «Оформление». */
 .sheet-page {
   display: flex;
@@ -3006,6 +3102,33 @@ button.key.listening {
 
 .sheet-head #settings-back:not([hidden]) + h2 {
   margin-right: auto;
+}
+
+/* «Оформление» открывается небольшой панелью без затемнения: комната за ней
+ * видна, и выбранная тема или фон сразу видны на ней. */
+.sheet-backdrop.see-through {
+  background: transparent;
+  animation: none;
+}
+
+.sheet-backdrop.see-through .sheet {
+  max-height: 46%;
+  gap: 14px;
+  padding-top: 10px;
+  box-shadow: var(--shadow-pop), 0 0 0 1px var(--border);
+}
+
+:root:not(.android) .sheet-backdrop.see-through {
+  justify-content: flex-end;
+  align-items: flex-start;
+  padding: 64px 16px 16px;
+}
+
+:root:not(.android) .sheet-backdrop.see-through .sheet {
+  max-width: 330px;
+  max-height: min(100%, 480px);
+  border-radius: var(--radius);
+  animation: drop 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 /* Строка-ссылка на страницу настроек: значок, название, что выбрано, стрелка. */
@@ -3054,30 +3177,30 @@ button.key.listening {
   color: var(--text-3);
 }
 
-/* Фон комнаты: карточки с маленьким видом фона. */
+/* Фон комнаты: такие же компактные кнопки, как у тем. */
 .backdrops {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 6px;
 }
 
 .backdrops button {
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 5px;
-  padding: 5px 5px 6px;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 8px 0 5px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: 99px;
   background: var(--surface-2);
   color: var(--text-2);
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 500;
 }
 
 .backdrops button:hover {
   color: var(--text);
-  background: var(--surface-2);
+  background: var(--surface-3);
 }
 
 .backdrops button.active {
@@ -3087,11 +3210,12 @@ button.key.listening {
 }
 
 .bg-preview {
-  display: block;
-  height: 40px;
-  border-radius: 6px;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
   background: var(--room-bg, none) center / cover, var(--bg);
-  box-shadow: inset 0 0 0 1px rgba(127, 127, 127, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(127, 127, 127, 0.3);
 }
 
 .backdrops [data-value="image"] .bg-preview {
@@ -3151,7 +3275,7 @@ button.key.listening {
 }
 
 .backdrops [data-value="stars"] .bg-preview {
-  background-size: 60px 40px, 60px 40px, 60px 40px, 60px 40px, 60px 40px, 60px 40px, 100% 100%;
+  background-size: 24px 24px, 24px 24px, 24px 24px, 24px 24px, 24px 24px, 24px 24px, 100% 100%;
   background-color: var(--bg);
 }
 
