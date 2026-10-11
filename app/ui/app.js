@@ -285,9 +285,10 @@ function stopLanSearch() {
 }
 
 // Недавние комнаты проверяются в фоне: запущены ли они сейчас. По адресу
-// проверка дешёвая (только QUIC-рукопожатие) — часто. По коду приглашения
-// каждая проверка — сообщение через ntfy.sh, у которого дневной лимит, и тот
-// же лимит нужен для входа по коду, поэтому редко.
+// проверка дешёвая (только QUIC-рукопожатие) — часто. По коду приглашения —
+// чтение ящика ntfy.sh: сообщений из дневного лимита (250 на IP) не тратит, но
+// у ntfy.sh есть и лимит запросов, поэтому реже. Сообщение («ты тут?» хосту)
+// уходит, только когда человек сам нажал на комнату (см. stillOffline).
 const ROOM_CHECK_TICK_MS = 15000;
 const CHECK_EVERY_MS = { address: 15000, invite: 120000 };
 // Не чаще этого даже при «срочной» проверке (открыли экран, вернулись в приложение).
@@ -295,6 +296,9 @@ const CHECK_MIN_MS = { address: 0, invite: 30000 };
 // Старше этого ответ уже не показываем как правду — «Проверяю…».
 const STATUS_STALE_MS = { address: 45000, invite: 300000 };
 let roomCheckTimer = null;
+// Когда комнату последний раз пробовали проверить, даже если не вышло: после
+// неудачи (нет интернета, лимит ntfy.sh) не повторяем каждые 15 секунд.
+const roomTried = new Map();
 // Комнаты, проверка которых ещё идёт: каждая проверяется отдельно, чтобы
 // быстрый ответ (по адресу) не ждал медленного (по коду приглашения).
 const roomsChecking = new Set();
@@ -303,6 +307,7 @@ const checkKind = (server) => (isInvite(server) ? "invite" : "address");
 
 function forgetStatus(server) {
   join.status.delete(server);
+  roomTried.delete(server);
 }
 
 // Что показать на карточке: устаревший ответ — как «Проверяю…».
@@ -337,7 +342,7 @@ function dueServers(force) {
     .map((r) => r.server)
     .filter((server) => !found.has(server) && !roomsChecking.has(server))
     .filter((server) => {
-      const at = join.status.get(server)?.at;
+      const at = roomTried.get(server);
       if (at === undefined) return true;
       const kind = checkKind(server);
       return now - at >= (force ? CHECK_MIN_MS[kind] : CHECK_EVERY_MS[kind]);
@@ -345,13 +350,15 @@ function dueServers(force) {
 }
 
 function checkRecent({ force = false } = {}) {
-  if ($("connect-view").hidden) return;
+  // Окно свёрнуто — статус никто не видит, а запросы к ntfy.sh идут.
+  if ($("connect-view").hidden || document.hidden) return;
   for (const server of dueServers(force)) checkRoom(server);
 }
 
 // Проверяет одну комнату и сразу показывает ответ.
 async function checkRoom(server) {
   roomsChecking.add(server);
+  roomTried.set(server, Date.now());
   let status = "unknown";
   try {
     [{ status }] = await invoke("check_rooms", { servers: [server] });
@@ -376,7 +383,8 @@ async function stillOffline(target) {
   renderJoin();
   let status = "unknown";
   try {
-    [{ status }] = await invoke("check_rooms", { servers: [target.server] });
+    roomTried.set(target.server, Date.now());
+    [{ status }] = await invoke("check_rooms", { servers: [target.server], ask: true });
   } catch {}
   setStatus(target.server, status);
   join.busy = null;

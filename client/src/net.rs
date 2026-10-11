@@ -389,14 +389,16 @@ const CONNECT_WAIT: Duration = Duration::from_secs(5);
 const FIND_HOST_WAIT: Duration = Duration::from_secs(10);
 
 /// Быстро проверяет, запущена ли комната по адресу или коду приглашения, не
-/// входя в неё: по адресу — только QUIC-рукопожатие, по коду — «ты тут?»
-/// хосту через почтовый ящик (без пробивки NAT).
-pub async fn probe(server: &str) -> Availability {
+/// входя в неё: по адресу — только QUIC-рукопожатие, по коду — читает, что
+/// хост недавно писал в почтовый ящик. `ask` — если хост давно молчит,
+/// спросить его «ты тут?» (это сообщение из дневного лимита ntfy.sh, поэтому
+/// только когда человек сам нажал на комнату).
+pub async fn probe(server: &str, ask: bool) -> Availability {
     if vwf_nat::invite::looks_like_invite(server) {
         let Ok(mailbox) = vwf_nat::mailbox::Mailbox::from_env() else {
             return Availability::Unknown;
         };
-        return probe_invite(server, &mailbox, PROBE_INVITE_WAIT).await;
+        return probe_invite(server, &mailbox, ask, PROBE_INVITE_WAIT).await;
     }
     probe_address(server, PROBE_WAIT).await
 }
@@ -427,10 +429,19 @@ pub async fn probe_address(server: &str, wait: Duration) -> Availability {
 pub async fn probe_invite(
     code: &str,
     mailbox: &vwf_nat::mailbox::Mailbox,
+    ask: bool,
     wait: Duration,
 ) -> Availability {
     let Ok(invite) = vwf_nat::invite::Invite::decode(code) else { return Availability::Unknown };
-    match vwf_nat::rendezvous::ping_host(mailbox, &invite.topic(), wait).await {
+    let topic = invite.topic();
+    match vwf_nat::rendezvous::host_seen(mailbox, &topic).await {
+        Ok(Some(true)) => return Availability::Online,
+        Ok(Some(false)) => return Availability::Offline,
+        Ok(None) if !ask => return Availability::Offline,
+        Ok(None) => {}
+        Err(_) => return Availability::Unknown,
+    }
+    match vwf_nat::rendezvous::ping_host(mailbox, &topic, wait).await {
         Ok(true) => Availability::Online,
         Ok(false) => Availability::Offline,
         Err(_) => Availability::Unknown,

@@ -7,10 +7,16 @@
 //!
 //! Адрес сервиса можно заменить переменной `VWF_SIGNAL_URL` (например, на свой
 //! ntfy-сервер или на испытательный стенд).
+//!
+//! Лимиты ntfy.sh на один IP: 250 сообщений в сутки (обнуляются в полночь по
+//! UTC, это 3:00 по Москве), запросы — 60 сразу и дальше один в 5 секунд.
+//! Сообщение — это только `publish`; чтение (`subscribe`, `recent`) лимит
+//! сообщений не тратит. Поэтому всё частое (проверка, открыта ли комната)
+//! сделано чтением, а сообщения остаются для входа в комнату.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail};
 use serde::Deserialize;
@@ -37,7 +43,13 @@ pub enum Mailbox {
         base: String,
     },
     /// Ящик в памяти процесса — для тестов.
-    Memory(Arc<Mutex<HashMap<String, broadcast::Sender<String>>>>),
+    Memory(Arc<Mutex<HashMap<String, MemoryTopic>>>),
+}
+
+/// Тема ящика в памяти: подписчики и недавние сообщения (как кэш ntfy).
+pub struct MemoryTopic {
+    tx: broadcast::Sender<String>,
+    history: Vec<(Instant, String)>,
 }
 
 impl Mailbox {
@@ -77,14 +89,48 @@ impl Mailbox {
                     .send()
                     .await
                     .with_context(|| format!("сервис обмена адресами ({base}) недоступен"))?;
-                if !response.status().is_success() {
-                    bail!("сервис обмена адресами ответил ошибкой {}", response.status());
-                }
-                Ok(())
+                check_status(response.status())
             }
             Mailbox::Memory(topics) => {
-                let _ = memory_topic(topics, topic).send(text.to_string());
+                let mut topics = topics.lock().unwrap();
+                let entry = memory_topic(&mut topics, topic);
+                entry.history.push((Instant::now(), text.to_string()));
+                let _ = entry.tx.send(text.to_string());
                 Ok(())
+            }
+        }
+    }
+
+    /// Сообщения темы за последние `window`, от старых к новым. Ничего не
+    /// публикует, поэтому дневной лимит сообщений ntfy.sh не тратит.
+    pub async fn recent(&self, topic: &str, window: Duration) -> anyhow::Result<Vec<String>> {
+        match self {
+            Mailbox::Ntfy { client, base } => {
+                let response = client
+                    .get(format!("{base}/{topic}/json?poll=1&since={}s", window.as_secs()))
+                    .timeout(Duration::from_secs(10))
+                    .send()
+                    .await
+                    .with_context(|| format!("сервис обмена адресами ({base}) недоступен"))?;
+                check_status(response.status())?;
+                let body =
+                    response.bytes().await.context("сервис обмена адресами оборвал ответ")?;
+                Ok(body
+                    .split(|&b| b == b'\n')
+                    .filter_map(|line| serde_json::from_slice::<NtfyLine>(line).ok())
+                    .filter(|line| line.event == "message")
+                    .map(|line| line.message.unwrap_or_default())
+                    .collect())
+            }
+            Mailbox::Memory(topics) => {
+                let mut topics = topics.lock().unwrap();
+                let entry = memory_topic(&mut topics, topic);
+                Ok(entry
+                    .history
+                    .iter()
+                    .filter(|(at, _)| at.elapsed() <= window)
+                    .map(|(_, text)| text.clone())
+                    .collect())
             }
         }
     }
@@ -99,7 +145,7 @@ impl Mailbox {
                 tokio::spawn(ntfy_subscription(client.clone(), url, tx));
             }
             Mailbox::Memory(topics) => {
-                let mut sub = memory_topic(topics, topic).subscribe();
+                let mut sub = memory_topic(&mut topics.lock().unwrap(), topic).tx.subscribe();
                 let _ = tx.send(MailboxEvent::Open);
                 tokio::spawn(async move {
                     while let Ok(text) = sub.recv().await {
@@ -114,16 +160,28 @@ impl Mailbox {
     }
 }
 
-fn memory_topic(
-    topics: &Mutex<HashMap<String, broadcast::Sender<String>>>,
+fn memory_topic<'a>(
+    topics: &'a mut HashMap<String, MemoryTopic>,
     topic: &str,
-) -> broadcast::Sender<String> {
+) -> &'a mut MemoryTopic {
     topics
-        .lock()
-        .unwrap()
         .entry(topic.to_string())
-        .or_insert_with(|| broadcast::channel(64).0)
-        .clone()
+        .or_insert_with(|| MemoryTopic { tx: broadcast::channel(64).0, history: Vec::new() })
+}
+
+/// Понятная ошибка вместо голого кода ответа.
+fn check_status(status: reqwest::StatusCode) -> anyhow::Result<()> {
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        bail!(
+            "исчерпан дневной лимит бесплатного сервиса обмена адресами (ntfy.sh) для вашего \
+             интернет-адреса; он обнулится в 3:00 по Москве, а пока можно подключаться \
+             в локальной сети или по адресу"
+        );
+    }
+    if !status.is_success() {
+        bail!("сервис обмена адресами ответил ошибкой {status}");
+    }
+    Ok(())
 }
 
 /// Строка потока ntfy: `{"id":"…","event":"message","message":"…"}`.

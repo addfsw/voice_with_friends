@@ -65,12 +65,16 @@ async fn guest_joins_by_invite_code() {
     // Проверка из списка недавних: хост отвечает, а комнаты без хоста нет.
     use vwf_client::net::{Availability, probe_invite};
     let wait = Duration::from_secs(3);
-    assert_eq!(probe_invite(&invite.encode(), &mailbox, wait).await, Availability::Online);
+    for ask in [false, true] {
+        assert_eq!(probe_invite(&invite.encode(), &mailbox, ask, wait).await, Availability::Online);
+    }
     let closed = Invite::new(vwf_nat::new_room_id(), &fingerprint).encode();
-    assert_eq!(
-        probe_invite(&closed, &mailbox, Duration::from_millis(300)).await,
-        Availability::Offline
-    );
+    for ask in [false, true] {
+        assert_eq!(
+            probe_invite(&closed, &mailbox, ask, Duration::from_millis(300)).await,
+            Availability::Offline
+        );
+    }
     assert_eq!(host.status().guests, 0, "проверка — не вход в комнату");
 
     let session = timeout(
@@ -98,4 +102,10 @@ async fn guest_joins_by_invite_code() {
         .err()
         .expect("подмена не замечена");
     assert!(error.downcast_ref::<vwf_client::net::CertificateChanged>().is_some(), "{error:#}");
+
+    // Хост закрыл комнату — гости видят это сразу, не дожидаясь, пока
+    // устареет последний `Alive`.
+    drop(host);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(probe_invite(&invite.encode(), &mailbox, false, wait).await, Availability::Offline);
 }

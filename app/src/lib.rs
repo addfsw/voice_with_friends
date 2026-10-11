@@ -921,12 +921,15 @@ struct RoomCheck {
 }
 
 /// Проверяет недавние комнаты разом, не входя в них (несколько секунд).
+/// `ask` — человек сам нажал на комнату: можно потратить сообщение ntfy.sh,
+/// чтобы спросить хоста напрямую (см. `vwf_client::net::probe`).
 #[tauri::command]
-async fn check_rooms(servers: Vec<String>) -> Vec<RoomCheck> {
+async fn check_rooms(servers: Vec<String>, ask: Option<bool>) -> Vec<RoomCheck> {
+    let ask = ask.unwrap_or(false);
     let mut checks = tokio::task::JoinSet::new();
     for server in servers {
         checks.spawn(async move {
-            let status = match vwf_client::net::probe(server.trim()).await {
+            let status = match vwf_client::net::probe(server.trim(), ask).await {
                 Availability::Online => "online",
                 Availability::Offline => "offline",
                 Availability::Unknown => "unknown",
