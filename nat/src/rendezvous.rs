@@ -31,6 +31,14 @@ const PUNCH_INTERVAL: Duration = Duration::from_millis(200);
 /// Как часто хост обновляет внешний адрес. Заодно запрос к STUN не даёт
 /// роутеру забыть открытый порт, пока никто не разговаривает.
 const HOST_REFRESH: Duration = Duration::from_secs(25);
+/// Как часто открытая комната напоминает о себе в ящике (`Alive`). Гости
+/// узнают, открыта ли комната, читая ящик, — это не тратит их лимит сообщений
+/// ntfy.sh, а хосту стоит не больше 4 сообщений в час.
+const ALIVE_EVERY: Duration = Duration::from_secs(15 * 60);
+/// Сколько гость верит последнему сигналу хоста: интервал `Alive` с запасом.
+pub const ALIVE_WINDOW: Duration = Duration::from_secs(17 * 60);
+/// Несколько гостей спросили «ты тут?» почти одновременно — хватит одного ответа.
+const PONG_MIN_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
@@ -52,6 +60,10 @@ enum Signal {
     Pong {
         reply_to: u64,
     },
+    /// «Комната открыта» — хост повторяет раз в `ALIVE_EVERY`.
+    Alive,
+    /// «Комната закрыта» — хост закрыл её сам.
+    Closed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,13 +142,15 @@ pub struct HostStatus {
 pub struct HostRendezvous {
     status: Arc<Mutex<HostStatus>>,
     task: JoinHandle<()>,
+    mailbox: Mailbox,
+    topic: String,
 }
 
 impl HostRendezvous {
     pub fn start(socket: Arc<NatSocket>, mailbox: Mailbox, topic: String) -> Self {
         let status = Arc::new(Mutex::new(HostStatus::default()));
-        let task = tokio::spawn(host_loop(socket, mailbox, topic, status.clone()));
-        Self { status, task }
+        let task = tokio::spawn(host_loop(socket, mailbox.clone(), topic.clone(), status.clone()));
+        Self { status, task, mailbox, topic }
     }
 
     pub fn status(&self) -> HostStatus {
@@ -147,6 +161,10 @@ impl HostRendezvous {
 impl Drop for HostRendezvous {
     fn drop(&mut self) {
         self.task.abort();
+        // Гости сразу увидят, что комната закрыта, а не через `ALIVE_WINDOW`.
+        if tokio::runtime::Handle::try_current().is_ok() {
+            publish_reply(&self.mailbox, &self.topic, Signal::Closed);
+        }
     }
 }
 
@@ -160,9 +178,25 @@ async fn host_loop(
     let mut public = None;
     let mut sub = mailbox.subscribe(&topic);
     let mut refresh = tokio::time::interval(HOST_REFRESH);
+    // Первый тик сразу: гости видят комнату, как только её открыли.
+    let mut alive = tokio::time::interval(ALIVE_EVERY);
+    // Когда хост последний раз что-то писал в ящик: любое его сообщение
+    // гостям так же говорит «комната открыта», как `Alive`.
+    let mut last_sent: Option<Instant> = None;
+    let mut last_pong: Option<Instant> = None;
+    // На повторы одного `Join` (гость шлёт его раз в 3 секунды, пока не
+    // получит ответ) отвечаем один раз: сообщения хоста тоже на счету.
+    let mut answered: std::collections::VecDeque<u64> = Default::default();
 
     loop {
         tokio::select! {
+            _ = alive.tick() => {
+                // Только что ответили гостю — это тоже «открыта», `Alive` лишний.
+                if last_sent.is_none_or(|at| at.elapsed() >= Duration::from_secs(60)) {
+                    last_sent = Some(Instant::now());
+                    publish_reply(&mailbox, &topic, Signal::Alive);
+                }
+            },
             _ = refresh.tick() => match discover(&socket).await {
                 Ok(info) => {
                     if public != Some(info.public) {
@@ -184,13 +218,25 @@ async fn host_loop(
                 let MailboxEvent::Message(text) = event else { continue };
                 let signal = serde_json::from_str(&text);
                 if let Ok(Signal::Ping { id }) = signal {
-                    publish_reply(&mailbox, &topic, Signal::Pong { reply_to: id });
+                    if last_pong.is_none_or(|at| at.elapsed() >= PONG_MIN_INTERVAL) {
+                        last_pong = Some(Instant::now());
+                        last_sent = last_pong;
+                        publish_reply(&mailbox, &topic, Signal::Pong { reply_to: id });
+                    }
                     continue;
                 }
                 let Ok(Signal::Join { id, public: guest, local: _ }) = signal else {
                     continue;
                 };
                 let Some(me) = public else { continue };
+                if answered.contains(&id) {
+                    continue;
+                }
+                if answered.len() >= 32 {
+                    answered.pop_front();
+                }
+                answered.push_back(id);
+                last_sent = Some(Instant::now());
                 info!("гость стучится с {guest}");
                 status.lock().unwrap().guests += 1;
                 spawn_punch(&socket, guest);
@@ -226,10 +272,23 @@ pub struct FoundHost {
     pub me: NatInfo,
 }
 
+/// Что о комнате говорят последние сообщения хоста в ящике, без единого
+/// своего сообщения. `None` — хост за `ALIVE_WINDOW` ничего не писал: комната
+/// закрыта или у хоста старая версия программы, которая не шлёт `Alive`.
+pub async fn host_seen(mailbox: &Mailbox, topic: &str) -> anyhow::Result<Option<bool>> {
+    let messages = mailbox.recent(topic, ALIVE_WINDOW).await?;
+    Ok(messages.iter().rev().find_map(|text| match serde_json::from_str(text) {
+        Ok(Signal::Alive | Signal::Pong { .. } | Signal::Host { .. }) => Some(true),
+        Ok(Signal::Closed) => Some(false),
+        _ => None,
+    }))
+}
+
 /// Открыта ли комната с этой темой: хост, если он запущен и слушает ящик,
 /// отвечает на `Ping` за секунду-две. `Ok(false)` — за `wait` ответа не было;
 /// ошибка — сам ящик недоступен (например, нет интернета), и тогда про
-/// комнату ничего сказать нельзя.
+/// комнату ничего сказать нельзя. Тратит сообщение из дневного лимита ntfy.sh —
+/// сначала стоит спросить `host_seen`.
 pub async fn ping_host(mailbox: &Mailbox, topic: &str, wait: Duration) -> anyhow::Result<bool> {
     let deadline = Instant::now() + wait;
     let mut sub = mailbox.subscribe(topic);
@@ -249,9 +308,9 @@ pub async fn ping_host(mailbox: &Mailbox, topic: &str, wait: Duration) -> anyhow
     loop {
         match tokio::time::timeout_at(deadline, sub.recv()).await {
             Ok(Some(MailboxEvent::Message(text))) => {
-                if let Ok(Signal::Pong { reply_to }) = serde_json::from_str(&text)
-                    && reply_to == id
-                {
+                // Любой ответ хоста подходит: на почти одновременные «ты тут?»
+                // от нескольких гостей он отвечает один раз.
+                if let Ok(Signal::Pong { .. } | Signal::Alive) = serde_json::from_str(&text) {
                     return Ok(true);
                 }
             }
