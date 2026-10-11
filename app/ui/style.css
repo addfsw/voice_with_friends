@@ -1085,18 +1085,6 @@ button.big {
   display: none;
 }
 
-.room-state {
-  font-weight: 600;
-}
-
-.room-state.online {
-  color: var(--speaking);
-}
-
-.room-state.offline {
-  color: var(--danger);
-}
-
 .join-ico.lan {
   color: var(--speaking);
   background: color-mix(in srgb, var(--speaking) 16%, transparent);

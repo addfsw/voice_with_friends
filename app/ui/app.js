@@ -526,6 +526,8 @@ function joinCard(target, busy) {
   const status = target.kind === "recent" ? shownStatus(target.server) : null;
   if (status) {
     ico.classList.add(status);
+    // Статус — только цветом точки, словами — во всплывающей подсказке.
+    ico.title = ROOM_STATE[status];
     const dot = document.createElement("span");
     dot.className = "join-dot";
     ico.append(dot);
@@ -542,13 +544,6 @@ function joinCard(target, busy) {
     meta.classList.add("error");
   } else {
     if (target.password) meta.append(icon("lock"));
-    const state = ROOM_STATE[status];
-    if (state) {
-      const label = document.createElement("span");
-      label.className = `room-state ${status}`;
-      label.textContent = state;
-      meta.append(label, " · ");
-    }
     meta.append(target.meta);
   }
   text.append(name, meta);
