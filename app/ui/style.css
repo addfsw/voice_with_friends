@@ -1008,6 +1008,59 @@ button.big {
   gap: 8px;
 }
 
+/* Заголовок «Сохранённые»: сворачивает недавние комнаты. */
+.recent-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  background: none;
+  border: none;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.recent-toggle:not(:disabled):hover {
+  background: none;
+  color: var(--text);
+}
+
+.recent-toggle .icon {
+  width: 16px;
+  height: 16px;
+  transition: transform 120ms;
+}
+
+.recent-toggle.collapsed .icon {
+  transform: rotate(-90deg);
+}
+
+.recent-dots {
+  display: flex;
+  gap: 4px;
+  margin-left: 4px;
+}
+
+.recent-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+
+.recent-dot.online {
+  background: var(--speaking);
+}
+
+.recent-dot.offline {
+  background: var(--danger);
+}
+
+.recent-dot.checking {
+  animation: join-dot-pulse 1.2s ease-in-out infinite;
+}
+
 /* Карточка комнаты: нажатие — сразу вход. Длинное название — в две строки. */
 .lan-item {
   width: 100%;
@@ -1083,18 +1136,6 @@ button.big {
 
 .join-ico.unknown .join-dot {
   display: none;
-}
-
-.room-state {
-  font-weight: 600;
-}
-
-.room-state.online {
-  color: var(--speaking);
-}
-
-.room-state.offline {
-  color: var(--danger);
 }
 
 .join-ico.lan {

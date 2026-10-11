@@ -475,7 +475,15 @@ function renderJoin() {
   list.innerHTML = "";
   const targets = joinTargets();
   const busy = Boolean(join.busy) || roomsBusy;
-  for (const target of targets) list.append(joinCard(target, busy));
+  const recent = targets.filter((t) => t.kind === "recent");
+  // Свёрнутый список раскрываем, пока в одну из комнат входят или вводят пароль.
+  const active = recent.some((t) => t.key === join.busy || t.key === join.prompt);
+  const collapsed = store.get("recentCollapsed", false) && !active;
+  if (recent.length) list.append(recentToggle(recent, collapsed, active));
+  for (const target of targets) {
+    if (collapsed && target.kind === "recent") continue;
+    list.append(joinCard(target, busy));
+  }
 
   const status = $("lan-status");
   status.hidden = join.lan.length > 0;
@@ -496,6 +504,41 @@ function renderJoin() {
 
   const input = list.querySelector(".join-pass input");
   if (input && document.activeElement !== input) input.focus();
+}
+
+// Заголовок «Сохранённые»: сворачивает недавние комнаты. В свёрнутом виде
+// статусы комнат видны точками прямо в заголовке.
+function recentToggle(recent, collapsed, active) {
+  const li = document.createElement("li");
+  li.className = "recent-head";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "recent-toggle";
+  btn.classList.toggle("collapsed", collapsed);
+  btn.disabled = active;
+  btn.setAttribute("aria-expanded", String(!collapsed));
+  const label = document.createElement("span");
+  label.textContent = `Сохранённые · ${recent.length}`;
+  btn.append(icon("chevron"), label);
+  if (collapsed) {
+    const dots = document.createElement("span");
+    dots.className = "recent-dots";
+    for (const t of recent) {
+      const status = shownStatus(t.server);
+      if (!status) continue;
+      const dot = document.createElement("span");
+      dot.className = `recent-dot ${status}`;
+      dot.title = `${t.title}: ${ROOM_STATE[status].toLowerCase()}`;
+      dots.append(dot);
+    }
+    btn.append(dots);
+  }
+  btn.addEventListener("click", () => {
+    store.set("recentCollapsed", !collapsed);
+    renderJoin();
+  });
+  li.append(btn);
+  return li;
 }
 
 const ROOM_STATE = { online: "Запущена", offline: "Не запущена", checking: "Проверяю…" };
@@ -526,6 +569,8 @@ function joinCard(target, busy) {
   const status = target.kind === "recent" ? shownStatus(target.server) : null;
   if (status) {
     ico.classList.add(status);
+    // Статус — только цветом точки, словами — во всплывающей подсказке.
+    ico.title = ROOM_STATE[status];
     const dot = document.createElement("span");
     dot.className = "join-dot";
     ico.append(dot);
@@ -542,13 +587,6 @@ function joinCard(target, busy) {
     meta.classList.add("error");
   } else {
     if (target.password) meta.append(icon("lock"));
-    const state = ROOM_STATE[status];
-    if (state) {
-      const label = document.createElement("span");
-      label.className = `room-state ${status}`;
-      label.textContent = state;
-      meta.append(label, " · ");
-    }
     meta.append(target.meta);
   }
   text.append(name, meta);
