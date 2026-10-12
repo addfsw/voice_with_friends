@@ -48,6 +48,8 @@ pub struct InternetStatus {
     pub invite: String,
     /// Внешний адрес, если уже известен.
     pub public: Option<String>,
+    /// Порт, проброшенный на роутере по UPnP.
+    pub mapped: Option<String>,
     pub symmetric: bool,
     pub error: Option<String>,
     pub guests: u32,
@@ -181,6 +183,7 @@ impl HostedServer {
             let host = rendezvous.status();
             status.enabled = true;
             status.public = host.public.map(|a| a.to_string());
+            status.mapped = host.mapped.map(|a| a.to_string());
             status.symmetric = host.symmetric;
             status.error = host.error;
             status.guests = host.guests;

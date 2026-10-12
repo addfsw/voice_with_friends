@@ -3,7 +3,8 @@
 //! Пробивка NAT работает, только если всё идёт через **один и тот же** UDP-порт:
 //! внешний адрес, который сообщил STUN, — это отображение именно этого порта
 //! на роутере. Поэтому сокет у quinn и у STUN общий. Обёртка пропускает все
-//! пакеты в quinn, кроме ответов STUN на наши же запросы: их забирает себе.
+//! пакеты в quinn, кроме ответов STUN на наши же запросы и «пробивных»
+//! пакетов: их забирает себе.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -17,14 +18,19 @@ use std::time::Duration;
 use anyhow::Context as _;
 use quinn::udp::{RecvMeta, Transmit};
 use quinn::{AsyncUdpSocket, Runtime, TokioRuntime, UdpPoller};
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 
 use crate::stun::{self, TransactionId};
+
+/// Пакет-«пробойник»: не QUIC и не STUN, quinn его не увидит.
+pub(crate) const PUNCH: &[u8] = b"\0poigrulkiny-punch";
 
 pub struct NatSocket {
     inner: Arc<dyn AsyncUdpSocket>,
     /// Ждущие ответа STUN-запросы.
     pending: Mutex<HashMap<TransactionId, oneshot::Sender<SocketAddr>>>,
+    /// Кому сообщать, с каких адресов пришли «пробойники».
+    punches: Mutex<Option<mpsc::UnboundedSender<SocketAddr>>>,
 }
 
 impl fmt::Debug for NatSocket {
@@ -38,7 +44,7 @@ impl NatSocket {
     pub fn bind(addr: SocketAddr) -> io::Result<Arc<Self>> {
         let socket = std::net::UdpSocket::bind(addr)?;
         let inner = TokioRuntime.wrap_udp_socket(socket)?;
-        Ok(Arc::new(Self { inner, pending: Mutex::new(HashMap::new()) }))
+        Ok(Arc::new(Self { inner, pending: Mutex::new(HashMap::new()), punches: Mutex::new(None) }))
     }
 
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
@@ -97,6 +103,27 @@ impl NatSocket {
         result.with_context(|| format!("STUN-сервер {server} не ответил"))
     }
 
+    /// Адреса, с которых к нам стучатся «пробойники». Хост шлёт их с того адреса,
+    /// по которому его на самом деле видно, — он может отличаться от того, что
+    /// хост узнал у STUN (например, если STUN у него ходит через VPN, а к нам —
+    /// напрямую). Подписчик один: новый вызов заменяет прежнего.
+    pub fn watch_punches(&self) -> mpsc::UnboundedReceiver<SocketAddr> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        *self.punches.lock().unwrap() = Some(tx);
+        rx
+    }
+
+    /// «Пробойник» забираем и сообщаем, откуда он; true — quinn его не увидит.
+    fn take_punch(&self, data: &[u8], from: SocketAddr) -> bool {
+        if data != PUNCH {
+            return false;
+        }
+        if let Some(tx) = self.punches.lock().unwrap().as_ref() {
+            let _ = tx.send(from);
+        }
+        true
+    }
+
     /// Ответы на наши STUN-запросы забираем; true — пакет «наш», quinn его не увидит.
     fn take_stun(&self, data: &[u8]) -> bool {
         let Some((id, addr)) = stun::parse_binding_response(data) else { return false };
@@ -130,7 +157,9 @@ impl AsyncUdpSocket for NatSocket {
         for (buf, meta) in bufs.iter().zip(meta.iter_mut()).take(count) {
             let stride = meta.stride.max(1);
             let first = &buf[..meta.len.min(stride)];
-            if self.take_stun(first) {
+            if self.take_punch(first, meta.addr) {
+                meta.len = 0;
+            } else if self.take_stun(first) {
                 // Остальные сегменты из той же пачки — тоже ответы STUN.
                 for segment in buf[..meta.len].chunks(stride).skip(1) {
                     self.take_stun(segment);

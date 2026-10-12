@@ -1,11 +1,12 @@
 //! Пробивка NAT для подключения через интернет без Tailscale и белого IP.
-//! Подробности — в `rendezvous`.
+//! Подробности — в `rendezvous`, открытие порта на роутере — в `upnp`.
 
 pub mod invite;
 pub mod mailbox;
 pub mod rendezvous;
 pub mod socket;
 pub mod stun;
+pub mod upnp;
 
 /// Случайные байты из того же источника, что у `HashMap` в std
 /// (ключи от ОС), смешанного со временем.

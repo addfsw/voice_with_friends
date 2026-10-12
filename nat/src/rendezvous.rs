@@ -9,6 +9,10 @@
 //! Не сработает, если роутер «симметричный» (для каждого собеседника выдаёт
 //! новый внешний порт) — такое бывает у мобильных операторов и части провайдеров.
 //! Тогда нужен посредник: Tailscale или сервер на VPS.
+//!
+//! В помощь пробивке каждый заодно просит свой роутер пробросить порт по UPnP
+//! (см. `upnp`) и сообщает и этот адрес. А гость пробует подключиться и к тому
+//! адресу, откуда к нему на самом деле пришли «пробойники» хоста.
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
@@ -21,11 +25,10 @@ use tokio::time::Instant;
 use tracing::{debug, info, warn};
 
 use crate::mailbox::{Mailbox, MailboxEvent};
-use crate::socket::NatSocket;
+use crate::socket::{NatSocket, PUNCH};
 use crate::stun;
+use crate::upnp::PortMapping;
 
-/// Пакет-«пробойник»: не QUIC и не STUN, получатель его просто выбросит.
-const PUNCH: &[u8] = b"\0poigrulkiny-punch";
 const PUNCH_COUNT: u32 = 20;
 const PUNCH_INTERVAL: Duration = Duration::from_millis(200);
 /// Как часто хост обновляет внешний адрес. Заодно запрос к STUN не даёт
@@ -39,6 +42,12 @@ const ALIVE_EVERY: Duration = Duration::from_secs(15 * 60);
 pub const ALIVE_WINDOW: Duration = Duration::from_secs(17 * 60);
 /// Несколько гостей спросили «ты тут?» почти одновременно — хватит одного ответа.
 const PONG_MIN_INTERVAL: Duration = Duration::from_secs(5);
+/// Срок проброса порта у хоста. Продлеваем вдвое чаще, а если роутер не ответил,
+/// пробуем снова через `UPNP_RETRY`.
+const HOST_UPNP_LEASE: Duration = Duration::from_secs(40 * 60);
+const UPNP_RETRY: Duration = Duration::from_secs(5 * 60);
+/// Гостю проброс нужен только на время входа: дальше соединение уже идёт.
+const GUEST_UPNP_LEASE: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
@@ -47,11 +56,17 @@ enum Signal {
         id: u64,
         public: SocketAddr,
         local: Vec<SocketAddr>,
+        /// Порт, проброшенный на роутере по UPnP. Старые версии поля не знают
+        /// и не присылают.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mapped: Option<SocketAddr>,
     },
     Host {
         reply_to: u64,
         public: SocketAddr,
         local: Vec<SocketAddr>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mapped: Option<SocketAddr>,
     },
     /// «Комната открыта?» — проверка из списка недавних, без пробивки NAT.
     Ping {
@@ -131,6 +146,8 @@ fn spawn_punch(socket: &Arc<NatSocket>, to: SocketAddr) {
 #[derive(Debug, Clone, Default)]
 pub struct HostStatus {
     pub public: Option<SocketAddr>,
+    /// Порт, проброшенный на роутере по UPnP.
+    pub mapped: Option<SocketAddr>,
     pub symmetric: bool,
     /// Последняя ошибка (нет интернета, ящик недоступен…).
     pub error: Option<String>,
@@ -142,6 +159,7 @@ pub struct HostStatus {
 pub struct HostRendezvous {
     status: Arc<Mutex<HostStatus>>,
     task: JoinHandle<()>,
+    upnp: JoinHandle<()>,
     mailbox: Mailbox,
     topic: String,
 }
@@ -149,8 +167,10 @@ pub struct HostRendezvous {
 impl HostRendezvous {
     pub fn start(socket: Arc<NatSocket>, mailbox: Mailbox, topic: String) -> Self {
         let status = Arc::new(Mutex::new(HostStatus::default()));
+        let port = socket.local_addr().map(|a| a.port()).unwrap_or_default();
+        let upnp = tokio::spawn(host_upnp_loop(port, status.clone()));
         let task = tokio::spawn(host_loop(socket, mailbox.clone(), topic.clone(), status.clone()));
-        Self { status, task, mailbox, topic }
+        Self { status, task, upnp, mailbox, topic }
     }
 
     pub fn status(&self) -> HostStatus {
@@ -161,9 +181,39 @@ impl HostRendezvous {
 impl Drop for HostRendezvous {
     fn drop(&mut self) {
         self.task.abort();
+        self.upnp.abort();
         // Гости сразу увидят, что комната закрыта, а не через `ALIVE_WINDOW`.
         if tokio::runtime::Handle::try_current().is_ok() {
             publish_reply(&self.mailbox, &self.topic, Signal::Closed);
+        }
+    }
+}
+
+/// Держит проброшенный порт хоста, пока комната открыта для интернета.
+async fn host_upnp_loop(port: u16, status: Arc<Mutex<HostStatus>>) {
+    let mut mapping: Option<PortMapping> = None;
+    loop {
+        if let Some(m) = &mapping {
+            if let Err(e) = m.renew(HOST_UPNP_LEASE).await {
+                warn!("не удалось продлить проброс порта: {e:#}");
+                mapping = None;
+                status.lock().unwrap().mapped = None;
+                continue;
+            }
+            tokio::time::sleep(HOST_UPNP_LEASE / 2).await;
+            continue;
+        }
+        match PortMapping::open(port, HOST_UPNP_LEASE).await {
+            Ok(m) => {
+                info!("роутер пробросил порт: {}", m.public);
+                status.lock().unwrap().mapped = Some(m.public);
+                mapping = Some(m);
+                tokio::time::sleep(HOST_UPNP_LEASE / 2).await;
+            }
+            Err(e) => {
+                debug!("UPnP: {e:#}");
+                tokio::time::sleep(UPNP_RETRY).await;
+            }
         }
     }
 }
@@ -225,7 +275,8 @@ async fn host_loop(
                     }
                     continue;
                 }
-                let Ok(Signal::Join { id, public: guest, local: _ }) = signal else {
+                let Ok(Signal::Join { id, public: guest, local: _, mapped: guest_mapped }) = signal
+                else {
                     continue;
                 };
                 let Some(me) = public else { continue };
@@ -237,10 +288,20 @@ async fn host_loop(
                 }
                 answered.push_back(id);
                 last_sent = Some(Instant::now());
-                info!("гость стучится с {guest}");
-                status.lock().unwrap().guests += 1;
+                info!("гость стучится с {guest} (проброшенный порт: {guest_mapped:?})");
+                let mapped = {
+                    let mut s = status.lock().unwrap();
+                    s.guests += 1;
+                    s.mapped
+                };
                 spawn_punch(&socket, guest);
-                let reply = Signal::Host { reply_to: id, public: me, local: local_addrs(port) };
+                // Если STUN у гостя ходит через VPN, а к нам — напрямую, то
+                // настоящий адрес гостя — проброшенный порт на его роутере.
+                if let Some(guest_mapped) = guest_mapped.filter(|&a| a != guest) {
+                    spawn_punch(&socket, guest_mapped);
+                }
+                let reply =
+                    Signal::Host { reply_to: id, public: me, local: local_addrs(port), mapped };
                 publish_reply(&mailbox, &topic, reply);
             }
         }
@@ -270,6 +331,8 @@ pub struct FoundHost {
     pub candidates: Vec<SocketAddr>,
     /// Наш собственный NAT.
     pub me: NatInfo,
+    /// Наш порт, проброшенный на роутере (если роутер умеет UPnP).
+    pub mapped: Option<SocketAddr>,
 }
 
 /// Что о комнате говорят последние сообщения хоста в ящике, без единого
@@ -327,7 +390,25 @@ pub async fn find_host(
     topic: &str,
     wait: Duration,
 ) -> anyhow::Result<FoundHost> {
-    let me = discover(socket).await?;
+    let port = socket.local_addr()?.port();
+    // Роутер спрашиваем одновременно со STUN-серверами, чтобы не ждать дольше.
+    let (me, mapping) = tokio::join!(discover(socket), PortMapping::open(port, GUEST_UPNP_LEASE));
+    let me = me?;
+    let mapped = match mapping {
+        Ok(m) => {
+            if m.public.ip() != me.public.ip() {
+                info!(
+                    "роутер видит нас как {}, а STUN — как {}: часть трафика идёт через VPN",
+                    m.public, me.public
+                );
+            }
+            Some(m.public)
+        }
+        Err(e) => {
+            debug!("UPnP: {e:#}");
+            None
+        }
+    };
     if me.symmetric {
         warn!("у вас «симметричный» NAT: пробивка может не получиться");
     }
@@ -344,10 +425,13 @@ pub async fn find_host(
     }
 
     let id = u64::from_le_bytes(crate::random_bytes());
-    let port = socket.local_addr()?.port();
-    let join =
-        serde_json::to_string(&Signal::Join { id, public: me.public, local: local_addrs(port) })
-            .expect("сериализация не падает");
+    let join = serde_json::to_string(&Signal::Join {
+        id,
+        public: me.public,
+        local: local_addrs(port),
+        mapped,
+    })
+    .expect("сериализация не падает");
     let mut resend = tokio::time::interval(Duration::from_secs(3));
 
     let host = loop {
@@ -358,10 +442,11 @@ pub async fn find_host(
             }
             event = tokio::time::timeout_at(deadline, sub.recv()) => match event {
                 Ok(Some(MailboxEvent::Message(text))) => {
-                    if let Ok(Signal::Host { reply_to, public, local }) = serde_json::from_str(&text)
+                    if let Ok(Signal::Host { reply_to, public, local, mapped }) =
+                        serde_json::from_str(&text)
                         && reply_to == id
                     {
-                        break (public, local);
+                        break (public, local, mapped);
                     }
                 }
                 Ok(Some(MailboxEvent::Open)) => {}
@@ -373,7 +458,7 @@ pub async fn find_host(
         }
     };
 
-    let (public, local) = host;
+    let (public, local, host_mapped) = host;
     spawn_punch(socket, public);
     // Хост за тем же роутером (один внешний IP) — сначала пробуем его
     // локальные адреса: многие роутеры не умеют «развернуть» пакет внутрь.
@@ -383,9 +468,12 @@ pub async fn find_host(
         candidates.extend(local.iter().copied());
         candidates.push(public);
     } else {
+        // Проброшенный порт хоста работает и там, где пробивка не выходит.
+        candidates.extend(host_mapped);
         candidates.push(public);
         candidates.extend(local.iter().copied());
     }
-    candidates.dedup();
-    Ok(FoundHost { candidates, me })
+    let mut seen = std::collections::HashSet::new();
+    candidates.retain(|a| seen.insert(*a));
+    Ok(FoundHost { candidates, me, mapped })
 }

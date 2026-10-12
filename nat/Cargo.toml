@@ -10,6 +10,7 @@ license.workspace = true
 anyhow.workspace = true
 base64.workspace = true
 if-addrs.workspace = true
+igd-next.workspace = true
 quinn.workspace = true
 reqwest.workspace = true
 rustls.workspace = true

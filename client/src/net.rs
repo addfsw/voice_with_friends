@@ -325,12 +325,18 @@ async fn connect_invite_as(
     let invite = vwf_nat::invite::Invite::decode(code)?;
     let socket = vwf_nat::socket::NatSocket::bind("0.0.0.0:0".parse().unwrap())?;
     let endpoint = socket.endpoint(None)?;
+    // Подписываемся до встречи: «пробойники» хоста начнут приходить сразу.
+    let mut punches = socket.watch_punches();
     let found =
         vwf_nat::rendezvous::find_host(&socket, mailbox, &invite.topic(), FIND_HOST_WAIT).await?;
 
     let config = client_config()?;
     let mut attempts = tokio::task::JoinSet::new();
-    for addr in found.candidates.iter().copied() {
+    let mut tried = std::collections::HashSet::new();
+    let mut attempt = |attempts: &mut tokio::task::JoinSet<_>, addr: SocketAddr| {
+        if !tried.insert(addr) {
+            return;
+        }
         let endpoint = endpoint.clone();
         let config = config.clone();
         attempts.spawn(async move {
@@ -343,10 +349,22 @@ async fn connect_invite_as(
             };
             (addr, attempt.await)
         });
+    };
+    for addr in found.candidates.iter().copied() {
+        attempt(&mut attempts, addr);
     }
     let mut failures = Vec::new();
     let (conn, addr) = loop {
-        match attempts.join_next().await {
+        let joined = tokio::select! {
+            joined = attempts.join_next() => joined,
+            // Хост стучится не с того адреса, что назвал (например, STUN у него
+            // ходит через VPN, а к нам — напрямую). Пробуем и этот адрес.
+            Some(from) = punches.recv() => {
+                attempt(&mut attempts, from);
+                continue;
+            }
+        };
+        match joined {
             Some(Ok((addr, Ok(conn)))) => break (conn, addr),
             Some(Ok((addr, Err(e)))) => failures.push(format!("{addr}: {e:#}")),
             Some(Err(_)) => {}
@@ -357,7 +375,9 @@ async fn connect_invite_as(
             ),
             None => bail!(
                 "не удалось пробить NAT до хоста ({}). Похоже, роутер хоста или ваш \
-                 такого не позволяет — остаётся Tailscale или сервер на VPS",
+                 такого не позволяет. Если у вас или у хоста включён VPN (на компьютере, \
+                 телефоне или роутере), исключите из него Поигрулькины. Иначе остаётся \
+                 Tailscale или сервер на VPS",
                 failures.join("; ")
             ),
         }

@@ -20,6 +20,8 @@ bytes = "1"
 clap = { version = "4", features = ["derive"] }
 cpal = "0.18"
 if-addrs = "0.15"
+# Открытие порта на домашнем роутере (UPnP IGD).
+igd-next = { version = "0.18", default-features = false, features = ["aio_tokio"] }
 nnnoiseless = { version = "0.5", default-features = false }
 nnoiseless = { version = "0.5", default-features = false }
 opus = "0.4"
