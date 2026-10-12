@@ -2533,14 +2533,15 @@ function renderInternet(status) {
     state.classList.add("warning-text");
   } else if (!status.public) {
     state.textContent = "Определяю внешний адрес…";
-  } else if (status.symmetric) {
+  } else if (status.symmetric && !status.mapped) {
     state.textContent =
       `Внешний адрес ${status.public}, но ваш роутер выдаёт разным собеседникам разные порты ` +
       "(«симметричный» NAT). Друзья, скорее всего, не подключатся — нужен Tailscale.";
     state.classList.add("warning-text");
   } else {
     const guests = status.guests ? ` · подключений по коду: ${status.guests}` : "";
-    state.textContent = `Готово. Внешний адрес ${status.public}${guests}`;
+    const mapped = status.mapped ? ` · роутер открыл порт ${status.mapped}` : "";
+    state.textContent = `Готово. Внешний адрес ${status.public}${mapped}${guests}`;
   }
 }
 
