@@ -1,16 +1,23 @@
-// Показ чужого экрана (см. src/screen.rs). Общий для окна просмотра на
-// компьютере (viewer.js) и слоя просмотра на телефоне (app.js).
+// Показ чужого экрана (см. src/screen.rs) и камеры (src/camera.rs). Общий
+// для окна просмотра на компьютере (viewer.js), слоя просмотра на телефоне
+// и плиток участников с камерой (app.js).
 //
 // Основной путь: кадры H.264 приходят в канал как есть и декодируются
 // видеокартой (WebCodecs) прямо на холст. Если декодера нет или он не
-// справился — запасной путь: кадры декодирует Rust в JPEG, о новом кадре
-// приходит событие screen-frame, а картинка загружается по адресу screen://.
+// справился — запасной путь (только для экрана): кадры декодирует Rust в
+// JPEG, о новом кадре приходит событие screen-frame, а картинка загружается
+// по адресу screen://. Камере запасной путь не нужен: WebCodecs есть и в
+// WebView2, и в WebView Android; без него плитка просто покажет аватарку.
+//
+// camera: { layer } — показывать камеру участника в слое layer (0 — для
+// маленькой плитки); слой меняется методом setLayer без перезапуска.
 
-function createScreenView({ peer, canvas, img, onFrame }) {
+function createScreenView({ peer, canvas, img, onFrame, onFail, camera = null }) {
   const { listen } = window.__TAURI__.event;
   const { invoke, convertFileSrc, Channel } = window.__TAURI__.core;
 
-  const VIDEO_HEADER = 9; // [номер кадра u32][опорный u8][ширина u16][высота u16]
+  // [номер кадра u32][опорный u8][ширина u16][высота u16][вид u8][слой u8]
+  const VIDEO_HEADER = 11;
   const ctx = canvas.getContext("2d");
   const timers = [];
   let stopped = false;
@@ -63,7 +70,7 @@ function createScreenView({ peer, canvas, img, onFrame }) {
     const now = performance.now();
     if (now - lastAsk > 500) {
       lastAsk = now;
-      invoke("request_keyframe", { id: peer }).catch(() => {});
+      invoke(camera ? "request_camera_keyframe" : "request_keyframe", { id: peer }).catch(() => {});
     }
   }
 
@@ -171,20 +178,30 @@ function createScreenView({ peer, canvas, img, onFrame }) {
     loading = false;
   }
 
-  img.addEventListener("load", onLoad);
-  img.addEventListener("error", onError);
+  img?.addEventListener("load", onLoad);
+  img?.addEventListener("error", onError);
 
-  listen("screen-frame", ({ payload }) => {
-    if (!jpeg || stopped || payload.id !== peer) return;
-    if (loading) pending = payload;
-    else load(payload);
-  }).then((stop) => {
-    if (stopped) stop();
-    else unlisten = stop;
-  });
+  if (!camera) {
+    listen("screen-frame", ({ payload }) => {
+      if (!jpeg || stopped || payload.id !== peer) return;
+      if (loading) pending = payload;
+      else load(payload);
+    }).then((stop) => {
+      if (stopped) stop();
+      else unlisten = stop;
+    });
+  }
 
   async function useJpeg(reason) {
     if (jpeg || stopped) return;
+    if (camera) {
+      // Камеру через JPEG не показываем: плитка вернётся к аватарке.
+      console.warn(`камера ${peer} не показывается: ${reason ?? "нет WebCodecs"}`);
+      direct = false;
+      canvas.hidden = true;
+      onFail?.();
+      return;
+    }
     if (reason) console.warn(`переключаюсь на JPEG: ${reason}`);
     direct = false;
     jpeg = true;
@@ -200,30 +217,47 @@ function createScreenView({ peer, canvas, img, onFrame }) {
       direct = true;
       const channel = new Channel();
       channel.onmessage = onPacket;
-      await invoke("subscribe_screen", { id: peer, direct: true, channel });
+      if (camera) {
+        await invoke("subscribe_camera", { id: peer, layer: camera.layer, channel });
+      } else {
+        await invoke("subscribe_screen", { id: peer, direct: true, channel });
+      }
     } else {
       await useJpeg();
     }
   }
 
-  start();
+  start().catch((e) => {
+    console.warn("просмотр не начался:", e);
+    onFail?.();
+  });
 
   return {
-    // Перестать показывать (кадры перестанут приходить, когда Rust
-    // забудет подписку: `stop_watching`).
+    // Камера: другой слой (плитка стала больше или меньше). Сервер
+    // переключит на опорном кадре нового слоя — картинка не пропадёт.
+    setLayer(layer) {
+      if (!camera || stopped || layer === camera.layer) return;
+      camera.layer = layer;
+      invoke("set_camera_layer", { id: peer, layer }).catch(() => {});
+    },
+    // Перестать показывать. Экран: кадры перестанут приходить, когда Rust
+    // забудет подписку (`stop_watching`); камера отписывается сама.
     stop() {
+      if (camera && !stopped) invoke("unsubscribe_camera", { id: peer }).catch(() => {});
       stopped = true;
       direct = false;
       jpeg = false;
       for (const timer of timers) clearInterval(timer);
       unlisten?.();
-      img.removeEventListener("load", onLoad);
-      img.removeEventListener("error", onError);
+      img?.removeEventListener("load", onLoad);
+      img?.removeEventListener("error", onError);
       if (decoder && decoder.state !== "closed") decoder.close();
       decoder = null;
       canvas.hidden = true;
-      img.hidden = true;
-      img.removeAttribute("src");
+      if (img) {
+        img.hidden = true;
+        img.removeAttribute("src");
+      }
     },
   };
 }

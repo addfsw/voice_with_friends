@@ -6,7 +6,7 @@
 //! который показывает окно просмотра.
 
 pub mod capture;
-mod codec;
+pub(crate) mod codec;
 pub mod share;
 pub mod view;
 

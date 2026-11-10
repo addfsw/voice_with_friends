@@ -10,6 +10,7 @@
 
 #[cfg(target_os = "android")]
 mod android;
+mod camera;
 mod host;
 mod rooms;
 mod screen;
@@ -199,6 +200,8 @@ struct Peer {
     sharing: bool,
     /// Платформа и версия программы, например `android 0.1.42`.
     app: String,
+    /// Включил камеру.
+    camera: bool,
 }
 
 impl From<PeerInfo> for Peer {
@@ -212,6 +215,7 @@ impl From<PeerInfo> for Peer {
             server_muted: p.server_muted,
             sharing: p.sharing,
             app: p.app,
+            camera: p.camera,
         }
     }
 }
@@ -267,6 +271,12 @@ struct CallEnded {
 #[derive(Serialize, Clone)]
 struct ShareViewers {
     count: u32,
+}
+
+/// Сколько зрителей у каждого слоя нашей камеры.
+#[derive(Serialize, Clone)]
+struct CameraViewers {
+    layers: [u32; vwf_proto::CAMERA_LAYERS],
 }
 
 #[derive(Serialize, Clone)]
@@ -409,6 +419,7 @@ async fn start_call(
                 CallEvent::PeerJoined(p) => events.emit("peer-joined", Peer::from(p)),
                 CallEvent::PeerLeft(id) => {
                     screen::close_viewer(&events, id);
+                    camera::forget(&events, Some(id));
                     events.emit("peer-left", PeerLeft { id })
                 }
                 CallEvent::PeerUpdated(p) => {
@@ -416,6 +427,16 @@ async fn start_call(
                         screen::close_viewer(&events, p.id);
                     }
                     events.emit("peer-updated", Peer::from(p))
+                }
+                CallEvent::CameraPacket { from, header, data } => {
+                    camera::on_packet(&events, from, header, data);
+                    Ok(())
+                }
+                CallEvent::CameraViewers(layers) => {
+                    events.emit("camera-viewers", CameraViewers { layers })
+                }
+                CallEvent::CameraStopped(reason) => {
+                    events.emit("camera-stopped", ShareStopped { reason })
                 }
                 CallEvent::Chat(m) => events.emit("chat-message", ChatMessage::from(m)),
                 CallEvent::ScreenPacket { from, header, data } => {
@@ -432,11 +453,13 @@ async fn start_call(
                 }
                 CallEvent::Ended { reason, lost: true } => {
                     screen::close_all_viewers(&events);
+                    camera::forget(&events, None);
                     spawn_reconnect(events.clone(), generation, reason);
                     Ok(())
                 }
                 CallEvent::Ended { reason, lost: false } => {
                     screen::close_all_viewers(&events);
+                    camera::forget(&events, None);
                     events.emit("call-ended", CallEnded { reason })
                 }
             };
@@ -450,6 +473,7 @@ async fn start_call(
         call.set_avatar(avatar);
     }
     screen::set_requester(app, call.keyframe_requester());
+    camera::set_requester(app, call.keyframe_requester());
 
     // Сервер ещё не получил наш статус, поэтому mute/deafen берём свои.
     let me = Peer {
@@ -1149,6 +1173,7 @@ pub fn run() {
         })
         .manage(screen::Screens::default())
         .manage(update::Updates::default())
+        .manage(camera::Cameras::default())
         .setup(|app| {
             // Файл с запомненными сертификатами — в папке данных программы.
             #[cfg(target_os = "android")]
@@ -1217,6 +1242,13 @@ pub fn run() {
             screen::stop_watching,
             update::check_update,
             update::install_update,
+            camera::camera_sources,
+            camera::start_camera,
+            camera::stop_camera,
+            camera::subscribe_camera,
+            camera::set_camera_layer,
+            camera::unsubscribe_camera,
+            camera::request_camera_keyframe,
             discover_servers,
             check_rooms,
             set_mode,

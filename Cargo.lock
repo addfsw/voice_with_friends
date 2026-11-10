@@ -6208,6 +6208,7 @@ dependencies = [
  "vwf-nat",
  "vwf-proto",
  "vwf-server",
+ "windows 0.62.2",
  "x11rb",
  "xcap",
 ]

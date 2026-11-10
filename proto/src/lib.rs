@@ -10,6 +10,9 @@
 //! - **демонстрация экрана** — каждый кадр (H.264) идёт отдельным
 //!   однонаправленным QUIC-потоком: кадр большой и должен дойти целиком, но
 //!   опоздавший кадр не задерживает следующие (см. [`VideoHeader`]).
+//! - **камера** — так же, кадрами в отдельных потоках, но сразу в нескольких
+//!   качествах ([`CAMERA_LAYERS`] слоёв): сервер каждому зрителю пересылает
+//!   один слой — какой нужен его плитке и тянет его сеть.
 
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -22,7 +25,16 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 /// 6 — аватарки.
 /// 7 — пароль комнаты (`ClientMsg::Auth` сразу после `Hello`), лимит участников.
 /// 8 — версия программы участника (`Auth::app`, `PeerInfo::app`).
-pub const PROTOCOL_VERSION: u32 = 8;
+/// 9 — камера: `PeerInfo::camera`, слои, вид потока в [`VideoHeader`].
+pub const PROTOCOL_VERSION: u32 = 9;
+
+/// Сколько качеств (слоёв) у видео с камеры: 0 — маленькое для плиток,
+/// 1 — среднее, 2 — на весь экран.
+pub const CAMERA_LAYERS: usize = 3;
+
+/// Сколько однонаправленных потоков (видеокадров) одновременно разрешают
+/// друг другу клиент и сервер.
+pub const MAX_UNI_STREAMS: u32 = 512;
 
 /// Максимальная длина строки с версией программы ([`PeerInfo::app`]).
 pub const MAX_APP_CHARS: usize = 40;
@@ -95,6 +107,8 @@ pub struct PeerInfo {
     /// Платформа и версия его программы, например `android 0.1.42`
     /// (пусто — неизвестно). По ней видно, у кого программа новее.
     pub app: String,
+    /// Включил камеру.
+    pub camera: bool,
 }
 
 impl PeerInfo {
@@ -108,6 +122,7 @@ impl PeerInfo {
             server_muted: false,
             sharing: false,
             app: String::new(),
+            camera: false,
         }
     }
 }
@@ -210,6 +225,15 @@ pub enum ClientMsg {
     /// `Hello`, потому что сервер читает его, только когда версии протокола
     /// совпали.
     Auth { password: String, app: String },
+    /// Включили камеру, которая отдаёт `layers` слоёв (от самого маленького;
+    /// не больше [`CAMERA_LAYERS`]), или выключили её (`layers = 0`).
+    SetCamera { layers: u8 },
+    /// Смотреть камеру участника `id` в качестве `layer` (меньше
+    /// [`CAMERA_LAYERS`]); `None` — перестать.
+    WatchCamera { id: PeerId, layer: Option<u8> },
+    /// Видео с камеры `id` сломалось: попросить опорный кадр того слоя,
+    /// который сервер нам сейчас пересылает.
+    RequestCameraKeyframe { id: PeerId },
 }
 
 /// Сообщение в чате комнаты.
@@ -265,6 +289,15 @@ pub enum ServerMsg {
     Avatar {
         id: PeerId,
         data: Vec<u8>,
+    },
+    /// Тому, у кого включена камера: пришли опорный кадр слоя `layer`.
+    CameraKeyframeNeeded {
+        layer: u8,
+    },
+    /// Тому, у кого включена камера: сколько зрителей получают каждый слой.
+    /// Слой без зрителей можно не кодировать.
+    CameraViewers {
+        layers: [u32; CAMERA_LAYERS],
     },
 }
 
@@ -340,36 +373,65 @@ pub fn decode_server_voice(data: &[u8]) -> Option<(PeerId, u32, &[u8])> {
 /// Самый большой кадр демонстрации, который принимают сервер и клиенты.
 pub const MAX_VIDEO_FRAME: usize = 8 * 1024 * 1024;
 
-/// Заголовок кадра демонстрации экрана. Поток клиента: `[заголовок][H.264]`;
+/// Что за видео в кадре.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum VideoKind {
+    /// Демонстрация экрана.
+    #[default]
+    Screen,
+    /// Камера (слой — в [`VideoHeader::layer`]).
+    Camera,
+}
+
+/// Заголовок видеокадра. Поток клиента: `[заголовок][H.264]`;
 /// поток сервера зрителю: `[id отправителя u32][заголовок][H.264]`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct VideoHeader {
-    /// Номер кадра у отправителя.
+    /// Номер кадра у отправителя (свой счёт у каждого вида и слоя).
     pub frame: u32,
     /// Опорный кадр (IDR): с него можно начать показ.
     pub keyframe: bool,
     pub width: u16,
     pub height: u16,
+    pub kind: VideoKind,
+    /// Слой камеры (0 — самый маленький); у экрана всегда 0.
+    pub layer: u8,
 }
 
 impl VideoHeader {
-    pub const LEN: usize = 9;
+    pub const LEN: usize = 11;
 
     pub fn encode(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(&self.frame.to_le_bytes());
         out.push(u8::from(self.keyframe));
         out.extend_from_slice(&self.width.to_le_bytes());
         out.extend_from_slice(&self.height.to_le_bytes());
+        out.push(match self.kind {
+            VideoKind::Screen => 0,
+            VideoKind::Camera => 1,
+        });
+        out.push(self.layer);
     }
 
     /// Разбирает заголовок; возвращает его и остаток (H.264).
     pub fn decode(data: &[u8]) -> Option<(Self, &[u8])> {
         let (head, rest) = data.split_first_chunk::<{ Self::LEN }>()?;
+        let kind = match head[9] {
+            0 => VideoKind::Screen,
+            1 => VideoKind::Camera,
+            _ => return None,
+        };
+        let layer = head[10];
+        if kind == VideoKind::Camera && usize::from(layer) >= CAMERA_LAYERS {
+            return None;
+        }
         let header = Self {
             frame: u32::from_le_bytes(head[0..4].try_into().ok()?),
             keyframe: head[4] != 0,
             width: u16::from_le_bytes(head[5..7].try_into().ok()?),
             height: u16::from_le_bytes(head[7..9].try_into().ok()?),
+            kind,
+            layer,
         };
         Some((header, rest))
     }
@@ -396,12 +458,31 @@ mod tests {
 
     #[test]
     fn video_header_roundtrip() {
-        let header = VideoHeader { frame: 77, keyframe: true, width: 1920, height: 1080 };
+        let header =
+            VideoHeader { frame: 77, keyframe: true, width: 1920, height: 1080, ..Default::default() };
         let mut buf = Vec::new();
         header.encode(&mut buf);
         buf.extend_from_slice(b"h264");
         assert_eq!(VideoHeader::decode(&buf), Some((header, &b"h264"[..])));
         assert_eq!(VideoHeader::decode(&buf[..5]), None);
+
+        let camera = VideoHeader {
+            frame: 3,
+            width: 320,
+            height: 180,
+            kind: VideoKind::Camera,
+            layer: 2,
+            ..Default::default()
+        };
+        let mut buf = Vec::new();
+        camera.encode(&mut buf);
+        assert_eq!(VideoHeader::decode(&buf), Some((camera, &[][..])));
+        // Несуществующий слой или вид — не кадр.
+        buf[10] = CAMERA_LAYERS as u8;
+        assert_eq!(VideoHeader::decode(&buf), None);
+        buf[10] = 0;
+        buf[9] = 7;
+        assert_eq!(VideoHeader::decode(&buf), None);
     }
 
     #[test]

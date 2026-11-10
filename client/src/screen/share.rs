@@ -201,6 +201,7 @@ impl Loop {
                 keyframe,
                 width: image.width.min(u16::MAX.into()) as u16,
                 height: image.height.min(u16::MAX.into()) as u16,
+                ..Default::default()
             };
             frame_no = frame_no.wrapping_add(1);
             if !send(VideoFrame { header, data }) {

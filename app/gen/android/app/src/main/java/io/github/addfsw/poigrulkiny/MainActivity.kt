@@ -37,9 +37,12 @@ class MainActivity : TauriActivity() {
     const val EXTRA_OPEN_CHAT = "open_chat"
     /// Нажали «Выйти» в уведомлении звонка.
     const val EXTRA_LEAVE = "leave"
+    /// Номер запроса разрешения на камеру (см. onRequestPermissionsResult).
+    private const val CAMERA_REQUEST = 2
   }
 
   private val callAudio by lazy { CallAudio(this) }
+  private val cameraCapture by lazy { CameraCapture(this) }
   private val chatNotifier by lazy { ChatNotifier(this) }
   private var webView: WebView? = null
   /// Приглашение, с которым программу открыли (ссылка или «Поделиться»),
@@ -151,8 +154,23 @@ class MainActivity : TauriActivity() {
     webView?.evaluateJavascript(script, null)
   }
 
+  /// Ответ на вопрос о камере (requestCameraPermission) — в интерфейс.
+  @Deprecated("Ответ на ActivityCompat.requestPermissions")
+  override fun onRequestPermissionsResult(
+    requestCode: Int,
+    permissions: Array<out String>,
+    grantResults: IntArray
+  ) {
+    super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+    if (requestCode == CAMERA_REQUEST) {
+      val granted = grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
+      webView?.evaluateJavascript("window.onAndroidCamera && window.onAndroidCamera($granted)", null)
+    }
+  }
+
   override fun onDestroy() {
     unregisterReceiver(micToggle)
+    cameraCapture.stop()
     callAudio.stop()
     chatNotifier.clear()
     super.onDestroy()
@@ -387,6 +405,36 @@ class MainActivity : TauriActivity() {
           startActivity(install)
         }
       }.start()
+    }
+
+    /// Перед включением камеры: есть ли разрешение (если нет — спросить).
+    /// Ответ — в window.onAndroidCamera(true/false).
+    @JavascriptInterface
+    fun requestCameraPermission() {
+      runOnUiThread {
+        val granted = ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.CAMERA) ==
+          PackageManager.PERMISSION_GRANTED
+        if (granted) {
+          webView?.evaluateJavascript("window.onAndroidCamera && window.onAndroidCamera(true)", null)
+        } else {
+          ActivityCompat.requestPermissions(
+            this@MainActivity,
+            arrayOf(Manifest.permission.CAMERA),
+            CAMERA_REQUEST
+          )
+        }
+      }
+    }
+
+    /// Включить камеру (фронтальную или основную): кадры пойдут в Rust.
+    @JavascriptInterface
+    fun startCamera(front: Boolean) {
+      runOnUiThread { cameraCapture.start(front) }
+    }
+
+    @JavascriptInterface
+    fun stopCamera() {
+      runOnUiThread { cameraCapture.stop() }
     }
 
     @JavascriptInterface

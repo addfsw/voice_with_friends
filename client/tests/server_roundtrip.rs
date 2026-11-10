@@ -599,3 +599,127 @@ async fn probe_tells_running_server_from_stopped() {
     let wait = Duration::from_millis(500);
     assert_eq!(probe_address(&free.to_string(), wait).await, Availability::Offline);
 }
+
+/// Камера, которая отдаёт кадры 1280×720 так часто, как их берут (~30 к/с).
+struct TestCamera(u32);
+
+impl vwf_client::camera::CameraSource for TestCamera {
+    fn frame(
+        &mut self,
+        _deadline: std::time::Instant,
+    ) -> anyhow::Result<Option<vwf_client::camera::I420>> {
+        std::thread::sleep(Duration::from_millis(33));
+        self.0 += 1;
+        let mut frame = vwf_client::camera::I420::new(1280, 720);
+        let shift = self.0 as usize * 8;
+        for (i, v) in frame.data[..1280 * 720].iter_mut().enumerate() {
+            *v = (((i % 1280 + shift) / 32 % 2) * 180 + 40) as u8;
+        }
+        Ok(Some(frame))
+    }
+}
+
+/// Слои камеры как в групповых звонках Telegram: каждый зритель получает
+/// только тот слой, который попросил; при смене слоя переключение — на
+/// опорном кадре нового; отправитель знает, сколько зрителей у каждого слоя.
+#[tokio::test]
+async fn camera_layers_reach_each_viewer() {
+    use vwf_client::camera::CameraSharer;
+    use vwf_proto::{ClientMsg, VideoKind};
+
+    let addr = start_server(false).await.to_string();
+    let mut alice = vwf_client::net::connect(&addr, "Алиса").await.unwrap();
+    let mut bob = vwf_client::net::connect(&addr, "Боб").await.unwrap();
+    let carol = vwf_client::net::connect(&addr, "Кэрол").await.unwrap();
+    let alice_id = alice.me.id;
+
+    alice.control().send(ClientMsg::SetCamera { layers: 3 });
+    let video = alice.camera_sender();
+    let camera = std::sync::Arc::new(
+        CameraSharer::start_with(
+            || Ok(Box::new(TestCamera(0))),
+            3,
+            move |frame| video.send(frame),
+            |_| {},
+            |e| panic!("камера остановилась: {e}"),
+        )
+        .unwrap(),
+    );
+    expect_event(&mut bob, |e| matches!(e, ServerMsg::PeerUpdated(p) if p.camera)).await;
+
+    // Что сервер говорит Алисе — передаём камере, как это делает `Call`.
+    let alice_control = alice.control();
+    let (viewers_tx, mut viewers) = tokio::sync::mpsc::unbounded_channel();
+    {
+        let camera = camera.clone();
+        tokio::spawn(async move {
+            while let Ok(Some(event)) = alice.next_event().await {
+                match event {
+                    ServerMsg::CameraViewers { layers } => {
+                        camera.set_viewers(layers);
+                        let _ = viewers_tx.send(layers);
+                    }
+                    ServerMsg::CameraKeyframeNeeded { layer } => camera.request_keyframe(layer),
+                    _ => {}
+                }
+            }
+        });
+    }
+    let mut wait_viewers = async |want: [u32; 3]| {
+        timeout(T, async {
+            while viewers.recv().await != Some(want) {}
+        })
+        .await
+        .unwrap_or_else(|_| panic!("не дождались зрителей по слоям {want:?}"));
+    };
+
+    // Боб смотрит маленькую плитку, Кэрол — на весь экран.
+    bob.control().send(ClientMsg::WatchCamera { id: alice_id, layer: Some(0) });
+    carol.control().send(ClientMsg::WatchCamera { id: alice_id, layer: Some(2) });
+    wait_viewers([1, 0, 1]).await;
+
+    let first_frames = async |session: &vwf_client::net::Session, n: usize| {
+        let receiver = session.video_receiver();
+        timeout(T, async {
+            let mut headers = Vec::new();
+            while headers.len() < n {
+                let (from, header, _) = receiver.recv().await.unwrap();
+                assert_eq!(from, alice_id);
+                headers.push(header);
+            }
+            headers
+        })
+        .await
+        .expect("кадры камеры не дошли")
+    };
+    let bob_frames = first_frames(&bob, 5).await;
+    assert!(bob_frames.iter().all(|h| h.kind == VideoKind::Camera && h.layer == 0));
+    assert!(bob_frames[0].keyframe, "показ начинается с опорного кадра");
+    assert_eq!((bob_frames[0].width, bob_frames[0].height), (320, 180));
+    let carol_frames = first_frames(&carol, 5).await;
+    assert!(carol_frames.iter().all(|h| h.layer == 2));
+    assert!(carol_frames[0].keyframe);
+    assert_eq!((carol_frames[0].width, carol_frames[0].height), (1280, 720));
+
+    // Боб развернул плитку: слой 1. Пока не пришёл опорный кадр слоя 1,
+    // идёт слой 0; после — только слой 1.
+    bob.control().send(ClientMsg::WatchCamera { id: alice_id, layer: Some(1) });
+    let switched = first_frames(&bob, 20).await;
+    let first = switched.iter().position(|h| h.layer == 1).expect("слой не переключился");
+    assert!(switched[first].keyframe, "переключение на опорном кадре");
+    assert!(switched[first..].iter().all(|h| h.layer == 1), "назад не переключается");
+    wait_viewers([0, 1, 1]).await;
+
+    // Кэрол перестала смотреть — слой 2 никому не нужен.
+    carol.control().send(ClientMsg::WatchCamera { id: alice_id, layer: None });
+    wait_viewers([0, 1, 0]).await;
+
+    // Алиса выключила камеру — это видят все.
+    drop(camera);
+    alice_control.send(ClientMsg::SetCamera { layers: 0 });
+    expect_event(
+        &mut bob,
+        |e| matches!(e, ServerMsg::PeerUpdated(p) if p.id == alice_id && !p.camera),
+    )
+    .await;
+}

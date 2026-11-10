@@ -45,6 +45,9 @@ const call = {
   unread: 0,
   sharing: false, // мы показываем экран
   viewers: 0, // сколько человек смотрит наш экран
+  camera: false, // наша камера включена
+  cameraId: "", // какая (id из camera_sources)
+  cameraViewers: 0, // сколько человек смотрит нашу камеру (во всех слоях)
 };
 
 // ---------------------------------------------------------------------------
@@ -73,6 +76,7 @@ const ICON_PATHS = {
     "M3 17v2h6v-2H3ZM3 5v2h10V5H3Zm10 16v-2h8v-2h-8v-2h-2v6h2ZM7 9v2H3v2h4v2h2V9H7Zm14 4v-2H11v2h10Zm-6-4h2V7h4V5h-4V3h-2v6Z",
   screen:
     "M21 3H3a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h5v2h8v-2h5a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2Zm0 14H3V5h18v12Z",
+  camera: "M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4Z",
   lock: "M18 8h-1V6A5 5 0 0 0 7 6v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2Zm-6 9a2 2 0 1 1 0-4 2 2 0 0 1 0 4Zm3.1-9H8.9V6a3.1 3.1 0 0 1 6.2 0v2Z",
   plus: "M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2Z",
   "lock-open":
@@ -1150,6 +1154,17 @@ function applyJoined(joined) {
   showDevice("output", joined.outputDevice);
   // После (пере)подключения демонстрация не идёт: звонок новый.
   setSharing(false);
+  // Камеру после переподключения включаем снова (на телефоне Kotlin и не
+  // переставал снимать) — плитки начнут заново с новым звонком.
+  clearCameraTiles();
+  if (call.camera) {
+    invoke("start_camera", { id: call.cameraId }).catch((e) => {
+      call.camera = false;
+      androidBridge?.stopCamera();
+      renderPeers();
+      toast(capitalized(errorText(e)));
+    });
+  }
   call.chat = [];
   for (const message of [...joined.chat, ...call.chatPending]) addMessage(message, false);
   call.chatPending = [];
@@ -1185,6 +1200,10 @@ listen("call-reconnected", ({ payload }) => {
 
 function leaveRoom(reason) {
   closeScreenView();
+  if (call.camera) androidBridge?.stopCamera();
+  call.camera = false;
+  call.cameraViewers = 0;
+  clearCameraTiles();
   androidBridge?.callEnded();
   notifiedMuted = null;
   setReconnecting(false);
@@ -1427,6 +1446,9 @@ function renderDock() {
   } else if (call.sharing) {
     status.textContent = `показываете экран · смотрят: ${call.viewers}`;
     status.classList.add("live");
+  } else if (call.camera) {
+    status.textContent = `камера включена · видят: ${call.cameraViewers}`;
+    status.classList.add("live");
   } else {
     const key = store.get("pttKey", null);
     status.textContent = {
@@ -1450,6 +1472,10 @@ function renderDock() {
   sound.replaceChildren(icon("headphones", me.deafened));
   sound.classList.toggle("off", me.deafened);
   sound.dataset.tip = me.deafened ? "Включить звук" : "Выключить звук";
+  const cameraBtn = $("camera-btn");
+  cameraBtn.replaceChildren(icon("camera", !call.camera));
+  cameraBtn.classList.toggle("active", call.camera);
+  cameraBtn.dataset.tip = call.camera ? "Выключить камеру" : "Включить камеру";
   const share = $("share-btn");
   share.classList.toggle("active", call.sharing);
   share.dataset.tip = call.sharing
@@ -1471,8 +1497,11 @@ $("voice-btn").addEventListener("click", (event) => {
 $("voice-menu").addEventListener("click", (event) => event.stopPropagation());
 
 function renderPeers() {
-  // Участник закончил показ или ушёл — закрываем его экран.
-  if (sv.view && !call.peers.get(sv.peer)?.sharing) closeScreenView();
+  // Участник закончил показ (выключил камеру) или ушёл — закрываем просмотр.
+  if (sv.view) {
+    const peer = sv.peer === call.me?.id ? { camera: call.camera } : call.peers.get(sv.peer);
+    if (!(sv.kind === "camera" ? peer?.camera : peer?.sharing)) closeScreenView();
+  }
   renderDock();
   const list = $("peers");
   // Открытое меню человека остаётся открытым, когда список перерисовался.
@@ -1492,6 +1521,7 @@ function renderPeers() {
       : "Пока никого нет. Позовите друзей!";
     list.append(empty);
   }
+  pruneCameraTiles();
 }
 
 function peerItem(peer, isMe) {
@@ -1503,6 +1533,14 @@ function peerItem(peer, isMe) {
   const avatar = document.createElement("div");
   avatar.className = "avatar";
   paintAvatar(avatar, peer.name, isMe ? myAvatar : avatars.get(peer.id));
+  // Камера — вместо аватарки: в списке в кружке, в плитке на всю плитку.
+  const camera = (isMe ? call.camera : peer.camera) ? cameraTile(peer.id, isMe) : null;
+  if (camera) {
+    li.classList.add("has-camera");
+    avatar.classList.add("has-camera");
+    // Своя камера — как в зеркале, но основная камера телефона — как есть.
+    camera.canvas.classList.toggle("mirror", isMe && call.cameraId !== "back");
+  }
 
   const main = document.createElement("div");
   main.className = "peer-main";
@@ -1566,8 +1604,13 @@ function peerItem(peer, isMe) {
     });
   }
 
-  if ($("peers").classList.contains("tiles")) tileLayout(li, peer, avatar, main, side);
-  else li.append(avatar, main, side);
+  if ($("peers").classList.contains("tiles")) {
+    tileLayout(li, peer, avatar, main, side);
+    if (camera) li.prepend(camera.box);
+  } else {
+    if (camera) avatar.append(camera.box);
+    li.append(avatar, main, side);
+  }
   return li;
 }
 
@@ -2051,6 +2094,7 @@ function watchButton(peer, isMe) {
 const sv = {
   view: null,
   peer: null,
+  kind: null, // "screen" или "camera"
   scale: 1,
   x: 0,
   y: 0,
@@ -2069,13 +2113,9 @@ async function openScreenView(peer) {
     return toast(errorText(e));
   }
   sv.peer = peer.id;
+  sv.kind = "screen";
   $("sv-title").textContent = `Экран: ${peer.name}`;
-  $("sv-waiting-text").textContent = `Жду картинку от ${peer.name}…`;
-  $("sv-waiting").hidden = false;
-  resetZoom();
-  showBar();
-  $("screen-view").hidden = false;
-  androidBridge?.setImmersive(true);
+  showOverlay(peer.name);
   sv.view = createScreenView({
     peer: peer.id,
     canvas: $("sv-canvas"),
@@ -2084,15 +2124,54 @@ async function openScreenView(peer) {
   });
 }
 
+function showOverlay(name) {
+  $("sv-waiting-text").textContent = `Жду картинку от ${name}…`;
+  $("sv-waiting").hidden = false;
+  resetZoom();
+  showBar();
+  $("screen-view").hidden = false;
+  androidBridge?.setImmersive(true);
+}
+
+// Камера на весь экран — самый большой слой. Плитка этого участника на
+// время отдаёт ему свой поток (у участника один поток камеры на окно).
+function openCameraView(id) {
+  const isMe = id === call.me?.id;
+  const peer = isMe ? call.me : call.peers.get(id);
+  if (!peer) return;
+  closeScreenView();
+  sv.peer = id;
+  sv.kind = "camera";
+  syncCameraTile(id);
+  $("sv-title").textContent = isMe ? "Ваша камера" : `Камера: ${peer.name}`;
+  $("sv-canvas").classList.toggle("mirror", isMe && call.cameraId !== "back");
+  showOverlay(peer.name);
+  sv.view = createScreenView({
+    peer: id,
+    canvas: $("sv-canvas"),
+    img: null,
+    onFrame: () => ($("sv-waiting").hidden = true),
+    onFail: () => {
+      closeScreenView();
+      toast("Это окно не умеет показывать видео камеры");
+    },
+    camera: { layer: isMe ? 0 : CAMERA_TOP_LAYER },
+  });
+}
+
 function closeScreenView() {
   if (!sv.view) return false;
+  const { peer, kind } = sv;
   sv.view.stop();
-  invoke("stop_watching", { id: sv.peer }).catch(() => {});
+  if (kind === "screen") invoke("stop_watching", { id: peer }).catch(() => {});
   sv.view = null;
   sv.peer = null;
+  sv.kind = null;
+  $("sv-canvas").classList.remove("mirror");
   $("screen-view").hidden = true;
   androidBridge?.setImmersive(false);
   if (sv.landscape) setLandscape(false);
+  if (kind === "camera") syncCameraTile(peer);
   return true;
 }
 
@@ -2366,6 +2445,247 @@ listen("share-stopped", ({ payload }) => {
   setSharing(false);
   invoke("stop_share").catch(() => {});
   toast(`Показ экрана остановлен: ${payload.reason}`);
+});
+
+// ---------------------------------------------------------------------------
+// Камера (src/camera.rs)
+// ---------------------------------------------------------------------------
+
+// Слои качества, как в групповых звонках Telegram: 0 — маленький поток для
+// плиток, 1 — для крупной плитки, 2 — на весь экран. Плитка просит слой по
+// своему размеру в точках экрана, а сервер сам опускает его, если сеть не
+// тянет, и поднимает обратно.
+const CAMERA_TOP_LAYER = 2;
+const CAMERA_LAYER_1_FROM = 300; // высота плитки в точках экрана для слоя 1
+
+// Видео в плитках: id → { box, canvas, view, layer, visible, failed, isMe }.
+// Переживает перерисовку списка (renderPeers строит его заново): холст с
+// декодером просто переезжает в новую плитку, и картинка не мигает.
+const cameraTiles = new Map();
+
+// Смотрим только то, что видно: плитка ушла за край — отписываемся (не
+// сразу: при прокрутке туда-обратно поток не дёргается).
+const cameraVisibility = new IntersectionObserver((entries) => {
+  for (const entry of entries) {
+    const id = Number(entry.target.dataset.peer);
+    const tile = cameraTiles.get(id);
+    if (!tile) continue;
+    clearTimeout(tile.hideTimer);
+    if (entry.isIntersecting) {
+      tile.visible = true;
+      syncCameraTile(id);
+    } else {
+      tile.hideTimer = setTimeout(() => {
+        tile.visible = false;
+        syncCameraTile(id);
+      }, 2000);
+    }
+  }
+});
+
+// Плитка стала больше или меньше — другой слой.
+const cameraSize = new ResizeObserver((entries) => {
+  for (const entry of entries) {
+    const id = Number(entry.target.dataset.peer);
+    const tile = cameraTiles.get(id);
+    if (!tile || tile.isMe) continue;
+    const height = entry.contentRect.height * (window.devicePixelRatio || 1);
+    tile.layer = height >= CAMERA_LAYER_1_FROM ? 1 : 0;
+    tile.view?.setLayer(tile.layer);
+  }
+});
+
+function cameraTile(id, isMe) {
+  let tile = cameraTiles.get(id);
+  if (tile) return tile;
+  const box = document.createElement("div");
+  box.className = "cam-video";
+  box.dataset.peer = id;
+  box.title = "Открыть на весь экран";
+  const canvas = document.createElement("canvas");
+  canvas.hidden = true;
+  box.append(canvas);
+  box.addEventListener("click", (event) => {
+    event.stopPropagation();
+    openCameraView(id);
+  });
+  tile = { box, canvas, view: null, layer: 0, visible: false, failed: false, isMe, hideTimer: null };
+  cameraTiles.set(id, tile);
+  cameraVisibility.observe(box);
+  cameraSize.observe(box);
+  return tile;
+}
+
+// Показывать ли сейчас видео в плитке — и запустить или остановить его.
+function syncCameraTile(id) {
+  const tile = cameraTiles.get(id);
+  if (!tile) return;
+  const want =
+    tile.visible && !document.hidden && !tile.failed && !(sv.kind === "camera" && sv.peer === id);
+  if (want && !tile.view) {
+    tile.view = createScreenView({
+      peer: id,
+      canvas: tile.canvas,
+      img: null,
+      onFrame: () => tile.box.classList.add("playing"),
+      onFail: () => {
+        tile.failed = true;
+        syncCameraTile(id);
+      },
+      camera: { layer: tile.layer },
+    });
+  } else if (!want && tile.view) {
+    tile.view.stop();
+    tile.view = null;
+    tile.box.classList.remove("playing");
+  }
+}
+
+// После перерисовки: убрать плитки тех, у кого камера выключилась или кто ушёл.
+function pruneCameraTiles() {
+  for (const [id, tile] of cameraTiles) {
+    const on = id === call.me?.id ? call.camera : call.peers.get(id)?.camera;
+    if (on) continue;
+    clearTimeout(tile.hideTimer);
+    tile.view?.stop();
+    cameraVisibility.unobserve(tile.box);
+    cameraSize.unobserve(tile.box);
+    tile.box.remove();
+    cameraTiles.delete(id);
+  }
+}
+
+function clearCameraTiles() {
+  for (const [, tile] of cameraTiles) {
+    clearTimeout(tile.hideTimer);
+    tile.view?.stop();
+    cameraVisibility.unobserve(tile.box);
+    cameraSize.unobserve(tile.box);
+    tile.box.remove();
+  }
+  cameraTiles.clear();
+}
+
+// Свернули окно (или телефон убрал программу с экрана) — чужие камеры не
+// нужны, трафик не тратим. Своя камера при этом продолжает идти.
+document.addEventListener("visibilitychange", () => {
+  for (const id of cameraTiles.keys()) syncCameraTile(id);
+});
+
+// Android: разрешение на камеру спрашивает Kotlin, ответ — сюда.
+let cameraPermission = null;
+window.onAndroidCamera = (granted) => {
+  cameraPermission?.(Boolean(granted));
+  cameraPermission = null;
+};
+
+function askCameraPermission() {
+  if (!androidBridge) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    cameraPermission = resolve;
+    androidBridge.requestCameraPermission();
+  });
+}
+
+async function startCamera(id = store.get("camera", "")) {
+  if (isAndroid) {
+    if (!(await askCameraPermission())) {
+      toast("Без разрешения на камеру видео не включить. Его можно дать в настройках Android");
+      return;
+    }
+    if (id !== "back") id = "front";
+  }
+  try {
+    await invoke("start_camera", { id });
+  } catch (e) {
+    toast(capitalized(errorText(e)));
+    return;
+  }
+  // Rust уже ждёт кадры — теперь их можно снимать (на телефоне снимает Kotlin).
+  androidBridge?.startCamera(id !== "back");
+  call.camera = true;
+  call.cameraId = id;
+  call.cameraViewers = 0;
+  renderPeers();
+}
+
+async function stopCamera() {
+  androidBridge?.stopCamera();
+  call.camera = false;
+  call.cameraViewers = 0;
+  renderPeers();
+  await invoke("stop_camera").catch(() => {});
+}
+
+$("camera-btn").addEventListener("click", () => {
+  if (call.camera) stopCamera();
+  else startCamera();
+});
+
+// Какую камеру включать: список под стрелкой у кнопки камеры.
+async function openCameraMenu() {
+  const menu = $("camera-menu");
+  const wasOpen = !menu.hidden;
+  closeMenus();
+  if (wasOpen) return;
+  let list;
+  try {
+    list = await invoke("camera_sources");
+  } catch (e) {
+    return toast(capitalized(errorText(e)));
+  }
+  menu.innerHTML = "";
+  const title = document.createElement("div");
+  title.className = "menu-title";
+  title.textContent = "Камера";
+  menu.append(title);
+  if (!list.length) {
+    const empty = document.createElement("div");
+    empty.className = "menu-empty";
+    empty.textContent = "Камер не найдено";
+    menu.append(empty);
+  }
+  const current = call.camera ? call.cameraId : store.get("camera", "");
+  const currentId = list.some((c) => c.id === current) ? current : list[0]?.id;
+  for (const camera of list) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.classList.toggle("current", camera.id === currentId);
+    const check = icon("check");
+    check.classList.add("check");
+    const text = document.createElement("span");
+    text.className = "label";
+    text.textContent = camera.name;
+    item.append(check, text);
+    item.addEventListener("click", () => {
+      closeMenus();
+      store.set("camera", camera.id);
+      // Включена — переключаем на выбранную, выключена — включаем её.
+      startCamera(camera.id);
+    });
+    menu.append(item);
+  }
+  menu.hidden = false;
+}
+
+$("camera-pill").addEventListener("click", (event) => {
+  event.stopPropagation();
+  openCameraMenu();
+});
+$("camera-menu").addEventListener("click", (event) => event.stopPropagation());
+
+listen("camera-viewers", ({ payload }) => {
+  // Зритель получает один слой (лишь на мгновение переключения — два),
+  // поэтому сумма по слоям — это число зрителей.
+  call.cameraViewers = payload.layers.reduce((a, b) => a + b, 0);
+  renderDock();
+});
+
+listen("camera-stopped", ({ payload }) => {
+  androidBridge?.stopCamera();
+  call.camera = false;
+  renderPeers();
+  toast(`Камера отключилась: ${payload.reason}`);
 });
 
 // ---------------------------------------------------------------------------
@@ -2964,6 +3284,7 @@ window.addEventListener("keydown", (event) => {
     if ($("address-menu").hidden) closeInvite();
     closeRoomSheet();
     closeMenus();
+    if (sv.kind === "camera") closeScreenView();
   }
 });
 

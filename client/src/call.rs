@@ -5,7 +5,9 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use vwf_proto::{ChatMessage, ClientMsg, PeerId, PeerInfo, ServerMsg, VideoHeader};
+use vwf_proto::{ChatMessage, ClientMsg, PeerId, PeerInfo, ServerMsg, VideoHeader, VideoKind};
+
+use crate::camera::CameraSharer;
 
 use crate::audio::{self, Wakeup};
 use crate::cues::Cue;
@@ -215,6 +217,17 @@ pub enum CallEvent {
     Viewers(u32),
     /// Наша демонстрация прервалась сама (например, закрыли показываемое окно).
     ShareStopped(String),
+    /// Кадр (H.264) камеры, которую мы смотрим, — или своей (`from` == наш
+    /// id): превью в своей плитке, слой 0, мимо сети.
+    CameraPacket {
+        from: PeerId,
+        header: VideoHeader,
+        data: Vec<u8>,
+    },
+    /// Сколько зрителей у каждого слоя нашей камеры.
+    CameraViewers([u32; vwf_proto::CAMERA_LAYERS]),
+    /// Наша камера отключилась сама (например, её выдернули).
+    CameraStopped(String),
     /// Аватарка участника: тип картинки и данные. `None` — убрал аватарку
     /// (или прислал не картинку).
     Avatar {
@@ -258,6 +271,11 @@ pub struct Call {
     sharer: Arc<Mutex<Option<Sharer>>>,
     /// Чьи экраны мы смотрим.
     watching: Arc<Mutex<HashSet<PeerId>>>,
+    camera_video: net::VideoSender,
+    /// Наша камера, если включена.
+    camera: Arc<Mutex<Option<CameraSharer>>>,
+    /// Чьи камеры мы смотрим и в каком слое.
+    camera_watching: Arc<Mutex<HashMap<PeerId, u8>>>,
 }
 
 type OnEvent = Arc<dyn Fn(CallEvent) + Send + Sync>;
@@ -270,6 +288,11 @@ pub struct KeyframeRequester(net::Control);
 impl KeyframeRequester {
     pub fn request(&self, id: PeerId) {
         self.0.send(ClientMsg::RequestKeyframe { id });
+    }
+
+    /// То же для камеры `id`: опорный кадр слоя, который нам сейчас пересылают.
+    pub fn request_camera(&self, id: PeerId) {
+        self.0.send(ClientMsg::RequestCameraKeyframe { id });
     }
 }
 
@@ -316,24 +339,41 @@ impl Call {
         let video = session.video_sender();
         let sharer: Arc<Mutex<Option<Sharer>>> = Arc::default();
         let watching: Arc<Mutex<HashSet<PeerId>>> = Arc::default();
+        // Камера: свои слои — в сеть, чужие — в окно.
+        let camera_video = session.camera_sender();
+        let camera: Arc<Mutex<Option<CameraSharer>>> = Arc::default();
+        let camera_watching: Arc<Mutex<HashMap<PeerId, u8>>> = Arc::default();
         let video_task = {
             let receiver = session.video_receiver();
             let watching = watching.clone();
+            let camera_watching = camera_watching.clone();
             let on_event = on_event.clone();
             tokio::spawn(async move {
                 while let Some((from, header, data)) = receiver.recv().await {
-                    if watching.lock().unwrap().contains(&from) {
-                        on_event(CallEvent::ScreenPacket { from, header, data });
-                    }
+                    let event = match header.kind {
+                        VideoKind::Screen if watching.lock().unwrap().contains(&from) => {
+                            CallEvent::ScreenPacket { from, header, data }
+                        }
+                        VideoKind::Camera if camera_watching.lock().unwrap().contains_key(&from) => {
+                            CallEvent::CameraPacket { from, header, data }
+                        }
+                        _ => continue,
+                    };
+                    on_event(event);
                 }
             })
         };
         let control_task = {
             let on_event = on_event.clone();
             let sharer = sharer.clone();
+            let camera = camera.clone();
             let watching = watching.clone();
+            let camera_watching = camera_watching.clone();
             let stop_watching = move |id: PeerId| {
                 watching.lock().unwrap().remove(&id);
+            };
+            let stop_watching_camera = move |id: PeerId| {
+                camera_watching.lock().unwrap().remove(&id);
             };
             let mixer = audio.mixer.clone();
             let room = room.clone();
@@ -351,6 +391,7 @@ impl Call {
                             room.lock().unwrap().peers.remove(&id);
                             mixer.remove_speaker(id);
                             stop_watching(id);
+                            stop_watching_camera(id);
                             mixer.play_cue(Cue::PeerLeft);
                             on_event(CallEvent::PeerLeft(id));
                         }
@@ -382,9 +423,23 @@ impl Call {
                             }
                             on_event(CallEvent::Viewers(count));
                         }
+                        Ok(Some(ServerMsg::CameraKeyframeNeeded { layer })) => {
+                            if let Some(camera) = camera.lock().unwrap().as_ref() {
+                                camera.request_keyframe(layer);
+                            }
+                        }
+                        Ok(Some(ServerMsg::CameraViewers { layers })) => {
+                            if let Some(camera) = camera.lock().unwrap().as_ref() {
+                                camera.set_viewers(layers);
+                            }
+                            on_event(CallEvent::CameraViewers(layers));
+                        }
                         Ok(Some(ServerMsg::PeerUpdated(peer))) => {
                             if !peer.sharing {
                                 stop_watching(peer.id);
+                            }
+                            if !peer.camera {
+                                stop_watching_camera(peer.id);
                             }
                             {
                                 let mut room = room.lock().unwrap();
@@ -424,6 +479,9 @@ impl Call {
             video,
             sharer,
             watching,
+            camera_video,
+            camera,
+            camera_watching,
         };
         call.sync_status();
         call.audio.mixer.play_cue(Cue::Connected);
@@ -550,9 +608,83 @@ impl Call {
         KeyframeRequester(self.control.clone())
     }
 
+    /// Включает камеру `id` (из [`crate::camera::cameras`]). Предыдущая,
+    /// если была, выключается. Своё превью приходит событиями
+    /// [`CallEvent::CameraPacket`] с нашим id.
+    pub fn start_camera(&self, id: &str) -> anyhow::Result<()> {
+        self.stop_camera();
+        let layers = crate::camera::platform_layers();
+        let video = self.camera_video.clone();
+        let control = self.control.clone();
+        let on_event = self.on_event.clone();
+        let preview_event = self.on_event.clone();
+        let me = self.my_id;
+        let camera = CameraSharer::start(
+            id,
+            layers,
+            move |frame| video.send(frame),
+            move |frame| {
+                preview_event(CallEvent::CameraPacket {
+                    from: me,
+                    header: frame.header,
+                    data: frame.data,
+                })
+            },
+            move |reason| {
+                control.send(ClientMsg::SetCamera { layers: 0 });
+                on_event(CallEvent::CameraStopped(reason));
+            },
+        )?;
+        *self.camera.lock().unwrap() = Some(camera);
+        self.control.send(ClientMsg::SetCamera { layers });
+        Ok(())
+    }
+
+    /// Выключает камеру.
+    pub fn stop_camera(&self) {
+        let camera = self.camera.lock().unwrap().take();
+        if let Some(camera) = camera {
+            drop(camera);
+            self.control.send(ClientMsg::SetCamera { layers: 0 });
+        }
+    }
+
+    /// Включена ли наша камера.
+    pub fn camera_on(&self) -> bool {
+        self.camera.lock().unwrap().is_some()
+    }
+
+    /// Своё превью открылось заново — нужен опорный кадр слоя 0.
+    pub fn camera_preview_keyframe(&self) {
+        if let Some(camera) = self.camera.lock().unwrap().as_ref() {
+            camera.request_keyframe(0);
+        }
+    }
+
+    /// Смотреть камеру участника `id` в слое `layer` (0 — для маленькой
+    /// плитки, [`vwf_proto::CAMERA_LAYERS`]` - 1` — на весь экран); `None` —
+    /// перестать. Кадры приходят событиями [`CallEvent::CameraPacket`].
+    pub fn watch_camera(&self, id: PeerId, layer: Option<u8>) {
+        if id == self.my_id {
+            return;
+        }
+        let layer = layer.map(|l| l.min(vwf_proto::CAMERA_LAYERS as u8 - 1));
+        let changed = {
+            let mut watching = self.camera_watching.lock().unwrap();
+            match layer {
+                Some(layer) => watching.insert(id, layer) != Some(layer),
+                None => watching.remove(&id).is_some(),
+            }
+        };
+        if changed {
+            self.control.send(ClientMsg::WatchCamera { id, layer });
+        }
+    }
+
     /// Завершает звонок.
     pub async fn hang_up(self) {
         self.sharer.lock().unwrap().take();
+        self.camera.lock().unwrap().take();
         self.hanging_up.store(true, Ordering::Relaxed);
         self.closer.close().await;
         for task in &self.tasks {

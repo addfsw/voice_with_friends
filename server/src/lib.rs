@@ -19,8 +19,8 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 use vwf_proto::{
-    Announcement, ChatMessage, ClientMsg, PROTOCOL_VERSION, PeerId, PeerInfo, ServerMsg,
-    VideoHeader,
+    Announcement, CAMERA_LAYERS, ChatMessage, ClientMsg, PROTOCOL_VERSION, PeerId, PeerInfo,
+    ServerMsg, VideoHeader, VideoKind,
 };
 
 const MAX_NAME_CHARS: usize = 32;
@@ -280,7 +280,27 @@ fn transport_config() -> quinn::TransportConfig {
     let mut t = quinn::TransportConfig::default();
     t.keep_alive_interval(Some(Duration::from_secs(5)));
     t.max_idle_timeout(Some(Duration::from_secs(20).try_into().expect("валидный таймаут")));
+    // Каждый видеокадр — отдельный поток: камера со всеми слоями и экран
+    // одновременно — это сотни коротких потоков в секунду.
+    t.max_concurrent_uni_streams(vwf_proto::MAX_UNI_STREAMS.into());
     t
+}
+
+/// Приоритеты потоков кадров к зрителю (у управляющего канала — 0, голос
+/// идёт датаграммами и обгоняет все потоки).
+const CAMERA_PRIORITY: i32 = -1;
+const SCREEN_PRIORITY: i32 = -2;
+
+/// Отправляет зрителю кадры из очереди: каждый — отдельным потоком, по порядку.
+async fn send_video(conn: quinn::Connection, mut queue: mpsc::Receiver<Bytes>, priority: i32) {
+    while let Some(packet) = queue.recv().await {
+        let Ok(mut stream) = conn.open_uni().await else { break };
+        let _ = stream.set_priority(priority);
+        if stream.write_all(&packet).await.is_err() {
+            break;
+        }
+        let _ = stream.finish();
+    }
 }
 
 struct Room {
@@ -375,11 +395,68 @@ struct Peer {
     kicked: bool,
     /// Аватарка (пустая — нет).
     avatar: Vec<u8>,
+    /// Чьи камеры он смотрит и в каком качестве.
+    cameras: HashMap<PeerId, CameraSub>,
+    /// Очередь кадров камер ему — отдельно от экрана, чтобы тяжёлая
+    /// демонстрация не забивала камеры.
+    camera_video: mpsc::Sender<Bytes>,
+    /// Сколько слоёв отдаёт его камера (0 — выключена).
+    camera_layers: u8,
+    /// Когда у его камеры последний раз просили опорный кадр каждого слоя.
+    camera_keyframe_asked: [Option<Instant>; CAMERA_LAYERS],
+    /// Последнее, что ему сообщили о зрителях его камеры по слоям.
+    camera_viewers: [u32; CAMERA_LAYERS],
+}
+
+/// Подписка зрителя на камеру одного участника. Как в групповых звонках
+/// Telegram: зритель просит качество под размер своей плитки, а сервер
+/// снижает его, если канал зрителя не успевает, и потом пробует поднять.
+#[derive(Debug, Clone)]
+struct CameraSub {
+    /// Какой слой просит зритель.
+    wanted: u8,
+    /// Потолок по сети: снижается, когда очередь зрителя переполняется.
+    cap: u8,
+    /// Какой слой сейчас пересылается (`None` — ещё ничего: ждём опорный).
+    current: Option<u8>,
+    /// Пропущен кадр текущего слоя: дальше только с опорного.
+    waiting_keyframe: bool,
+    /// Когда последний раз меняли потолок — поднимать не чаще [`CAMERA_RAISE_AFTER`].
+    cap_changed: Instant,
+}
+
+impl CameraSub {
+    fn new(wanted: u8) -> Self {
+        Self {
+            wanted,
+            cap: CAMERA_LAYERS as u8 - 1,
+            current: None,
+            waiting_keyframe: false,
+            cap_changed: Instant::now(),
+        }
+    }
+
+    /// Какой слой зритель должен получать при камере с `layers` слоями.
+    fn target(&self, layers: u8) -> u8 {
+        self.wanted.min(self.cap).min(layers.saturating_sub(1))
+    }
+
+    /// Какие слои нужны этому зрителю: текущий и тот, на который переключаемся.
+    fn needs(&self, layers: u8) -> impl Iterator<Item = u8> {
+        let target = self.target(layers);
+        self.current.into_iter().chain((self.current != Some(target)).then_some(target))
+    }
 }
 
 /// Сколько кадров демонстрации может ждать отправки одному зрителю. Больше —
 /// значит, его канал не успевает, и лишние кадры пропускаются до опорного.
 const VIDEO_QUEUE: usize = 6;
+
+/// То же для кадров камер (их маленькие, но много: до 7 камер по 15–30 к/с).
+const CAMERA_QUEUE: usize = 24;
+
+/// Через столько без переполнений очереди зрителю пробуют качество выше.
+const CAMERA_RAISE_AFTER: Duration = Duration::from_secs(10);
 
 /// Не чаще этого просить у показывающего опорный кадр (он тяжёлый).
 const KEYFRAME_INTERVAL: Duration = Duration::from_millis(500);
@@ -480,6 +557,131 @@ impl Room {
         }
         if lagging {
             self.ask_keyframe(from);
+        }
+    }
+
+    /// Просит камеру `sharer` прислать опорный кадр слоя `layer` (не слишком часто).
+    fn ask_camera_keyframe(&mut self, sharer: PeerId, layer: u8) {
+        let Some(peer) = self.peers.get_mut(&sharer) else { return };
+        let Some(asked) = peer.camera_keyframe_asked.get_mut(usize::from(layer)) else { return };
+        if asked.is_some_and(|t| t.elapsed() < KEYFRAME_INTERVAL) {
+            return;
+        }
+        *asked = Some(Instant::now());
+        let _ = peer.control.send(ServerMsg::CameraKeyframeNeeded { layer });
+    }
+
+    /// Пересчитывает, сколько зрителей у каждого слоя камеры `sharer`, и
+    /// сообщает ему, если изменилось: слои без зрителей он не кодирует.
+    fn update_camera_viewers(&mut self, sharer: PeerId) {
+        let Some(layers) = self.peers.get(&sharer).map(|p| p.camera_layers) else { return };
+        let mut counts = [0u32; CAMERA_LAYERS];
+        if layers > 0 {
+            for peer in self.peers.values() {
+                if let Some(sub) = peer.cameras.get(&sharer) {
+                    for layer in sub.needs(layers) {
+                        counts[usize::from(layer)] += 1;
+                    }
+                }
+            }
+        }
+        let Some(peer) = self.peers.get_mut(&sharer) else { return };
+        if peer.camera_viewers != counts {
+            peer.camera_viewers = counts;
+            let _ = peer.control.send(ServerMsg::CameraViewers { layers: counts });
+        }
+    }
+
+    /// `viewer` смотрит камеру `sharer` в слое `layer` (`None` — перестаёт).
+    fn watch_camera(&mut self, viewer: PeerId, sharer: PeerId, layer: Option<u8>) {
+        let layers = self.peers.get(&sharer).map_or(0, |p| p.camera_layers);
+        let Some(peer) = self.peers.get_mut(&viewer) else { return };
+        let ask = match layer {
+            Some(layer) if layers > 0 && viewer != sharer => {
+                let wanted = layer.min(CAMERA_LAYERS as u8 - 1);
+                let sub = peer.cameras.entry(sharer).or_insert_with(|| CameraSub::new(wanted));
+                sub.wanted = wanted;
+                let target = sub.target(layers);
+                (sub.current != Some(target)).then_some(target)
+            }
+            _ => {
+                peer.cameras.remove(&sharer);
+                None
+            }
+        };
+        if let Some(target) = ask {
+            self.ask_camera_keyframe(sharer, target);
+        }
+        self.update_camera_viewers(sharer);
+    }
+
+    /// Камеру `sharer` выключили (или он ушёл): у зрителей её больше нет.
+    fn stop_camera(&mut self, sharer: PeerId) {
+        for peer in self.peers.values_mut() {
+            peer.cameras.remove(&sharer);
+        }
+        if let Some(peer) = self.peers.get_mut(&sharer) {
+            peer.camera_layers = 0;
+            peer.camera_keyframe_asked = [None; CAMERA_LAYERS];
+        }
+        self.update_camera_viewers(sharer);
+    }
+
+    /// Рассылает кадр слоя `layer` камеры `from` тем зрителям, которым нужен
+    /// этот слой. Переключение слоя — только на опорном кадре нового: до тех
+    /// пор зритель получает прежний, так картинка не пропадает.
+    fn forward_camera(&mut self, from: PeerId, layer: u8, keyframe: bool, packet: Bytes) {
+        let layers = self.peers.get(&from).map_or(0, |p| p.camera_layers);
+        if layer >= layers {
+            return;
+        }
+        let mut ask = Vec::new();
+        let mut changed = false;
+        for peer in self.peers.values_mut() {
+            let Some(sub) = peer.cameras.get_mut(&from) else { continue };
+            // Давно без переполнений — пробуем качество на ступень выше.
+            if sub.cap < sub.wanted && sub.cap_changed.elapsed() >= CAMERA_RAISE_AFTER {
+                sub.cap += 1;
+                sub.cap_changed = Instant::now();
+                ask.push(sub.target(layers));
+                changed = true;
+            }
+            let target = sub.target(layers);
+            let send = if layer == target && sub.current != Some(target) {
+                // Переключение (или начало): с первого опорного кадра нового слоя.
+                keyframe
+            } else {
+                sub.current == Some(layer) && (keyframe || !sub.waiting_keyframe)
+            };
+            if !send {
+                continue;
+            }
+            match peer.camera_video.try_send(packet.clone()) {
+                Ok(()) => {
+                    if sub.current != Some(layer) {
+                        sub.current = Some(layer);
+                        changed = true;
+                    }
+                    sub.waiting_keyframe = false;
+                }
+                Err(_) => {
+                    // Канал зрителя не успевает: качество на ступень ниже.
+                    sub.waiting_keyframe = true;
+                    let lower = layer.saturating_sub(1);
+                    if sub.cap > lower || layer == 0 {
+                        sub.cap = sub.cap.min(lower);
+                        sub.cap_changed = Instant::now();
+                        changed = true;
+                    }
+                    ask.push(sub.target(layers));
+                }
+            }
+        }
+        for layer in ask {
+            self.ask_camera_keyframe(from, layer);
+        }
+        if changed {
+            self.update_camera_viewers(from);
         }
     }
 
@@ -585,6 +787,30 @@ impl Room {
                     self.ask_keyframe(id);
                 }
             }
+            ClientMsg::SetCamera { layers } => {
+                let layers = layers.min(CAMERA_LAYERS as u8);
+                if layers == 0 {
+                    self.stop_camera(from);
+                } else if let Some(peer) = self.peers.get_mut(&from) {
+                    peer.camera_layers = layers;
+                }
+                self.update(from, |p| p.camera = layers > 0);
+                self.update_camera_viewers(from);
+            }
+            ClientMsg::WatchCamera { id, layer } => self.watch_camera(from, id, layer),
+            ClientMsg::RequestCameraKeyframe { id } => {
+                let layers = self.peers.get(&id).map_or(0, |p| p.camera_layers);
+                let layer = self.peers.get_mut(&from).and_then(|p| p.cameras.get_mut(&id)).map(
+                    |sub| {
+                        // У зрителя сломалась картинка: дальше только с опорного.
+                        sub.waiting_keyframe = true;
+                        sub.current.unwrap_or_else(|| sub.target(layers))
+                    },
+                );
+                if let Some(layer) = layer {
+                    self.ask_camera_keyframe(id, layer);
+                }
+            }
             ClientMsg::Kick { id } if from_admin && id != from => {
                 if let Some(peer) = self.peers.get_mut(&id) {
                     peer.kicked = true;
@@ -682,7 +908,8 @@ async fn handle_connection(
     }
 
     let (control_tx, mut control_rx) = mpsc::unbounded_channel();
-    let (video_tx, mut video_rx) = mpsc::channel::<Bytes>(VIDEO_QUEUE);
+    let (video_tx, video_rx) = mpsc::channel::<Bytes>(VIDEO_QUEUE);
+    let (camera_tx, camera_rx) = mpsc::channel::<Bytes>(CAMERA_QUEUE);
     let id = {
         let mut room = room.lock().unwrap();
         let id = room.next_id;
@@ -714,6 +941,11 @@ async fn handle_connection(
                 keyframe_asked: None,
                 kicked: false,
                 avatar: Vec::new(),
+                cameras: HashMap::new(),
+                camera_video: camera_tx,
+                camera_layers: 0,
+                camera_keyframe_asked: [None; CAMERA_LAYERS],
+                camera_viewers: [0; CAMERA_LAYERS],
             },
         );
         id
@@ -730,19 +962,12 @@ async fn handle_connection(
         }
     });
 
-    // Кадры демонстрации этому участнику: каждый — отдельным потоком, по порядку.
-    let video_conn = conn.clone();
-    tokio::spawn(async move {
-        while let Some(packet) = video_rx.recv().await {
-            let Ok(mut stream) = video_conn.open_uni().await else { break };
-            if stream.write_all(&packet).await.is_err() {
-                break;
-            }
-            let _ = stream.finish();
-        }
-    });
+    // Кадры экрана и камер этому участнику: каждый — отдельным потоком, по
+    // порядку. Камеры важнее экрана: при нехватке канала QUIC отдаёт их первыми.
+    tokio::spawn(send_video(conn.clone(), video_rx, SCREEN_PRIORITY));
+    tokio::spawn(send_video(conn.clone(), camera_rx, CAMERA_PRIORITY));
 
-    // Кадры демонстрации от этого участника. Читаем потоки по одному, чтобы
+    // Кадры экрана и камеры от этого участника. Читаем потоки по одному, чтобы
     // кадры уходили зрителям в том же порядке, в каком были сняты.
     let video_conn = conn.clone();
     let video_room = room.clone();
@@ -754,7 +979,12 @@ async fn handle_connection(
             let mut packet = Vec::with_capacity(4 + data.len());
             packet.extend_from_slice(&id.to_le_bytes());
             packet.extend_from_slice(&data);
-            video_room.lock().unwrap().forward_video(id, header.keyframe, Bytes::from(packet));
+            let packet = Bytes::from(packet);
+            let mut room = video_room.lock().unwrap();
+            match header.kind {
+                VideoKind::Screen => room.forward_video(id, header.keyframe, packet),
+                VideoKind::Camera => room.forward_camera(id, header.layer, header.keyframe, packet),
+            }
         }
     });
 
@@ -808,7 +1038,11 @@ async fn handle_connection(
             for sharer in peer.watching {
                 room.send_viewer_count(sharer);
             }
+            for sharer in peer.cameras.keys() {
+                room.update_camera_viewers(*sharer);
+            }
             room.stop_sharing(id);
+            room.stop_camera(id);
         }
         room.broadcast(id, &ServerMsg::PeerLeft { id });
     }

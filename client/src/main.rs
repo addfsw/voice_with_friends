@@ -318,7 +318,8 @@ async fn connect(
     }
 
     println!("{COMMANDS_HELP}");
-    println!("t текст — написать в чат.\n");
+    println!("t текст — написать в чат.");
+    println!("cam — включить или выключить камеру (без камеры: VWF_FAKE_CAMERA=1).\n");
     let mut glitches = glitch_counters(&call.audio);
     let mut glitch_check = tokio::time::interval(GLITCH_REPORT_INTERVAL);
     let mut commands = spawn_stdin_reader();
@@ -348,7 +349,13 @@ async fn connect(
                 CallEvent::Chat(message) => print_chat(&message),
                 CallEvent::Viewers(count) => println!("Ваш экран смотрят: {count}"),
                 CallEvent::ShareStopped(reason) => println!("Демонстрация прервалась: {reason}"),
-                CallEvent::ScreenPacket { .. } | CallEvent::Avatar { .. } => {}
+                CallEvent::CameraViewers(layers) => {
+                    println!("Вашу камеру смотрят (по слоям, от маленького): {layers:?}");
+                }
+                CallEvent::CameraStopped(reason) => println!("Камера отключилась: {reason}"),
+                CallEvent::ScreenPacket { .. }
+                | CallEvent::CameraPacket { .. }
+                | CallEvent::Avatar { .. } => {}
                 CallEvent::Ended { reason, .. } => {
                     println!("Звонок завершён: {reason}.");
                     break;
@@ -357,6 +364,10 @@ async fn connect(
             Some(cmd) = commands.recv() => {
                 if let Some(text) = cmd.strip_prefix("t ") {
                     call.send_chat(text);
+                    continue;
+                }
+                if cmd.trim() == "cam" {
+                    toggle_camera(&call);
                     continue;
                 }
                 handle_command(&cmd, &call.audio, &names);
@@ -368,6 +379,31 @@ async fn connect(
 
     call.hang_up().await;
     Ok(())
+}
+
+/// `cam` — включить первую камеру (или выключить включённую). Без
+/// веб-камеры: `VWF_FAKE_CAMERA=1` — проверочная картинка.
+fn toggle_camera(call: &Call) {
+    if call.camera_on() {
+        call.stop_camera();
+        println!("Камера выключена.");
+        return;
+    }
+    let camera = match vwf_client::camera::cameras() {
+        Ok(list) => list.into_iter().next(),
+        Err(e) => {
+            println!("Камеры недоступны: {e:#}");
+            return;
+        }
+    };
+    let Some(camera) = camera else {
+        println!("Камер нет. Проверочная картинка — переменная VWF_FAKE_CAMERA=1.");
+        return;
+    };
+    match call.start_camera(&camera.id) {
+        Ok(()) => println!("Камера включена: {}", camera.name),
+        Err(e) => println!("Камера не включилась: {e:#}"),
+    }
 }
 
 /// Как часто сообщать о сбоях звука (чтобы не засорять консоль).

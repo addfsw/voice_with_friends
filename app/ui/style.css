@@ -3778,3 +3778,56 @@ html:not(.android) .android-only {
     scrollbar-width: thin;
   }
 }
+
+/* --- Камера в плитках ------------------------------------------------------
+   Видео — поверх аватарки (пока нет первого кадра, видна аватарка), значки
+   и имя — поверх видео. Своё превью зеркальное, как в зеркале. */
+.cam-video {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  cursor: zoom-in;
+  z-index: 1;
+}
+
+.cam-video canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.cam-video.playing {
+  background: #000;
+}
+
+.mirror {
+  transform: scaleX(-1);
+}
+
+.avatar.has-camera {
+  position: relative;
+}
+
+.peers.tiles .peer.has-camera {
+  overflow: hidden;
+}
+
+.peers.tiles .peer.has-camera .tile-top,
+.peers.tiles .peer.has-camera .tile-bottom,
+.peers.tiles .peer.has-camera > .menu-wrap {
+  z-index: 2;
+}
+
+/* На видео нужна подложка, иначе белый текст на светлом кадре не читается. */
+.peers.tiles .peer.has-camera .tile-top > * {
+  background: rgba(8, 9, 12, 0.55);
+  border-radius: 999px;
+}
+
+#camera-menu .menu-empty {
+  padding: 8px 12px;
+  color: var(--text-2);
+  font-size: 13px;
+}

@@ -5,6 +5,7 @@
 mod aaudio;
 pub mod audio;
 pub mod call;
+pub mod camera;
 pub mod cues;
 pub mod discovery;
 pub mod jitter;
