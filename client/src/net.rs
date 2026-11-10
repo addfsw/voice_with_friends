@@ -105,15 +105,17 @@ impl VoiceSender {
 /// успевает, и показывающий пропускает кадры до опорного.
 const VIDEO_SEND_QUEUE: usize = 3;
 
-/// Отправка кадров демонстрации экрана: каждый кадр — отдельный
+/// То же для камеры: кадры маленькие, но слоёв до трёх.
+const CAMERA_SEND_QUEUE: usize = 6;
+
+/// Отправка видеокадров (экрана или камеры): каждый кадр — отдельный
 /// однонаправленный поток, по порядку. Создаётся внутри рантайма tokio.
 #[derive(Clone)]
 pub struct VideoSender(tokio::sync::mpsc::Sender<crate::screen::VideoFrame>);
 
 impl VideoSender {
-    fn spawn(conn: quinn::Connection) -> Self {
-        let (tx, mut rx) =
-            tokio::sync::mpsc::channel::<crate::screen::VideoFrame>(VIDEO_SEND_QUEUE);
+    fn spawn(conn: quinn::Connection, queue: usize, priority: i32) -> Self {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<crate::screen::VideoFrame>(queue);
         tokio::spawn(async move {
             while let Some(frame) = rx.recv().await {
                 let mut packet = Vec::with_capacity(VideoHeader::LEN + frame.data.len());
@@ -122,8 +124,8 @@ impl VideoSender {
                 let Ok(mut stream) = conn.open_uni().await else { break };
                 // Голос (датаграммы) QUIC и так кладёт в пакет раньше потоков,
                 // а приоритет ниже обычного пропускает вперёд управляющие
-                // сообщения (чат, статусы).
-                let _ = stream.set_priority(-1);
+                // сообщения (чат, статусы). Камера важнее экрана.
+                let _ = stream.set_priority(priority);
                 if stream.write_all(&packet).await.is_err() {
                     break;
                 }
@@ -565,7 +567,12 @@ impl Session {
 
     /// Отправка кадров демонстрации (вызывать внутри рантайма tokio).
     pub fn video_sender(&self) -> VideoSender {
-        VideoSender::spawn(self.conn.clone())
+        VideoSender::spawn(self.conn.clone(), VIDEO_SEND_QUEUE, -2)
+    }
+
+    /// Отправка кадров камеры (вызывать внутри рантайма tokio).
+    pub fn camera_sender(&self) -> VideoSender {
+        VideoSender::spawn(self.conn.clone(), CAMERA_SEND_QUEUE, -1)
     }
 
     pub fn video_receiver(&self) -> VideoReceiver {
@@ -613,6 +620,7 @@ fn client_config() -> anyhow::Result<quinn::ClientConfig> {
     let mut transport = quinn::TransportConfig::default();
     transport.keep_alive_interval(Some(Duration::from_secs(5)));
     transport.max_idle_timeout(Some(Duration::from_secs(20).try_into()?));
+    transport.max_concurrent_uni_streams(vwf_proto::MAX_UNI_STREAMS.into());
     config.transport_config(Arc::new(transport));
     Ok(config)
 }

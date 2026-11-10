@@ -56,3 +56,48 @@ pub fn wait_ready() -> Result<(), String> {
         Err("звук ещё не готов: перезапустите программу".into())
     }
 }
+
+/// Кадр с камеры телефона (`CameraCapture.kt`, CameraX `YUV_420_888`):
+/// собираем I420 и отдаём камере звонка. Плоскости читаем прямо из памяти
+/// Java (direct `ByteBuffer`), без копирования в Kotlin.
+///
+/// Паника не должна уйти в Java — там это падение всей программы.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub extern "system" fn Java_io_github_addfsw_poigrulkiny_CameraCapture_nativeCameraFrame(
+    env: jni::JNIEnv,
+    _this: jni::objects::JObject,
+    width: jni::sys::jint,
+    height: jni::sys::jint,
+    y: jni::objects::JByteBuffer,
+    y_stride: jni::sys::jint,
+    u: jni::objects::JByteBuffer,
+    v: jni::objects::JByteBuffer,
+    uv_stride: jni::sys::jint,
+    uv_pixel_stride: jni::sys::jint,
+) {
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let plane = |buffer: &jni::objects::JByteBuffer| -> Option<&[u8]> {
+            let ptr = env.get_direct_buffer_address(buffer).ok()?;
+            let len = env.get_direct_buffer_capacity(buffer).ok()?;
+            // SAFETY: буфер живёт, пока Kotlin не закрыл кадр, а закрывает он
+            // его после возврата из этой функции.
+            (!ptr.is_null()).then(|| unsafe { std::slice::from_raw_parts(ptr, len) })
+        };
+        let (Some(y), Some(u), Some(v)) = (plane(&y), plane(&u), plane(&v)) else { return };
+        let (w, h) = (width.max(0) as usize & !1, height.max(0) as usize & !1);
+        let (y_stride, uv_stride, step) =
+            (y_stride.max(0) as usize, uv_stride.max(0) as usize, uv_pixel_stride.max(1) as usize);
+        // Проверяем, что плоскости не короче, чем обещают размеры.
+        let (cw, ch) = (w / 2, h / 2);
+        let y_ok = h == 0 || y.len() >= (h - 1) * y_stride + w;
+        let uv_need = if ch == 0 { 0 } else { (ch - 1) * uv_stride + (cw.max(1) - 1) * step + 1 };
+        if w < 2 || h < 2 || !y_ok || u.len() < uv_need || v.len() < uv_need {
+            return;
+        }
+        let frame = vwf_client::camera::I420::from_planes(
+            w as u32, h as u32, y, y_stride, u, v, uv_stride, step,
+        );
+        vwf_client::camera::android::push_frame(frame);
+    }));
+}

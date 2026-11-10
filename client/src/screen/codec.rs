@@ -127,18 +127,36 @@ impl H264Encoder {
             &image.rgba,
             (image.width as usize, image.height as usize),
         ));
-        if keyframe {
-            self.encoder.force_intra_frame();
-        }
-        let stream = self.encoder.encode(&self.yuv).context("ошибка кодера H.264")?;
-        let key = match stream.frame_type() {
-            FrameType::IDR | FrameType::I => true,
-            FrameType::P | FrameType::IPMixed => false,
-            FrameType::Skip | FrameType::Invalid => return Ok(None),
-        };
-        let data = stream.to_vec();
-        Ok((!data.is_empty()).then_some((data, key)))
+        encode_frame(&mut self.encoder, &self.yuv, keyframe)
     }
+
+    /// То же для кадра, который уже в YUV 4:2:0 (камера).
+    pub fn encode_yuv(
+        &mut self,
+        frame: &impl YUVSource,
+        keyframe: bool,
+    ) -> anyhow::Result<Option<(Vec<u8>, bool)>> {
+        debug_assert_eq!(frame.dimensions(), (self.width as usize, self.height as usize));
+        encode_frame(&mut self.encoder, frame, keyframe)
+    }
+}
+
+fn encode_frame(
+    encoder: &mut Encoder,
+    frame: &impl YUVSource,
+    keyframe: bool,
+) -> anyhow::Result<Option<(Vec<u8>, bool)>> {
+    if keyframe {
+        encoder.force_intra_frame();
+    }
+    let stream = encoder.encode(frame).context("ошибка кодера H.264")?;
+    let key = match stream.frame_type() {
+        FrameType::IDR | FrameType::I => true,
+        FrameType::P | FrameType::IPMixed => false,
+        FrameType::Skip | FrameType::Invalid => return Ok(None),
+    };
+    let data = stream.to_vec();
+    Ok((!data.is_empty()).then_some((data, key)))
 }
 
 /// Декодер H.264 одного собеседника: кадр сразу в JPEG для окна просмотра.
