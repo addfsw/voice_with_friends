@@ -11,3 +11,14 @@ server_key.der
 
 # tauri-cli для сборки под Android
 node_modules/
+
+# Ключ подписи Android и его пароль (секреты для GitHub Actions, см. README).
+# Хранить в надёжном месте, в репозиторий не добавлять.
+*.jks
+/ANDROID_KEYSTORE.txt
+/ANDROID_KEYSTORE_PASSWORD.txt
+# Ключ подписи обновлений для Windows (tauri signer) и его пароль.
+# Открытая половина (.pub) — в app/tauri.conf.json, её можно не хранить.
+/TAURI_SIGNING_PRIVATE_KEY.txt
+/TAURI_SIGNING_PRIVATE_KEY.txt.pub
+/TAURI_SIGNING_PRIVATE_KEY_PASSWORD.txt

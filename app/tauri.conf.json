@@ -30,6 +30,13 @@
     "targets": [
       "nsis"
     ],
+    "createUpdaterArtifacts": true,
+    "windows": {
+      "nsis": {
+        "languages": ["Russian"],
+        "installMode": "currentUser"
+      }
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -37,5 +44,13 @@
       "icons/icon.png",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE3MjBGN0M5RUEzMDczMjAKUldRZ2N6RHF5ZmNncDZVUEFobXFzT0pNWEk1dGl2eXhSMStLSjhUWlB1aFZzSk45UEtPbXpFd3AK",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

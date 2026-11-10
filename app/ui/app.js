@@ -2628,13 +2628,106 @@ function checkNewerApp() {
     if (!newerVersion(theirs.version, mine.version) || announcedVersions.has(theirs.text)) continue;
     announcedVersions.add(theirs.text);
     toast(
-      isAndroid
-        ? `У ${peer.name} программа новее (${theirs.text}). Попросите прислать: Настройки → «Отправить программу другу».`
-        : `У ${peer.name} программа новее (${theirs.text}). Попросите у него новую версию.`,
+      `У ${peer.name} программа новее (${theirs.text}). Обновиться: Настройки → «Проверить обновления».`,
     );
     return;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Обновление программы (app/src/update.rs)
+// ---------------------------------------------------------------------------
+
+// Версия новее установленной: { version, notes, apk } или null.
+let availableUpdate = null;
+// Идёт проверка или скачивание: кнопка не нажимается.
+let updateBusy = false;
+
+function setUpdateButton(text, busy = false) {
+  updateBusy = busy;
+  $("update-btn").textContent = text;
+  $("update-btn").disabled = busy;
+}
+
+function resetUpdateButton() {
+  setUpdateButton(availableUpdate ? `Обновить до ${availableUpdate.version}` : "Проверить обновления");
+}
+
+const capitalized = (text) => text.charAt(0).toUpperCase() + text.slice(1);
+
+// quiet — проверка при запуске: говорим только о найденной версии.
+async function checkUpdate({ quiet = false } = {}) {
+  if (updateBusy) return;
+  setUpdateButton("Проверяю…", true);
+  let failed = false;
+  try {
+    availableUpdate = await invoke("check_update");
+  } catch (e) {
+    failed = true;
+    if (!quiet) toast(capitalized(errorText(e)));
+  }
+  resetUpdateButton();
+  if (availableUpdate) {
+    toast(
+      quiet
+        ? `Вышла версия ${availableUpdate.version}. Обновиться: Настройки → «Обновить до ${availableUpdate.version}».`
+        : `Есть версия ${availableUpdate.version}. Нажмите «Обновить до ${availableUpdate.version}».`,
+    );
+  } else if (!quiet && !failed) {
+    toast("У вас последняя версия");
+  }
+}
+
+async function installUpdate() {
+  // Установщик закрывает программу, а с ней и комнату — у всех.
+  if (call.hosting) {
+    toast("Вы хост: сначала закройте комнату, потом обновляйтесь");
+    return;
+  }
+  setUpdateButton("Скачиваю…", true);
+  if (isAndroid) {
+    androidBridge?.installUpdate(availableUpdate.apk);
+    return;
+  }
+  try {
+    // Скачивает, кладёт трубку, ставит и перезапускает программу.
+    await invoke("install_update");
+  } catch (e) {
+    toast(capitalized(errorText(e)));
+    resetUpdateButton();
+  }
+}
+
+listen("update-progress", ({ payload }) => {
+  const { downloaded, total } = payload;
+  setUpdateButton(total ? `Скачиваю… ${Math.floor((downloaded * 100) / total)} %` : "Скачиваю…", true);
+});
+
+// Ход скачивания APK (MainActivity.installUpdate).
+window.onAndroidUpdate = (percent) => {
+  if (percent === -1) {
+    toast("Не удалось скачать обновление. Проверьте интернет и попробуйте ещё раз");
+    resetUpdateButton();
+  } else if (percent === -2) {
+    toast("Разрешите «Поигрулькиным» устанавливать приложения и нажмите «Обновить» ещё раз");
+    resetUpdateButton();
+  } else if (percent >= 100) {
+    // Открылся системный установщик. Он закроет программу — выходим из
+    // комнаты сами, чтобы остальные сразу это увидели.
+    if (call.me) leave();
+    resetUpdateButton();
+  } else {
+    setUpdateButton(`Скачиваю… ${percent} %`, true);
+  }
+};
+
+$("update-btn").addEventListener("click", () => {
+  if (availableUpdate) installUpdate();
+  else checkUpdate();
+});
+
+// Проверка при запуске — чуть позже, чтобы не мешать поиску комнат.
+setTimeout(() => checkUpdate({ quiet: true }), 5000);
 
 window.__TAURI__?.app
   ?.getVersion()

@@ -3164,17 +3164,27 @@ button.key.listening {
 /* Самый низ настроек: версия и (на телефоне) «Отправить программу другу». */
 .app-row {
   display: flex;
+  flex-wrap: wrap;
   white-space: nowrap;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 6px 12px;
   padding-top: 12px;
   border-top: 1px solid var(--border);
 }
 
 .app-row .link {
-  margin-left: auto;
   padding: 0;
+}
+
+.app-row .link:disabled {
+  color: var(--text-2);
+  cursor: default;
+  text-decoration: none;
+}
+
+/* «Отправить программу другу» — справа, рядом с версией — обновление. */
+.app-row #send-app {
+  margin-left: auto;
 }
 
 /* Строка-ссылка на страницу настроек: значок, название, что выбрано, стрелка. */

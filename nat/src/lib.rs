@@ -33,6 +33,23 @@ pub fn install_crypto_provider() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
+/// HTTPS-клиент для почтового ящика и проверки обновлений программы.
+pub fn http_client() -> anyhow::Result<reqwest::Client> {
+    install_crypto_provider();
+    let builder = reqwest::Client::builder().connect_timeout(std::time::Duration::from_secs(10));
+    // На Android reqwest по умолчанию проверяет сертификат через Java
+    // (rustls-platform-verifier), а её без инициализации из JNI нет: TLS-
+    // рукопожатие с ntfy.sh паниковало, и вход по коду приглашения с
+    // телефона зависал. Проверяем по встроенному списку корневых сертификатов.
+    #[cfg(target_os = "android")]
+    let builder = builder.tls_certs_only(
+        webpki_root_certs::TLS_SERVER_ROOT_CERTS
+            .iter()
+            .filter_map(|der| reqwest::Certificate::from_der(der).ok()),
+    );
+    anyhow::Context::context(builder.build(), "не удалось создать HTTP-клиент")
+}
+
 /// Новый случайный идентификатор комнаты для кода приглашения.
 pub fn new_room_id() -> [u8; 16] {
     random_bytes()

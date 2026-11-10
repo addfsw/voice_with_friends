@@ -11,11 +11,15 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
 import androidx.core.app.ActivityCompat
@@ -152,6 +156,48 @@ class MainActivity : TauriActivity() {
     callAudio.stop()
     chatNotifier.clear()
     super.onDestroy()
+  }
+
+  private fun updateProgress(percent: Int) {
+    webView?.evaluateJavascript("window.onAndroidUpdate && window.onAndroidUpdate($percent)", null)
+  }
+
+  /// Скачивает APK обновления в кэш программы (GitHub отдаёт его через
+  /// переадресацию на свой сервер файлов — HttpURLConnection идёт по ней сам).
+  private fun downloadApk(url: String): File {
+    val dir = File(cacheDir, "apk").apply { mkdirs() }
+    val apk = File(dir, "Poigrulkiny-update.apk")
+    val connection = URL(url).openConnection() as HttpURLConnection
+    connection.connectTimeout = 15_000
+    connection.readTimeout = 30_000
+    try {
+      if (connection.responseCode != HttpURLConnection.HTTP_OK) {
+        throw java.io.IOException("HTTP ${connection.responseCode}")
+      }
+      val total = connection.contentLengthLong
+      var done = 0L
+      var shown = -1
+      connection.inputStream.use { input ->
+        apk.outputStream().use { output ->
+          val buffer = ByteArray(64 * 1024)
+          while (true) {
+            val read = input.read(buffer)
+            if (read < 0) break
+            output.write(buffer, 0, read)
+            done += read
+            // До 99: 100 — когда файл готов и открывается установщик.
+            val percent = if (total > 0) (done * 99 / total).toInt() else 0
+            if (percent != shown) {
+              shown = percent
+              runOnUiThread { updateProgress(percent) }
+            }
+          }
+        }
+      }
+    } finally {
+      connection.disconnect()
+    }
+    return apk
   }
 
   /// Цвет подложки под системными панелями — как фон интерфейса.
@@ -305,6 +351,40 @@ class MainActivity : TauriActivity() {
             .putExtra(Intent.EXTRA_STREAM, uri)
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
           startActivity(Intent.createChooser(send, "Отправить программу"))
+        }
+      }.start()
+    }
+
+    /// «Обновить»: скачать APK из релиза и открыть системный установщик.
+    /// Ход скачивания — в window.onAndroidUpdate(проценты); -1 — ошибка,
+    /// -2 — нужно разрешить установку из этой программы (открыли настройки).
+    /// Поверх встанет только APK, подписанный тем же ключом, — это проверяет
+    /// сам Android.
+    @JavascriptInterface
+    fun installUpdate(url: String) {
+      if (!packageManager.canRequestPackageInstalls()) {
+        runOnUiThread {
+          startActivity(
+            Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName"))
+          )
+          updateProgress(-2)
+        }
+        return
+      }
+      Thread {
+        val apk = try {
+          downloadApk(url)
+        } catch (e: Exception) {
+          runOnUiThread { updateProgress(-1) }
+          return@Thread
+        }
+        runOnUiThread {
+          updateProgress(100)
+          val uri = FileProvider.getUriForFile(this@MainActivity, "$packageName.fileprovider", apk)
+          val install = Intent(Intent.ACTION_VIEW)
+            .setDataAndType(uri, "application/vnd.android.package-archive")
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+          startActivity(install)
         }
       }.start()
     }

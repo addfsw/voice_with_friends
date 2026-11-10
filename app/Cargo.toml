@@ -30,6 +30,9 @@ serde.workspace = true
 serde_json.workspace = true
 base64.workspace = true
 tokio.workspace = true
+# Проверка обновлений: latest.json из последнего релиза на GitHub.
+reqwest.workspace = true
+semver = "1"
 # custom-protocol: интерфейс встраивается в exe, и программа работает
 # после обычного `cargo build`, без отдельного dev-сервера и tauri-cli.
 # tray-icon — значок в трее рядом с часами.
@@ -42,6 +45,9 @@ tauri-plugin-opener = "2"
 tauri-plugin-global-shortcut = "2"
 # Второй запуск программы не открывает вторую копию, а показывает первую.
 tauri-plugin-single-instance = "2"
+# Обновление из программы: скачивает установщик из релиза, проверяет его
+# подпись и ставит поверх. На Android — своя установка APK (MainActivity.kt).
+tauri-plugin-updater = "2"
 
 # Android: передать Java-машину и Activity звуковой библиотеке (src/android.rs).
 # jni — той же версии, что у wry.

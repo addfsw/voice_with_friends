@@ -15,6 +15,7 @@ mod rooms;
 mod screen;
 #[cfg(desktop)]
 mod tray;
+mod update;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -1115,7 +1116,8 @@ pub fn run() {
     let builder = builder
         // Первым: второй запуск программы просто показывает уже открытое окно.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| tray::show_window(app)))
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build());
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_updater::Builder::new().build());
     builder
         // В релизной сборке окна не перезагружаются ни меню по правому клику,
         // ни клавишами (F5, Ctrl+R). В отладочной это нужно для разработки.
@@ -1146,6 +1148,7 @@ pub fn run() {
             mic_test: Mutex::new(None),
         })
         .manage(screen::Screens::default())
+        .manage(update::Updates::default())
         .setup(|app| {
             // Файл с запомненными сертификатами — в папке данных программы.
             #[cfg(target_os = "android")]
@@ -1212,6 +1215,8 @@ pub fn run() {
             screen::subscribe_screen,
             screen::request_keyframe,
             screen::stop_watching,
+            update::check_update,
+            update::install_update,
             discover_servers,
             check_rooms,
             set_mode,
