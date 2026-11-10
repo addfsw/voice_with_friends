@@ -228,10 +228,12 @@ jobs:
             console.log("Версия", conf.version);
           '
 
-      # Установщик NSIS и его подпись (.sig): по ней программа проверяет,
-      # что скачанное обновление собрано здесь (открытый ключ — в
-      # tauri.conf.json, закрытый — в секрете TAURI_SIGNING_PRIVATE_KEY).
-      - name: Сборка установщика
+      # Сама программа (Poigrulkiny.exe — её запускают откуда угодно, она же
+      # обновляет себя на месте), установщик NSIS для версий 0.1.63–0.1.66
+      # (их обновление умеет только запускать установщик) и подписи (.sig):
+      # по ним программа проверяет, что скачанное собрано здесь (открытый ключ
+      # — в tauri.conf.json, закрытый — в секрете TAURI_SIGNING_PRIVATE_KEY).
+      - name: Сборка программы и установщика
         working-directory: app
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -251,9 +253,14 @@ jobs:
           nsis=../target/release/bundle/nsis
           ls -la "$nsis"
           mkdir -p ../out
+          cp ../target/release/poigrulkiny.exe ../out/Poigrulkiny.exe
           cp "$(ls "$nsis"/*-setup.exe | head -1)" ../out/Poigrulkiny-setup.exe
           if ls "$nsis"/*-setup.exe.sig > /dev/null 2>&1; then
             cp "$(ls "$nsis"/*-setup.exe.sig | head -1)" ../out/Poigrulkiny-setup.exe.sig
+          fi
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            # Ключ и пароль tauri signer берёт из тех же переменных окружения.
+            npm run tauri -- signer sign ../out/Poigrulkiny.exe
           fi
           du -h ../out/*
 
@@ -300,11 +307,13 @@ jobs:
             --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --arg base "$base" \
             --arg sig "$(cat files/Poigrulkiny-setup.exe.sig)" \
+            --arg exe_sig "$(cat files/Poigrulkiny.exe.sig)" \
             '{
               version: $version,
               notes: $notes,
               pub_date: $date,
               platforms: {
+                "windows-x86_64-exe": { url: ($base + "/Poigrulkiny.exe"), signature: $exe_sig },
                 "windows-x86_64": { url: ($base + "/Poigrulkiny-setup.exe"), signature: $sig },
                 "android-aarch64": { url: ($base + "/Poigrulkiny.apk"), signature: "" }
               }
@@ -315,4 +324,6 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "Поигрулькины $version" \
             --notes "${notes:-Новая версия}" \
-            files/Poigrulkiny.apk files/Poigrulkiny-setup.exe files/Poigrulkiny-setup.exe.sig files/latest.json
+            files/Poigrulkiny.exe files/Poigrulkiny.exe.sig \
+            files/Poigrulkiny.apk files/Poigrulkiny-setup.exe files/Poigrulkiny-setup.exe.sig \
+            files/latest.json

@@ -45,9 +45,20 @@ tauri-plugin-opener = "2"
 tauri-plugin-global-shortcut = "2"
 # Второй запуск программы не открывает вторую копию, а показывает первую.
 tauri-plugin-single-instance = "2"
-# Обновление из программы: скачивает установщик из релиза, проверяет его
-# подпись и ставит поверх. На Android — своя установка APK (MainActivity.kt).
-tauri-plugin-updater = "2"
+
+# Windows: обновление на месте (src/selfupdate.rs) — подпись minisign (как у
+# tauri signer), подмена запущенного exe; ярлык в «Пуске» (src/shortcut.rs).
+# windows — та же версия, что уже есть в дереве зависимостей.
+[target.'cfg(windows)'.dependencies]
+minisign-verify = "0.2"
+self-replace = "1"
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_UI_Shell",
+] }
 
 # Android: передать Java-машину и Activity звуковой библиотеке (src/android.rs).
 # jni — той же версии, что у wry.

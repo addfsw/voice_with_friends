@@ -13,6 +13,10 @@ mod android;
 mod camera;
 mod host;
 mod rooms;
+#[cfg(windows)]
+pub mod selfupdate;
+#[cfg(windows)]
+mod shortcut;
 mod screen;
 #[cfg(desktop)]
 mod tray;
@@ -1135,13 +1139,18 @@ async fn status(state: State<'_, AppState>) -> CmdResult<Status> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(windows)]
+    {
+        // Нас запустило обновление — дождаться, пока старая копия закроется.
+        selfupdate::wait_for_previous();
+        shortcut::ensure_start_menu_shortcut();
+    }
     let builder = tauri::Builder::default();
     #[cfg(desktop)]
     let builder = builder
         // Первым: второй запуск программы просто показывает уже открытое окно.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| tray::show_window(app)))
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .plugin(tauri_plugin_updater::Builder::new().build());
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build());
     builder
         // В релизной сборке окна не перезагружаются ни меню по правому клику,
         // ни клавишами (F5, Ctrl+R). В отладочной это нужно для разработки.
