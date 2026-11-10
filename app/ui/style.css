@@ -3810,8 +3810,59 @@ html:not(.android) .android-only {
   position: relative;
 }
 
-.peers.tiles .peer.has-camera {
-  overflow: hidden;
+/* Плитка с открытым меню — над соседними, иначе их видео и значки
+   перекрывают меню. */
+.peers.tiles .peer:has(.menu:not([hidden])) {
+  z-index: 5;
+}
+
+/* Телефон: «перевернуть камеру» — на своём видео, как в Telegram. */
+.cam-flip {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 50%;
+  background: rgba(8, 9, 12, 0.55);
+  color: #fff;
+}
+
+.peers.tiles .peer > .cam-flip {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+}
+
+/* Узкое окно на компьютере (по умолчанию 420 точек): кнопки внизу
+   компактнее, чтобы имя и статус не обрезались. */
+@media (max-width: 520px) {
+  .dock {
+    gap: 6px;
+    padding-left: 8px;
+  }
+
+  .dock-buttons {
+    gap: 0;
+  }
+
+  :root:not(.android) .dock-btn {
+    width: 30px;
+  }
+
+  :root:not(.android) .split .dock-btn {
+    width: 28px;
+  }
+
+  .dock-caret {
+    width: 12px;
+  }
+
+  /* Телефон: кнопки остаются крупными для пальца, кроме выхода. */
+  .android .dock-btn.leave {
+    width: 40px;
+  }
 }
 
 .peers.tiles .peer.has-camera .tile-top,

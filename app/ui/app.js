@@ -77,6 +77,8 @@ const ICON_PATHS = {
   screen:
     "M21 3H3a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h5v2h8v-2h5a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2Zm0 14H3V5h18v12Z",
   camera: "M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4Z",
+  "camera-flip":
+    "M16 7h-1l-1-1h-4L9 7H8a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2Zm-4 7a2 2 0 1 1 0-4 2 2 0 0 1 0 4ZM8.57.51l4.48 4.48V2.04A10 10 0 0 1 22 11h2C23.34 4.02 16.65-1.11 8.57.51Zm2.38 21.45A10 10 0 0 1 2 13H0c.66 6.97 7.35 12.1 15.43 10.48l-4.48-4.48v2.95Z",
   lock: "M18 8h-1V6A5 5 0 0 0 7 6v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2Zm-6 9a2 2 0 1 1 0-4 2 2 0 0 1 0 4Zm3.1-9H8.9V6a3.1 3.1 0 0 1 6.2 0v2Z",
   plus: "M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2Z",
   "lock-open":
@@ -1133,6 +1135,7 @@ function enterRoom(server, name, joined, title = null) {
   call.quality.clear();
   qualityCounters.clear();
   call.qualityTimer = setInterval(refreshQuality, 2000);
+  refreshCameraPill();
 }
 
 // Сведения о комнате после (пере)подключения.
@@ -1447,7 +1450,7 @@ function renderDock() {
     status.textContent = `показываете экран · смотрят: ${call.viewers}`;
     status.classList.add("live");
   } else if (call.camera) {
-    status.textContent = `камера включена · видят: ${call.cameraViewers}`;
+    status.textContent = `камера · видят: ${call.cameraViewers}`;
     status.classList.add("live");
   } else {
     const key = store.get("pttKey", null);
@@ -1604,14 +1607,34 @@ function peerItem(peer, isMe) {
     });
   }
 
+  // Телефон: перевернуть свою камеру — прямо на своей плитке, как в Telegram.
+  const flip = camera && isMe && isAndroid ? cameraFlipButton() : null;
   if ($("peers").classList.contains("tiles")) {
     tileLayout(li, peer, avatar, main, side);
     if (camera) li.prepend(camera.box);
+    if (flip) li.append(flip);
   } else {
     if (camera) avatar.append(camera.box);
+    if (flip) side.prepend(flip);
     li.append(avatar, main, side);
   }
   return li;
+}
+
+function cameraFlipButton() {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "cam-flip";
+  button.setAttribute("aria-label", "Перевернуть камеру");
+  button.title = call.cameraId === "back" ? "Включить фронтальную камеру" : "Включить основную камеру";
+  button.append(icon("camera-flip"));
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const next = call.cameraId === "back" ? "front" : "back";
+    store.set("camera", next);
+    startCamera(next);
+  });
+  return button;
 }
 
 // Плитка «сцена»: фон цвета аватара, вверху — «в эфире» и связь, в центре —
@@ -2667,6 +2690,20 @@ async function openCameraMenu() {
   }
   menu.hidden = false;
 }
+
+// Стрелка выбора камеры — только когда выбирать есть из чего (на телефоне
+// вместо неё кнопка «перевернуть» на своей плитке). Так внизу просторнее.
+async function refreshCameraPill() {
+  if (isAndroid || !call.me) return;
+  try {
+    const list = await invoke("camera_sources");
+    $("camera-pill").hidden = list.length < 2;
+  } catch {
+    $("camera-pill").hidden = true;
+  }
+}
+
+window.addEventListener("focus", refreshCameraPill);
 
 $("camera-pill").addEventListener("click", (event) => {
   event.stopPropagation();
