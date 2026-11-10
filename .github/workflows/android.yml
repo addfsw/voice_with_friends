@@ -1,0 +1,316 @@
+# Сборка APK для Android и установщика для Windows, выпуск релиза.
+#
+# Запуск:
+# - кнопкой «Run workflow» на вкладке Actions. С галочкой «Выпустить
+#   релиз» (только в ветке main) собираются обе версии и публикуются
+#   в Releases — программы друзей найдут обновление сами;
+# - пушем коммита, в сообщении которого есть [android] (только APK),
+#   [windows] (только установщик) или [release] (релиз, только в main).
+# Готовые файлы — в разделе Artifacts запуска.
+#
+# Номер версии — 0.1.<номер запуска>, общий для обеих систем. Файл не
+# переименовывать: у нового файла нумерация запусков начнётся с 1, и
+# новые версии окажутся «старше» установленных.
+name: Сборка
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Выпустить релиз (обновление для всех)
+        type: boolean
+        default: false
+      notes:
+        description: Что нового (видно в программе при обновлении)
+        type: string
+        default: ""
+  push:
+
+env:
+  RELEASE: ${{ github.ref == 'refs/heads/main' && (inputs.release || contains(github.event.head_commit.message, '[release]')) }}
+
+jobs:
+  apk:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.head_commit.message, '[android]') ||
+      contains(github.event.head_commit.message, '[release]')
+    # На уровне задачи, а не всего workflow: пуш без [android] (задача
+    # пропускается) не должен отменять идущую сборку.
+    concurrency:
+      group: android-${{ github.ref }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      # Сборка под две архитектуры и эмулятор не помещаются на диск раннера
+      # вместе с предустановленными .NET, Haskell и т.п. — они нам не нужны.
+      - name: Место на диске
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost \
+            /opt/hostedtoolcache/CodeQL /usr/share/swift /usr/local/share/powershell
+          df -h /
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # x86_64 — для эмулятора, на котором APK проверяется после сборки.
+          targets: aarch64-linux-android,x86_64-linux-android
+
+      # Ассемблер для быстрой сборки H.264 под x86_64 (см. client/build.rs).
+      - name: NASM
+        run: sudo apt-get install -y nasm
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android
+
+      - name: tauri-cli
+        working-directory: app
+        run: npm ci
+
+      # Номер сборки — в версии программы (0.1.<номер запуска>): по ней в
+      # комнате видно, у кого программа новее, а Android ставит новую
+      # версию поверх старой (versionCode растёт).
+      - name: Номер версии
+        working-directory: app
+        run: |
+          node -e '
+            const fs = require("fs");
+            const conf = JSON.parse(fs.readFileSync("tauri.conf.json", "utf8"));
+            conf.version = "0.1." + process.env.GITHUB_RUN_NUMBER;
+            fs.writeFileSync("tauri.conf.json", JSON.stringify(conf, null, 2) + "\n");
+            console.log("Версия", conf.version);
+          '
+
+      - name: Сборка APK (arm64 и x86_64)
+        working-directory: app
+        run: |
+          # NDK уже установлен на раннере. NDK_HOME нужен tauri-cli,
+          # ANDROID_NDK_HOME — сборке Opus (CMake).
+          export NDK_HOME="$ANDROID_NDK_LATEST_HOME"
+          export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
+          # Кодек H.264 (C++) связан с libc++_shared.so, а tauri кладёт в APK
+          # только нашу библиотеку. Без неё программа падает при запуске.
+          sysroot="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib"
+          libs=gen/android/app/src/main/jniLibs
+          mkdir -p "$libs/arm64-v8a" "$libs/x86_64"
+          cp "$sysroot/aarch64-linux-android/libc++_shared.so" "$libs/arm64-v8a/"
+          cp "$sysroot/x86_64-linux-android/libc++_shared.so" "$libs/x86_64/"
+          # Отдельный APK на архитектуру: людям — только arm64 (ARMv8),
+          # x86_64 — для проверки на эмуляторе.
+          # Подпись обновлений (createUpdaterArtifacts) — только для Windows:
+          # APK проверяет сам Android по ключу подписи APK.
+          npm run tauri -- android build --apk --split-per-abi --target aarch64 --target x86_64 --ci \
+            --config '{"bundle":{"createUpdaterArtifacts":false}}'
+
+      - name: Подпись APK
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          tools="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > keystore.jks
+            pass="$KEYSTORE_PASSWORD"
+          elif [ "$RELEASE" = true ]; then
+            echo "::error::Для релиза нужен секрет ANDROID_KEYSTORE: APK с временным ключом не встанет поверх установленного. См. README, раздел про Android."
+            exit 1
+          else
+            echo "::warning::Секрет ANDROID_KEYSTORE не задан: APK подписан временным ключом. Поверх такой версии новую не установить — только удалить старую. См. README, раздел про Android."
+            pass="temporary"
+            keytool -genkeypair -keystore keystore.jks -storepass "$pass" -keypass "$pass" \
+              -alias poigrulkiny -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Poigrulkiny"
+          fi
+          outputs=app/gen/android/app/build/outputs/apk
+          strip="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
+          sign() {
+            # Библиотеки без отладочной информации: libc++_shared.so из NDK
+            # с ней весит 9 МБ вместо ~1,5.
+            local apk work
+            apk="$(realpath "$1")"
+            work="$(mktemp -d)"
+            (cd "$work" && unzip -q "$apk" 'lib/*' && "$strip" --strip-unneeded lib/*/*.so && zip -q -r -9 "$apk" lib)
+            rm -rf "$work"
+            "$tools/zipalign" -p -f 4 "$1" aligned.apk
+            "$tools/apksigner" sign --ks keystore.jks --ks-pass "pass:$pass" --out "$2" aligned.apk
+            rm aligned.apk
+            echo "$2: $(du -h "$2" | cut -f1)"
+            unzip -v "$2" | grep -E "\.so$"
+          }
+          sign "$(find $outputs -name '*arm64*release-unsigned.apk' | head -1)" Poigrulkiny.apk
+          sign "$(find $outputs -name '*x86_64*release-unsigned.apk' | head -1)" Poigrulkiny-x86_64.apk
+          "$tools/apksigner" verify --print-certs Poigrulkiny.apk
+          rm -f keystore.jks
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Poigrulkiny-android
+          path: Poigrulkiny.apk
+          retention-days: 30
+
+      # Проверка: APK ставится на эмулятор и не закрывается при запуске.
+      - name: KVM для эмулятора
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Запуск на эмуляторе
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          disk-size: 3000M
+          script: ./scripts/android-smoke.sh
+
+  windows:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.head_commit.message, '[windows]') ||
+      contains(github.event.head_commit.message, '[release]')
+    concurrency:
+      group: windows-${{ github.ref }}
+      cancel-in-progress: true
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Ассемблер для быстрого H.264 (см. client/build.rs). CMake на раннере уже есть.
+      - name: NASM
+        run: |
+          choco install nasm -y --no-progress
+          echo 'NASM=C:\Program Files\NASM\nasm.exe' >> "$GITHUB_ENV"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows
+
+      - name: tauri-cli
+        working-directory: app
+        run: npm ci
+
+      - name: Номер версии
+        working-directory: app
+        run: |
+          node -e '
+            const fs = require("fs");
+            const conf = JSON.parse(fs.readFileSync("tauri.conf.json", "utf8"));
+            conf.version = "0.1." + process.env.GITHUB_RUN_NUMBER;
+            fs.writeFileSync("tauri.conf.json", JSON.stringify(conf, null, 2) + "\n");
+            console.log("Версия", conf.version);
+          '
+
+      # Установщик NSIS и его подпись (.sig): по ней программа проверяет,
+      # что скачанное обновление собрано здесь (открытый ключ — в
+      # tauri.conf.json, закрытый — в секрете TAURI_SIGNING_PRIVATE_KEY).
+      - name: Сборка установщика
+        working-directory: app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          extra=()
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            if [ "$RELEASE" = true ]; then
+              echo "::error::Для релиза нужен секрет TAURI_SIGNING_PRIVATE_KEY: без подписи программа не примет обновление. См. README, раздел «Обновления»."
+              exit 1
+            fi
+            echo "::warning::Секрет TAURI_SIGNING_PRIVATE_KEY не задан: установщик собран без подписи обновления."
+            extra=(--config '{"bundle":{"createUpdaterArtifacts":false}}')
+          fi
+          npm run tauri -- build --ci "${extra[@]}"
+          nsis=../target/release/bundle/nsis
+          ls -la "$nsis"
+          mkdir -p ../out
+          cp "$(ls "$nsis"/*-setup.exe | head -1)" ../out/Poigrulkiny-setup.exe
+          if ls "$nsis"/*-setup.exe.sig > /dev/null 2>&1; then
+            cp "$(ls "$nsis"/*-setup.exe.sig | head -1)" ../out/Poigrulkiny-setup.exe.sig
+          fi
+          du -h ../out/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Poigrulkiny-windows
+          path: out/*
+          retention-days: 30
+
+  # Релиз: оба файла и latest.json, по которому программы находят
+  # обновление (app/src/update.rs). Только после проверки APK на эмуляторе.
+  release:
+    needs: [apk, windows]
+    if: github.ref == 'refs/heads/main' && (inputs.release || contains(github.event.head_commit.message, '[release]'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: files
+          merge-multiple: true
+
+      - name: Публикация
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTES_INPUT: ${{ inputs.notes }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          set -euo pipefail
+          version="0.1.$GITHUB_RUN_NUMBER"
+          tag="v$version"
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$tag"
+          notes="$NOTES_INPUT"
+          if [ -z "$notes" ]; then
+            notes="$(printf '%s' "$COMMIT_MESSAGE" | sed 's/\[release\]//g; s/[[:space:]]*$//')"
+          fi
+          ls -la files
+          jq -n \
+            --arg version "$version" \
+            --arg notes "$notes" \
+            --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg base "$base" \
+            --arg sig "$(cat files/Poigrulkiny-setup.exe.sig)" \
+            '{
+              version: $version,
+              notes: $notes,
+              pub_date: $date,
+              platforms: {
+                "windows-x86_64": { url: ($base + "/Poigrulkiny-setup.exe"), signature: $sig },
+                "android-aarch64": { url: ($base + "/Poigrulkiny.apk"), signature: "" }
+              }
+            }' > files/latest.json
+          cat files/latest.json
+          gh release create "$tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Поигрулькины $version" \
+            --notes "${notes:-Новая версия}" \
+            files/Poigrulkiny.apk files/Poigrulkiny-setup.exe files/Poigrulkiny-setup.exe.sig files/latest.json

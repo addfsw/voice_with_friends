@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Значок уведомления «Вы в голосовой комнате»: наушники-«П» без фона. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="72"
+    android:viewportHeight="72">
+  <group
+      android:translateX="-14"
+      android:translateY="-16">
+    <path
+        android:pathData="M30,62 V38 Q30,24 44,24 H56 Q70,24 70,38 V62"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="9"
+        android:strokeLineCap="round" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M28,52 h3 a8,8 0 0 1 8,8 v12 a8,8 0 0 1 -8,8 h-3 a8,8 0 0 1 -8,-8 v-12 a8,8 0 0 1 8,-8 z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M69,52 h3 a8,8 0 0 1 8,8 v12 a8,8 0 0 1 -8,8 h-3 a8,8 0 0 1 -8,-8 v-12 a8,8 0 0 1 8,-8 z" />
+  </group>
+</vector>

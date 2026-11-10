@@ -7,11 +7,12 @@ rust-version.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "vwf-server"
+name = "poigrulkiny-server"
 path = "src/main.rs"
 
 [dependencies]
 vwf-proto.workspace = true
+vwf-nat.workspace = true
 anyhow.workspace = true
 bytes.workspace = true
 clap.workspace = true
@@ -19,7 +20,6 @@ if-addrs.workspace = true
 quinn.workspace = true
 rcgen.workspace = true
 rustls.workspace = true
-sha2.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

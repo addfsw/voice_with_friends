@@ -1,0 +1,636 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content" />
+    <title>Поигрулькины</title>
+    <!-- Тему применяем до первой отрисовки, чтобы окно не мигало светлым. -->
+    <script src="theme.js"></script>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <!-- Экран подключения -->
+    <main id="connect-view" class="view">
+      <header class="brand">
+        <div class="logo" aria-hidden="true">
+          <svg viewBox="0 0 100 100"><path d="M30 62V38q0-14 14-14h12q14 0 14 14v24" fill="none" stroke="#fff" stroke-width="9" stroke-linecap="round"/><rect x="20" y="52" width="19" height="28" rx="8"/><rect x="61" y="52" width="19" height="28" rx="8"/><circle cx="50" cy="66" r="4" fill="#3ddc84"/></svg>
+        </div>
+        <div class="brand-titles">
+          <h1>Поигрулькины</h1>
+          <p class="tagline">Голосовая комната для своих</p>
+        </div>
+        <button type="button" id="help-btn" class="icon-btn head-btn" data-icon="help" aria-label="Как это работает" data-tip="Как это работает"></button>
+        <button type="button" class="icon-btn head-btn open-settings tip-right" data-icon="gear" aria-label="Настройки" data-tip="Настройки"></button>
+      </header>
+
+      <div class="stack connect-form">
+        <label class="who">
+          <span id="who-avatar" class="avatar who-avatar" aria-hidden="true"></span>
+          <span class="who-text">
+            <span>Ваше имя</span>
+            <input id="name" maxlength="32" required placeholder="Как вас называть" autocomplete="off" />
+          </span>
+        </label>
+
+        <!-- Проверка микрофона: запись на несколько секунд, затем она проигрывается. -->
+        <div class="mic-test">
+          <button type="button" id="mic-test-btn" class="mic-test-btn">
+            <span data-icon="mic"></span>
+            <span id="mic-test-label">Проверить микрофон</span>
+          </button>
+          <div class="meter mic-test-meter" aria-hidden="true">
+            <div id="mic-test-bar" class="meter-fill"></div>
+          </div>
+        </div>
+        <p id="mic-test-hint" class="hint mic-test-hint" hidden></p>
+
+        <section class="lan">
+          <div class="section-head">
+            <span>Войти в комнату</span>
+            <button type="button" id="lan-refresh" class="link">обновить</button>
+          </div>
+
+          <div id="cert-warning" class="cert-warning" hidden>
+            <div class="cert-title">Сертификат сервера изменился</div>
+            <p class="hint">
+              Сервер <b id="cert-address"></b> раньше предъявлял другой сертификат.
+              Так бывает, если хост переустановил программу. Но так же выглядит
+              и подмена сервера кем-то посередине.
+            </p>
+            <p class="hint">
+              Спросите у хоста код сервера (он виден у хоста в окне «Пригласить друзей»
+              или в окне сервера):
+            </p>
+            <div class="cert-codes">
+              <span class="hint">было</span> <code id="cert-known"></code>
+              <span class="hint">стало</span> <code id="cert-presented"></code>
+            </div>
+            <div class="cert-actions">
+              <button type="button" id="cert-cancel">Отмена</button>
+              <button type="button" id="cert-trust" class="danger" title="Код совпал с тем, что видит хост: запомнить новый сертификат">Доверять</button>
+            </div>
+          </div>
+
+          <ul id="join-list" class="lan-list join-list"></ul>
+          <p id="lan-status" class="hint">Ищу комнаты в сети…</p>
+
+          <button type="button" id="manual-open" class="join-manual">
+            <span class="join-ico" data-icon="link"></span>
+            <span>Войти по адресу или коду</span>
+          </button>
+          <form id="manual-form" class="manual" autocomplete="off" hidden>
+            <div class="manual-head">
+              <span>Вход по адресу или коду</span>
+              <button type="button" id="manual-close" class="icon-btn" data-icon="close" aria-label="Закрыть"></button>
+            </div>
+            <p class="hint">Вставьте код приглашения от друга или адрес вида 192.168.1.10</p>
+            <input id="server" placeholder="poi-… или 192.168.1.10" required spellcheck="false" aria-label="Код приглашения или адрес" />
+            <input id="manual-pass" type="password" maxlength="64" placeholder="Пароль (если нужен)" aria-label="Пароль комнаты" />
+            <p id="manual-error" class="error" hidden></p>
+            <button type="submit" id="connect-btn" class="primary big">Войти</button>
+          </form>
+        </section>
+
+        <section class="lan">
+          <div class="section-head">
+            <span>Мои комнаты</span>
+            <button type="button" id="new-room-btn" class="link add-room" data-icon="plus">Новая</button>
+          </div>
+          <ul id="my-rooms" class="lan-list my-rooms"></ul>
+          <p id="rooms-hint" class="hint android-only">
+            Комната на телефоне работает, пока он в Wi-Fi: друзья из той же сети
+            найдут её в списке, остальные — по коду приглашения.
+          </p>
+        </section>
+
+        <p class="hint center footnote">
+          Своя комната запускается прямо в программе. У каждой комнаты свой код
+          приглашения — друзья из разных компаний не попадут друг к другу.
+        </p>
+      </div>
+    </main>
+
+    <!-- Комната -->
+    <main id="room-view" class="view" hidden>
+      <header class="room-header">
+        <div class="room-titles">
+          <div id="room-title" class="room-title">Комната</div>
+          <div class="room-sub">
+            <span id="server-label"></span>
+            <!-- Хосту: открыт ли вход в комнату; нажатие переключает. -->
+            <button type="button" id="lock-btn" class="lock-chip" aria-pressed="false" hidden></button>
+            <span id="server-code" class="mono"
+                  title="Код сертификата сервера: его можно сверить с хостом"></span>
+          </div>
+        </div>
+        <button type="button" id="invite-btn" class="head-btn invite-btn" data-icon="person-add" data-tip="Пригласить друзей" hidden>Пригласить</button>
+        <button type="button" class="icon-btn head-btn open-settings tip-right" data-icon="gear" aria-label="Настройки" data-tip="Настройки"></button>
+      </header>
+
+      <div id="reconnect-banner" class="banner" hidden>
+        <span class="spinner" aria-hidden="true"></span>
+        <span id="reconnect-text">Связь пропала. Возвращаюсь в комнату…</span>
+      </div>
+
+      <div class="tabs-row">
+        <div id="room-tabs" class="tabs" role="tablist">
+          <button type="button" data-value="people">Участники <span id="people-count" class="count"></span></button>
+          <button type="button" data-value="chat">Чат <span id="chat-unread" class="unread" hidden></span></button>
+        </div>
+        <div id="peer-layout" class="layout-toggle" role="radiogroup" aria-label="Как показывать участников">
+          <button type="button" class="icon-btn" data-value="list" data-icon="view-list" aria-label="Списком" data-tip="Списком"></button>
+          <button type="button" class="icon-btn tip-right" data-value="tiles" data-icon="view-grid" aria-label="Плитками" data-tip="Плитками"></button>
+        </div>
+      </div>
+
+      <ul id="peers" class="peers"></ul>
+
+      <section id="chat" class="chat" hidden>
+        <div id="chat-log" class="chat-log" aria-live="polite"></div>
+        <form id="chat-form" class="composer" autocomplete="off">
+          <textarea id="chat-input" rows="1" maxlength="2000" placeholder="Сообщение… (Shift+Enter — новая строка)"></textarea>
+          <button type="submit" id="chat-send" class="icon-btn send" data-icon="send" aria-label="Отправить" title="Отправить (Enter)"></button>
+        </form>
+      </section>
+
+      <!-- Нижняя панель, как в Discord: кто вы и иконки управления. -->
+      <section class="card dock">
+        <button type="button" id="muted-hint" class="muted-hint" hidden>
+          <span>Вы говорите, а микрофон выключен</span>
+          <b>Включить</b>
+        </button>
+        <button type="button" id="me-avatar" class="avatar dock-avatar tip-left" aria-label="Сменить аватарку" data-tip="Сменить аватарку"></button>
+        <div class="me-info">
+          <div id="me-name" class="me-name"></div>
+          <div id="me-status" class="me-status"></div>
+        </div>
+
+        <div class="dock-buttons">
+          <div class="menu-wrap split">
+            <button type="button" id="mic-btn" class="dock-btn" data-tip="Выключить микрофон"></button>
+            <button type="button" id="input-pill" class="dock-caret tip-right desktop-only" data-tip="Микрофон" data-icon="chevron"></button>
+            <div id="input-menu" class="menu up right" hidden></div>
+          </div>
+          <div class="menu-wrap split">
+            <button type="button" id="sound-btn" class="dock-btn" data-tip="Выключить звук"></button>
+            <button type="button" id="output-pill" class="dock-caret tip-right" data-tip="Динамики / наушники" data-icon="chevron"></button>
+            <div id="output-menu" class="menu up right" hidden></div>
+          </div>
+          <button type="button" id="share-btn" class="dock-btn tip-right desktop-only" data-tip="Показать экран" data-icon="screen"></button>
+          <div class="menu-wrap">
+            <button type="button" id="voice-btn" class="dock-btn tip-right" data-tip="Настройки голоса" data-icon="tune"></button>
+
+            <div id="voice-menu" class="menu up right voice-menu" hidden>
+              <div class="menu-title">Голос</div>
+              <div class="meter" title="Громкость микрофона и порог активации">
+                <div id="level-bar" class="meter-fill"></div>
+                <div id="threshold-mark" class="meter-mark"></div>
+              </div>
+
+              <div id="mode" class="segmented" role="radiogroup" aria-label="Передача">
+                <button type="button" data-value="voice" title="Передача включается, когда вы говорите громче порога">Голосом</button>
+                <button type="button" data-value="always" title="Микрофон передаётся всегда">Всегда</button>
+                <button type="button" class="desktop-only" data-value="ptt" title="Передача, пока зажата клавиша">Рация</button>
+              </div>
+
+              <label id="vad-row" class="slider-row">
+                <span>Порог</span>
+                <input type="range" id="vad" min="-70" max="-10" step="1" />
+                <output id="vad-value"></output>
+              </label>
+
+              <div id="ptt-row" class="slider-row desktop-only" hidden>
+                <span>Клавиша</span>
+                <button type="button" id="ptt-key" class="key">не назначена</button>
+              </div>
+              <p id="ptt-hint" class="hint desktop-only" hidden>
+                Пока выбран режим рации, эта клавиша не работает в других программах.
+              </p>
+
+              <label class="switch-row desktop-only" title="Голоса собеседников из колонок не попадают обратно в микрофон, и они не слышат сами себя">
+                <span>Эхоподавление</span>
+                <input type="checkbox" id="aec" class="switch" />
+              </label>
+              <label class="switch-row" title="Убирает гул, шум улицы и стук клавиатуры из вашего микрофона">
+                <span>Шумоподавление</span>
+                <input type="checkbox" id="denoise" class="switch" />
+              </label>
+              <label class="switch-row" title="Тихий голос подтягивается до нормальной громкости, слишком громкий не хрипит">
+                <span>Усиление голоса</span>
+                <input type="checkbox" id="agc" class="switch" />
+              </label>
+              <label class="switch-row" title="Ваш голос сразу звучит у вас — так, как его слышат другие. Лучше в наушниках, иначе динамики засвистят">
+                <span>Слышать себя</span>
+                <input type="checkbox" id="monitor" class="switch" />
+              </label>
+            </div>
+          </div>
+          <!-- Выход — внизу, рядом с микрофоном, как «положить трубку».
+               Хосту — с вопросом прямо над кнопкой: закрытие отключит всех. -->
+          <div class="menu-wrap leave-wrap">
+            <button type="button" id="leave-btn" class="dock-btn leave tip-right" data-icon="logout" aria-label="Выйти" data-tip="Выйти" aria-haspopup="dialog" aria-expanded="false"></button>
+            <div id="leave-menu" class="menu up right leave-menu" role="alertdialog" aria-labelledby="leave-title" aria-describedby="leave-text" hidden>
+              <div id="leave-title" class="leave-title">Закрыть комнату?</div>
+              <p id="leave-text" class="leave-text">
+                Все отключатся. Код приглашения и адреса не изменятся.
+              </p>
+              <div class="leave-actions">
+                <button type="button" id="leave-cancel">Отмена</button>
+                <button type="button" id="leave-confirm" class="danger">Закрыть</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Настройки -->
+    <div id="settings" class="sheet-backdrop" hidden>
+      <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+        <header class="sheet-head">
+          <button type="button" id="settings-back" class="icon-btn ghost" data-icon="chevron-left" aria-label="Назад" hidden></button>
+          <h2 id="settings-title">Настройки</h2>
+          <button type="button" id="settings-close" class="icon-btn ghost" data-icon="close" aria-label="Закрыть"></button>
+        </header>
+
+        <div id="settings-main" class="sheet-page">
+
+          <div class="group">
+            <div class="group-title">Звук</div>
+            <label class="field desktop-only">
+              <span>Микрофон</span>
+              <select id="input"></select>
+            </label>
+            <label class="field desktop-only">
+              <span>Динамики / наушники</span>
+              <select id="output"></select>
+            </label>
+            <div class="field android-only">
+              <span>Куда идёт звук</span>
+              <div id="audio-route" class="segmented" role="radiogroup" aria-label="Куда идёт звук">
+                <button type="button" data-value="auto" title="В наушники, если подключены, иначе в громкий динамик">Авто</button>
+                <button type="button" data-value="speaker" title="Всегда громкий динамик">Громкий</button>
+                <button type="button" data-value="earpiece" title="Динамик у уха, как в обычном звонке">У уха</button>
+              </div>
+            </div>
+            <label class="switch-row" title="Короткий сигнал, когда кто-то вошёл или вышел, и при нажатии кнопок микрофона и звука">
+              <span>Звуки событий</span>
+              <input type="checkbox" id="cues" class="switch" />
+            </label>
+            <label class="switch-row desktop-only" title="Крестик окна прячет программу в трей рядом с часами, разговор продолжается. Выйти — через меню значка в трее">
+              <span>Сворачивать в трей при закрытии</span>
+              <input type="checkbox" id="close-to-tray" class="switch" />
+            </label>
+          </div>
+
+          <div class="group">
+            <div class="group-title">Профиль</div>
+            <div class="profile-row">
+              <button type="button" id="profile-avatar" class="avatar profile-avatar" title="Выбрать картинку: её увидят все в комнате" aria-label="Выбрать аватарку"></button>
+              <div class="profile-actions">
+                <button type="button" id="avatar-pick" class="link" title="Картинка обрежется до квадрата">Сменить аватарку</button>
+                <button type="button" id="avatar-remove" class="link">Убрать</button>
+              </div>
+            </div>
+            <input type="file" id="avatar-file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" hidden />
+            <button type="button" id="open-appearance" class="nav-row">
+              <span class="nav-row-icon" data-icon="palette"></span>
+              <span class="nav-row-text">
+                <span>Оформление</span>
+                <span id="appearance-summary" class="hint"></span>
+              </span>
+              <span class="nav-row-chevron" data-icon="chevron-right"></span>
+            </button>
+          </div>
+
+          <div id="diag" class="group" hidden>
+            <div class="group-title">Диагностика звука</div>
+            <ul id="diag-list" class="diag"></ul>
+            <p class="hint">
+              Если звук прерывается, посмотрите, какие числа растут в этот момент, —
+              по ним видно, где проблема: у микрофона, у вывода или в сети.
+            </p>
+          </div>
+
+          <div class="app-row">
+            <span class="hint">Версия <span id="app-version">—</span></span>
+            <button type="button" id="update-btn" class="link" title="Новая версия скачивается с GitHub и ставится поверх. Из комнаты программа выйдет сама">Проверить обновления</button>
+            <button type="button" id="send-app" class="link android-only" title="Друг получит файл установки (например, в Telegram) и поставит его поверх старой версии">Отправить программу другу</button>
+          </div>
+        </div>
+
+        <!-- Оформление: отдельная страница настроек, чтобы главная была короткой -->
+        <div id="appearance-page" class="sheet-page" hidden>
+          <div class="group">
+            <div class="group-title">Тема</div>
+            <div id="theme" class="themes" role="radiogroup" aria-label="Тема">
+              <button type="button" data-value="system" title="Как в системе: светлая днём, «Ночь» в тёмном режиме"><span class="theme-preview"><i></i><i></i></span><span>Авто</span></button>
+              <button type="button" data-value="light"><span class="theme-preview"><i></i><i></i></span><span>День</span></button>
+              <button type="button" data-value="dark"><span class="theme-preview"><i></i><i></i></span><span>Ночь</span></button>
+              <button type="button" data-value="black"><span class="theme-preview"><i></i><i></i></span><span>Уголь</span></button>
+              <button type="button" data-value="midnight"><span class="theme-preview"><i></i><i></i></span><span>Полночь</span></button>
+              <button type="button" data-value="forest"><span class="theme-preview"><i></i><i></i></span><span>Лес</span></button>
+              <button type="button" data-value="paper"><span class="theme-preview"><i></i><i></i></span><span>Бумага</span></button>
+              <button type="button" data-value="sakura"><span class="theme-preview"><i></i><i></i></span><span>Сакура</span></button>
+              <button type="button" data-value="ocean"><span class="theme-preview"><i></i><i></i></span><span>Океан</span></button>
+              <button type="button" data-value="sunset"><span class="theme-preview"><i></i><i></i></span><span>Закат</span></button>
+              <button type="button" data-value="neon"><span class="theme-preview"><i></i><i></i></span><span>Неон</span></button>
+              <button type="button" data-value="terminal"><span class="theme-preview"><i></i><i></i></span><span>Терминал</span></button>
+              <button type="button" data-value="synthwave"><span class="theme-preview"><i></i><i></i></span><span>Синтвейв</span></button>
+              <button type="button" data-value="cyber"><span class="theme-preview"><i></i><i></i></span><span>Киберпанк</span></button>
+              <button type="button" data-value="berry"><span class="theme-preview"><i></i><i></i></span><span>Малина</span></button>
+              <button type="button" data-value="lemonade"><span class="theme-preview"><i></i><i></i></span><span>Лимонад</span></button>
+              <button type="button" data-value="tangerine"><span class="theme-preview"><i></i><i></i></span><span>Мандарин</span></button>
+              <button type="button" data-value="aqua"><span class="theme-preview"><i></i><i></i></span><span>Аква</span></button>
+            </div>
+          </div>
+
+          <div class="group">
+            <div class="group-title">Цвет кнопок</div>
+            <div class="swatches" id="accent" role="radiogroup" aria-label="Цвет кнопок">
+              <button type="button" data-value="indigo" title="Индиго"></button>
+              <button type="button" data-value="violet" title="Сирень"></button>
+              <button type="button" data-value="sky" title="Небо"></button>
+              <button type="button" data-value="mint" title="Мята"></button>
+              <button type="button" data-value="amber" title="Янтарь"></button>
+              <button type="button" data-value="rose" title="Малина"></button>
+              <button type="button" data-value="blue" title="Синий"></button>
+              <button type="button" data-value="teal" title="Бирюза"></button>
+              <button type="button" data-value="green" title="Зелень"></button>
+              <button type="button" data-value="orange" title="Апельсин"></button>
+              <button type="button" data-value="red" title="Гранат"></button>
+              <button type="button" data-value="fuchsia" title="Фуксия"></button>
+              <button type="button" data-value="cocoa" title="Какао"></button>
+              <button type="button" data-value="graphite" title="Графит"></button>
+            </div>
+          </div>
+
+          <div class="group">
+            <div class="group-title">Фон комнаты</div>
+            <div id="room-bg" class="backdrops" role="radiogroup" aria-label="Фон комнаты">
+              <button type="button" data-value="none"><span class="bg-preview"></span><span>Нет</span></button>
+              <button type="button" data-value="aurora"><span class="bg-preview"></span><span>Сияние</span></button>
+              <button type="button" data-value="dusk"><span class="bg-preview"></span><span>Вечер</span></button>
+              <button type="button" data-value="lagoon"><span class="bg-preview"></span><span>Лагуна</span></button>
+              <button type="button" data-value="stars"><span class="bg-preview"></span><span>Звёзды</span></button>
+              <button type="button" data-value="grid"><span class="bg-preview"></span><span>Сетка</span></button>
+              <button type="button" data-value="image" title="Картинка видна только вам"><span class="bg-preview"></span><span>Своя</span></button>
+            </div>
+            <input type="file" id="room-bg-file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" hidden />
+            <p class="hint">Фон видите только вы.</p>
+          </div>
+
+          <div class="group">
+            <div class="group-title">Размер</div>
+            <div id="ui-scale" class="segmented" role="radiogroup" aria-label="Размер интерфейса">
+              <button type="button" data-value="0.9">Мельче</button>
+              <button type="button" data-value="1">Обычный</button>
+              <button type="button" data-value="1.1">Крупнее</button>
+              <button type="button" data-value="1.25">Крупный</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Выбор, что показать -->
+    <div id="share-sheet" class="sheet-backdrop" hidden>
+      <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="share-title">
+        <header class="sheet-head">
+          <h2 id="share-title">Показать экран</h2>
+          <button type="button" id="share-close" class="icon-btn ghost" data-icon="close" aria-label="Закрыть"></button>
+        </header>
+
+        <div class="group">
+          <div class="group-title">Что показать</div>
+          <ul id="share-sources" class="share-sources"></ul>
+        </div>
+
+        <div class="group">
+          <div class="group-title">Качество</div>
+          <div id="share-quality" class="segmented" role="radiogroup" aria-label="Качество">
+            <button type="button" data-value="720" title="Меньше трафика: подойдёт для медленного интернета">720p</button>
+            <button type="button" data-value="1080">1080p</button>
+            <button type="button" data-value="0" title="Как на экране (например, 1440p) — больше трафика">Как есть</button>
+          </div>
+          <div id="share-fps" class="segmented" role="radiogroup" aria-label="Кадров в секунду">
+            <button type="button" data-value="15" title="Для презентаций и документов">15 к/с</button>
+            <button type="button" data-value="30" title="Для игр и видео">30 к/с</button>
+          </div>
+          <p class="hint">
+            Пока никто не смотрит, экран не снимается. Каждому зрителю уходит
+            около 3–6 Мбит/с; если вы хост, эти мегабиты идут через ваш интернет.
+          </p>
+        </div>
+
+        <button type="button" id="share-start" class="primary" disabled>Начать показ</button>
+      </section>
+    </div>
+
+    <!-- Свой сервер: как пригласить друзей -->
+    <div id="invite-sheet" class="sheet-backdrop pop" hidden>
+      <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="invite-title">
+        <header class="sheet-head">
+          <h2 id="invite-title">Пригласить друзей</h2>
+          <button type="button" id="invite-close" class="icon-btn ghost" data-icon="close" aria-label="Закрыть"></button>
+        </header>
+
+        <div class="group">
+          <label class="switch-row" title="Друзья смогут подключиться по коду приглашения без Tailscale и белого IP">
+            <span>Через интернет, по коду приглашения</span>
+            <input type="checkbox" id="internet" class="switch" />
+          </label>
+          <div id="internet-info" class="internet-info" hidden>
+            <div class="invite">
+              <code id="invite-code"></code>
+              <button type="button" id="invite-copy" class="icon-btn ghost" data-icon="copy" title="Скопировать код" aria-label="Скопировать код"></button>
+            </div>
+            <button type="button" id="invite-share" class="primary android-only">Поделиться приглашением</button>
+            <p id="internet-state" class="hint"></p>
+            <p class="hint">Друг вставляет код в поле «Сервер». Код постоянный — отправьте его один раз.</p>
+            <p class="hint android-only">
+              На телефоне можно проще: долгое нажатие на сообщение с кодом в мессенджере →
+              «Поделиться» → «Поигрулькины».
+            </p>
+          </div>
+        </div>
+
+        <div id="invite-password" class="group" hidden>
+          <div class="group-title">Пароль комнаты</div>
+          <div class="invite">
+            <code id="invite-password-value"></code>
+            <button type="button" id="invite-password-copy" class="icon-btn ghost" data-icon="copy" title="Скопировать пароль" aria-label="Скопировать пароль"></button>
+          </div>
+          <p class="hint">Скажите его друзьям: без него в комнату не войти.</p>
+        </div>
+
+        <div class="group">
+          <div class="group-title">В своей сети и через Tailscale</div>
+          <div class="invite address-pick">
+            <div class="menu-wrap">
+              <button type="button" id="address-btn" class="address-btn" aria-haspopup="true">
+                <span id="address-iface" class="host-iface"></span>
+                <span id="address-value" class="host-address"></span>
+                <span class="pill-chevron" data-icon="chevron"></span>
+              </button>
+              <div id="address-menu" class="menu address-menu" hidden></div>
+            </div>
+            <button type="button" id="address-copy" class="icon-btn ghost" data-icon="copy" title="Скопировать адрес" aria-label="Скопировать адрес"></button>
+          </div>
+          <label class="switch-row" title="Друзья из вашей сети увидят комнату в списке «В локальной сети»">
+            <span>Видна в локальной сети</span>
+            <input type="checkbox" id="room-lan" class="switch" />
+          </label>
+        </div>
+
+        <div class="group">
+          <p class="hint">
+            Код сервера <code id="host-code"></code> — для сверки, если программа
+            друга предупредит о смене сертификата.
+          </p>
+          <button type="button" id="invite-settings" class="link">Настройки комнаты: пароль, лимит участников…</button>
+        </div>
+      </section>
+    </div>
+
+    <!-- Новая комната / настройки своей комнаты -->
+    <div id="room-sheet" class="sheet-backdrop pop" hidden>
+      <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="rs-title">
+        <header class="sheet-head">
+          <h2 id="rs-title">Новая комната</h2>
+          <button type="button" id="rs-close" class="icon-btn ghost" data-icon="close" aria-label="Закрыть"></button>
+        </header>
+        <form id="room-form" class="stack" autocomplete="off">
+          <label class="field">
+            <span>Название</span>
+            <input id="rs-name" maxlength="40" required placeholder="Например, «Игры с Саней»" />
+          </label>
+          <label class="field">
+            <span>Пароль</span>
+            <span class="password-row">
+              <input id="rs-password" type="password" maxlength="64" placeholder="Без пароля" autocomplete="new-password" />
+              <button type="button" id="rs-show" class="icon-btn ghost" data-icon="eye" aria-label="Показать пароль" title="Показать пароль"></button>
+            </span>
+          </label>
+          <p class="hint">Друзья введут его один раз, программа запомнит. Пусто — войдёт любой, кто знает адрес или код приглашения.</p>
+          <label class="field">
+            <span>Участников не больше</span>
+            <select id="rs-max">
+              <option value="0">Без ограничений</option>
+              <option value="2">2</option>
+              <option value="3">3</option>
+              <option value="4">4</option>
+              <option value="5">5</option>
+              <option value="6">6</option>
+              <option value="8">8</option>
+              <option value="10">10</option>
+              <option value="16">16</option>
+            </select>
+          </label>
+          <label class="switch-row" title="Друзья из вашей сети увидят комнату в списке «В локальной сети»">
+            <span>Видна в локальной сети</span>
+            <input type="checkbox" id="rs-lan" class="switch" />
+          </label>
+          <label class="switch-row" title="Друзья смогут подключиться по коду приглашения без Tailscale и белого IP">
+            <span>Доступ через интернет</span>
+            <input type="checkbox" id="rs-internet" class="switch" />
+          </label>
+          <p id="rs-note" class="hint" hidden>
+            Комната открыта: пароль и остальное действуют сразу, новое название —
+            со следующего открытия.
+          </p>
+          <p class="hint">У каждой комнаты свой код приглашения и свои настройки — программа их запоминает.</p>
+          <div class="cert-actions">
+            <button type="button" id="rs-cancel">Отмена</button>
+            <button type="submit" id="rs-save" class="primary">Создать</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <!-- Подтверждение: закрыть свою комнату -->
+    <!-- Чужой экран на телефоне (на компьютере — отдельное окно viewer.html). -->
+    <div id="screen-view" class="screen-view" hidden>
+      <div id="sv-stage" class="sv-stage">
+        <div id="sv-content" class="sv-content">
+          <canvas id="sv-canvas" hidden></canvas>
+          <img id="sv-img" alt="" hidden />
+        </div>
+        <div id="sv-waiting" class="sv-waiting">
+          <span class="spinner" aria-hidden="true"></span>
+          <span id="sv-waiting-text">Жду картинку…</span>
+        </div>
+      </div>
+      <header id="sv-bar" class="sv-bar">
+        <button type="button" id="sv-close" class="sv-btn" data-icon="close" aria-label="Закрыть"></button>
+        <span id="sv-title" class="sv-title"></span>
+        <button type="button" id="sv-rotate" class="sv-btn" data-icon="rotate" aria-label="Повернуть"></button>
+      </header>
+    </div>
+
+    <!-- Справка: как пользоваться программой -->
+    <div id="help" class="sheet-backdrop" hidden>
+      <section class="sheet help" role="dialog" aria-modal="true" aria-labelledby="help-title">
+        <header class="sheet-head">
+          <h2 id="help-title">Как это работает</h2>
+          <button type="button" id="help-close" class="icon-btn ghost" data-icon="close" aria-label="Закрыть"></button>
+        </header>
+
+        <p class="help-lead">
+          Поигрулькины — голосовая комната для своей компании. Один человек
+          открывает комнату у себя (он хост), остальные заходят к нему.
+          Голос идёт напрямую к хосту и зашифрован, чужие серверы его не слышат.
+        </p>
+
+        <div class="group">
+          <div class="group-title">Зайти к друзьям</div>
+          <ol class="help-steps">
+            <li>Впишите своё имя: под ним вас увидят в комнате.</li>
+            <li>Комнаты из вашей сети Wi-Fi сами появятся в списке «Войти в комнату». Нажмите на карточку, и вы внутри.</li>
+            <li>Если друг далеко, попросите у него код приглашения (<code>poi-…</code>) и вставьте его в «Войти по адресу или коду».</li>
+          </ol>
+          <p class="hint">После первого входа комната остаётся в списке, в следующий раз хватит одного нажатия.</p>
+        </div>
+
+        <div class="group">
+          <div class="group-title">Позвать к себе</div>
+          <ol class="help-steps">
+            <li>Нажмите на комнату в «Мои комнаты». Она запустится прямо в программе, отдельный сервер не нужен.</li>
+            <li>В комнате нажмите «Пригласить» и отправьте друзьям код приглашения.</li>
+            <li>Комната работает, пока вы в ней. Вышли — все отключатся, но код останется прежним.</li>
+          </ol>
+          <p class="hint">«Новая» создаёт ещё одну комнату со своим кодом, паролем и лимитом участников: друзья из разных компаний не попадут друг к другу.</p>
+          <p class="hint android-only">На телефоне комната работает, пока он в Wi-Fi. Через мобильный интернет к нему почти никогда не подключиться.</p>
+        </div>
+
+        <div class="group">
+          <div class="group-title">В комнате</div>
+          <ul class="help-keys">
+            <li><span data-icon="mic"></span><span>Включить или выключить микрофон.</span></li>
+            <li><span data-icon="headphones"></span><span>Выключить звук: вы перестанете слышать остальных.</span></li>
+            <li><span data-icon="tune"></span><span>Как передавать голос: <span class="android-only">когда вы говорите или всегда.</span><span class="desktop-only">когда вы говорите, всегда или пока зажата клавиша рации.</span></span></li>
+            <li class="desktop-only"><span data-icon="screen"></span><span>Показать друзьям свой экран или окно.</span></li>
+            <li><span data-icon="more"></span><span>Нажмите на участника: громкость отдельно для него, у хоста ещё «Заглушить для всех» и «Выгнать».</span></li>
+          </ul>
+          <p class="hint">Вкладка «Чат» — переписка внутри комнаты. Пока вы в другой вкладке, на ней появится число новых сообщений.</p>
+        </div>
+
+        <div class="group">
+          <div class="group-title">Если что-то не так</div>
+          <ul class="help-tips">
+            <li>Кнопка «Проверить микрофон» на главном экране запишет несколько секунд и проиграет их: так слышно, как вас слышат другие.</li>
+            <li>Слова обрезаются — понизьте порог в настройках голоса. Передаётся шум комнаты — повысьте.</li>
+            <li class="desktop-only">Говорите в наушниках: иначе звук из колонок попадёт в микрофон и друзья услышат себя.</li>
+            <li class="android-only">Звук не туда — в настройках выберите, куда он идёт: «Авто», «Громкий» или «У уха».</li>
+            <li>Программа предупредила, что сертификат сервера изменился, — спросите у хоста код сервера и сверьте. Не совпал — не подключайтесь.</li>
+          </ul>
+        </div>
+      </section>
+    </div>
+
+    <div id="toast" class="toast" hidden></div>
+
+    <script src="screen-view.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

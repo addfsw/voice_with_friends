@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use clap::Parser;
 use tracing::info;
 
-/// Сервер голосового чата voice_with_friends.
+/// Поигрулькины: сервер голосового чата.
 #[derive(Parser)]
 #[command(version)]
 struct Args {
@@ -19,6 +19,32 @@ struct Args {
     /// Папка для сертификата и ключа сервера.
     #[arg(long, default_value = ".")]
     data_dir: PathBuf,
+
+    /// Название сервера для поиска в локальной сети. По умолчанию — имя компьютера.
+    #[arg(long)]
+    name: Option<String>,
+
+    /// Не отвечать на поиск серверов в локальной сети.
+    #[arg(long)]
+    no_discovery: bool,
+
+    /// Доступ через интернет без белого IP: пробивка NAT и код приглашения,
+    /// который друзья вставляют в поле «Сервер».
+    #[arg(long)]
+    internet: bool,
+
+    /// Секрет для прав хоста. Кто подключится с ним (`poigrulkiny-cli connect ...
+    /// --admin-token ...`), сможет заглушать и выгонять участников.
+    #[arg(long)]
+    admin_token: Option<String>,
+
+    /// Пароль комнаты: без него не войти (хост с секретом хоста входит всегда).
+    #[arg(long)]
+    password: Option<String>,
+
+    /// Сколько человек может быть в комнате одновременно (0 — сколько угодно).
+    #[arg(long, default_value_t = 0)]
+    max_peers: u32,
 }
 
 #[tokio::main]
@@ -30,14 +56,43 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let args = Args::parse();
-    let server = vwf_server::Server::bind(vwf_server::Config {
-        bind: args.bind,
-        echo: args.echo,
-        data_dir: Some(args.data_dir),
-    })?;
+    // Для пробивки NAT сервер работает на сокете, который умеет и STUN.
+    let nat_socket = match args.internet {
+        true => Some(vwf_nat::socket::NatSocket::bind(args.bind)?),
+        false => None,
+    };
+    let room_file = args.data_dir.join("room_id.txt");
+    let server = vwf_server::Server::bind_with_socket(
+        vwf_server::Config {
+            bind: args.bind,
+            echo: args.echo,
+            data_dir: Some(args.data_dir),
+            name: args.name.unwrap_or_else(vwf_server::default_server_name),
+            discovery: (!args.no_discovery)
+                .then(|| SocketAddr::from(([0, 0, 0, 0], vwf_proto::DISCOVERY_PORT))),
+            admin_token: args.admin_token,
+        },
+        nat_socket.clone().map(|s| s as _),
+    )?;
+    let access = server.access();
+    access.set_password(args.password.as_deref().unwrap_or_default());
+    access.set_max_peers(args.max_peers);
     let addr = server.local_addr()?;
     info!("сервер слушает UDP {addr}");
-    info!("отпечаток сертификата: {}", server.fingerprint());
+    if access.has_password() {
+        info!("вход по паролю");
+    }
+    if args.max_peers > 0 {
+        info!("не больше {} человек в комнате", args.max_peers);
+    }
+    info!(
+        "код сервера: {}  (полный отпечаток сертификата: {})",
+        vwf_proto::short_fingerprint(server.fingerprint()),
+        server.fingerprint()
+    );
+    if let Some(addr) = server.discovery_addr() {
+        info!("отвечаю на поиск в локальной сети: UDP {addr}");
+    }
     if args.echo {
         info!("режим эха включён: каждый слышит сам себя");
     }
@@ -47,6 +102,18 @@ async fn main() -> anyhow::Result<()> {
             info!("    {a}    ({iface})");
         }
     }
+    // Держим «встречу» живой, пока работает сервер.
+    let _rendezvous = match nat_socket {
+        Some(socket) => {
+            let room = vwf_nat::invite::load_or_create_room(&room_file)?;
+            let invite = vwf_nat::invite::Invite::new(room, server.fingerprint());
+            info!("доступ через интернет включён. Код приглашения для друзей:");
+            info!("    {}", invite.encode());
+            let mailbox = vwf_nat::mailbox::Mailbox::from_env()?;
+            Some(vwf_nat::rendezvous::HostRendezvous::start(socket, mailbox, invite.topic()))
+        }
+        None => None,
+    };
     info!("остановить: Ctrl+C");
 
     let endpoint = server.endpoint().clone();
@@ -54,7 +121,7 @@ async fn main() -> anyhow::Result<()> {
         _ = server.run() => {}
         _ = tokio::signal::ctrl_c() => {
             info!("останавливаюсь...");
-            endpoint.close(0u32.into(), b"server shutdown");
+            endpoint.close(0u32.into(), vwf_proto::SERVER_STOPPED_REASON.as_bytes());
         }
     }
     endpoint.wait_idle().await;

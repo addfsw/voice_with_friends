@@ -1,4 +1,6 @@
-//! Работа со звуковой картой через `cpal` (на Windows это WASAPI).
+//! Работа со звуковой картой через `cpal` (на Windows это WASAPI). На Android —
+//! напрямую через AAudio в режиме звонка, с эхоподавлением телефона (см.
+//! `aaudio.rs`).
 //!
 //! Аудиоколбэки вызываются системой в отдельном потоке реального времени: в них
 //! нельзя ждать блокировок, выделять память и делать что-то долгое, иначе
@@ -9,11 +11,17 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::thread::Thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(not(target_os = "android"))]
+use std::time::Instant;
 
+#[cfg(not(target_os = "android"))]
 use anyhow::{Context, bail};
+use cpal::StreamConfig;
+#[cfg(not(target_os = "android"))]
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Device, FromSample, SampleFormat, SizedSample, StreamConfig};
+#[cfg(not(target_os = "android"))]
+use cpal::{Device, FromSample, SampleFormat, SizedSample};
 use ringbuf::traits::{Consumer, Producer, Split};
 use ringbuf::{HeapCons, HeapProd, HeapRb};
 use vwf_proto::SAMPLE_RATE;
@@ -48,34 +56,82 @@ impl Wakeup {
     }
 }
 
+/// Имена устройств для выбора в интерфейсе.
+#[derive(Debug, Clone, Default)]
+pub struct DeviceList {
+    pub inputs: Vec<String>,
+    pub outputs: Vec<String>,
+    pub default_input: Option<String>,
+    pub default_output: Option<String>,
+}
+
+/// Повышает приоритет текущего потока: для потоков, которые обрабатывают
+/// звук. Если они опоздают хотя бы на 20 мс (например, процессор занят
+/// сжатием видео для демонстрации экрана), в звуке будет щелчок или провал.
+/// Не получилось (в Linux нужны права) — не страшно.
+pub(crate) fn raise_thread_priority() {
+    let _ = thread_priority::set_current_thread_priority(thread_priority::ThreadPriority::Max);
+}
+
+/// Понижает приоритет текущего потока: для тяжёлой фоновой работы
+/// (демонстрация экрана), чтобы она не отнимала время у звука.
+pub(crate) fn lower_thread_priority() {
+    let _ = thread_priority::set_current_thread_priority(thread_priority::ThreadPriority::Min);
+}
+
+/// На Android выбирать устройства не нужно: звук идёт туда, куда его
+/// направляет система (громкий динамик, у уха, гарнитура).
+#[cfg(target_os = "android")]
+pub fn device_list() -> anyhow::Result<DeviceList> {
+    Ok(DeviceList::default())
+}
+
+#[cfg(not(target_os = "android"))]
+pub fn device_list() -> anyhow::Result<DeviceList> {
+    let host = cpal::default_host();
+    Ok(DeviceList {
+        inputs: host.input_devices()?.map(|d| device_name(&d)).collect(),
+        outputs: host.output_devices()?.map(|d| device_name(&d)).collect(),
+        default_input: host.default_input_device().map(|d| device_name(&d)),
+        default_output: host.default_output_device().map(|d| device_name(&d)),
+    })
+}
+
 /// Печатает все устройства ввода и вывода.
 pub fn list_devices() -> anyhow::Result<()> {
-    let host = cpal::default_host();
-    let default_in = host.default_input_device().map(|d| device_name(&d));
-    let default_out = host.default_output_device().map(|d| device_name(&d));
-
+    let list = device_list()?;
     println!("Микрофоны:");
-    for d in host.input_devices()? {
-        let name = device_name(&d);
-        let mark =
-            if Some(&name) == default_in.as_ref() { " (по умолчанию)" } else { "" };
+    for name in &list.inputs {
+        let mark = if Some(name) == list.default_input.as_ref() {
+            " (по умолчанию)"
+        } else {
+            ""
+        };
         println!("  {name}{mark}");
     }
     println!("Динамики/наушники:");
-    for d in host.output_devices()? {
-        let name = device_name(&d);
-        let mark =
-            if Some(&name) == default_out.as_ref() { " (по умолчанию)" } else { "" };
+    for name in &list.outputs {
+        let mark = if Some(name) == list.default_output.as_ref() {
+            " (по умолчанию)"
+        } else {
+            ""
+        };
         println!("  {name}{mark}");
     }
     Ok(())
 }
 
+#[cfg(not(target_os = "android"))]
+/// Имя устройства, как его показывает Windows: «Микрофон (USB Audio Device)».
+/// Полное описание cpal дописывает к нему тип и подключение
+/// («[Microphone] via USB») — это лишнее.
 fn device_name(device: &Device) -> String {
-    device.description().map(|d| d.to_string()).unwrap_or_else(|_| "<без имени>".into())
+    device.description().map(|d| d.name().to_string()).unwrap_or_else(|_| "<без имени>".into())
 }
 
-/// Ищет устройство по части имени (без учёта регистра) или берёт устройство по умолчанию.
+#[cfg(not(target_os = "android"))]
+/// Ищет устройство по точному имени, затем по части имени (без учёта регистра),
+/// или берёт устройство по умолчанию.
 fn find_device(input: bool, name: Option<&str>) -> anyhow::Result<Device> {
     let host = cpal::default_host();
     let Some(pattern) = name else {
@@ -86,15 +142,23 @@ fn find_device(input: bool, name: Option<&str>) -> anyhow::Result<Device> {
             "в системе нет устройства вывода по умолчанию"
         });
     };
-    let pattern = pattern.to_lowercase();
-    let devices: Vec<Device> =
-        if input { host.input_devices()?.collect() } else { host.output_devices()?.collect() };
-    devices
-        .into_iter()
-        .find(|d| device_name(d).to_lowercase().contains(&pattern))
-        .with_context(|| format!("не найдено устройство «{pattern}» (см. команду `devices`)"))
+    let devices: Vec<(String, Device)> = if input {
+        host.input_devices()?.map(|d| (device_name(&d), d)).collect()
+    } else {
+        host.output_devices()?.map(|d| (device_name(&d), d)).collect()
+    };
+    let lower = pattern.to_lowercase();
+    let index = devices
+        .iter()
+        .position(|(name, _)| name == pattern)
+        .or_else(|| devices.iter().position(|(name, _)| name.to_lowercase().contains(&lower)))
+        // Имя, сохранённое прежними версиями: «Имя [Microphone] via USB».
+        .or_else(|| devices.iter().position(|(name, _)| pattern.starts_with(&format!("{name} "))))
+        .with_context(|| format!("не найдено устройство «{pattern}» (см. команду `devices`)"))?;
+    Ok(devices.into_iter().nth(index).expect("индекс из того же списка").1)
 }
 
+#[cfg(not(target_os = "android"))]
 /// Предпочитаем 48 кГц, если устройство их умеет, — тогда не нужен ресемплинг.
 fn pick_config(device: &Device, input: bool) -> anyhow::Result<cpal::SupportedStreamConfig> {
     let default =
@@ -116,6 +180,7 @@ fn pick_config(device: &Device, input: bool) -> anyhow::Result<cpal::SupportedSt
         .unwrap_or(default))
 }
 
+#[cfg(not(target_os = "android"))]
 /// Обработчик ошибок аудиопотока.
 ///
 /// Отдельно считается xrun: система не успела передать нам данные с микрофона,
@@ -140,9 +205,14 @@ fn stream_error_handler(
     }
 }
 
+#[cfg(not(target_os = "android"))]
+type StreamHandle = cpal::Stream;
+#[cfg(target_os = "android")]
+type StreamHandle = crate::aaudio::Stream;
+
 /// Запущенный захват с микрофона. Пока значение живо — микрофон пишет.
 pub struct Capture {
-    _stream: cpal::Stream,
+    _stream: StreamHandle,
     pub device_name: String,
     pub config: StreamConfig,
     /// Сколько раз система теряла кусочки звука с микрофона.
@@ -152,6 +222,7 @@ pub struct Capture {
 /// Начинает захват. Возвращает поток и потребителя кольцевого буфера,
 /// в котором появляются моно-сэмплы f32 на частоте 48 кГц.
 /// После каждой порции звука колбэк будит `wakeup`.
+#[cfg(not(target_os = "android"))]
 pub fn start_capture(
     name: Option<&str>,
     wakeup: Arc<Wakeup>,
@@ -195,6 +266,7 @@ pub fn start_capture(
     Ok((Capture { _stream: stream, device_name: device_name(&device), config, glitches }, consumer))
 }
 
+#[cfg(not(target_os = "android"))]
 fn build_input<T>(
     device: &Device,
     config: StreamConfig,
@@ -230,7 +302,7 @@ where
 
 /// Запущенное воспроизведение. Пока значение живо — звук играет.
 pub struct Playback {
-    _stream: cpal::Stream,
+    _stream: StreamHandle,
     pub device_name: String,
     pub config: StreamConfig,
     /// Сколько раз воспроизведению не хватило звука (или система сообщила о сбое).
@@ -241,6 +313,7 @@ pub struct Playback {
 /// в него надо класть моно-сэмплы f32 на частоте **устройства** (`config.sample_rate`).
 /// Если данных не хватает, играет тишина.
 /// После каждой порции звука колбэк будит `wakeup`, чтобы микшер долил новую.
+#[cfg(not(target_os = "android"))]
 pub fn start_playback(
     name: Option<&str>,
     wakeup: Arc<Wakeup>,
@@ -279,6 +352,7 @@ pub fn start_playback(
     ))
 }
 
+#[cfg(not(target_os = "android"))]
 fn build_output<T>(
     device: &Device,
     config: StreamConfig,
@@ -322,6 +396,79 @@ where
         None,
     )?;
     Ok(stream)
+}
+
+/// Захват на Android: системный микрофон в режиме звонка (`name` не нужен).
+#[cfg(target_os = "android")]
+pub fn start_capture(
+    _name: Option<&str>,
+    wakeup: Arc<Wakeup>,
+) -> anyhow::Result<(Capture, HeapCons<f32>)> {
+    let stream = crate::aaudio::Stream::open(true)?;
+    let config = StreamConfig {
+        channels: stream.channels(),
+        sample_rate: stream.sample_rate(),
+        buffer_size: cpal::BufferSize::Default,
+    };
+    let (mut producer, consumer) = HeapRb::<f32>::new(SAMPLE_RATE as usize).split();
+    let mut resampler = Resampler::new(config.sample_rate, SAMPLE_RATE);
+    stream.start(Box::new(move |samples: &mut [f32]| {
+        for &sample in samples.iter() {
+            resampler.push(sample, |s| {
+                let _ = producer.try_push(s);
+            });
+        }
+        wakeup.wake();
+    }))?;
+    let capture = Capture {
+        _stream: stream,
+        device_name: "Микрофон телефона".into(),
+        config,
+        glitches: Arc::new(AtomicU64::new(0)),
+    };
+    Ok((capture, consumer))
+}
+
+/// Воспроизведение на Android: голос в разговоре, устройство выбирает система.
+#[cfg(target_os = "android")]
+pub fn start_playback(
+    _name: Option<&str>,
+    wakeup: Arc<Wakeup>,
+) -> anyhow::Result<(Playback, HeapProd<f32>)> {
+    let stream = crate::aaudio::Stream::open(false)?;
+    let config = StreamConfig {
+        channels: stream.channels(),
+        sample_rate: stream.sample_rate(),
+        buffer_size: cpal::BufferSize::Default,
+    };
+    let (producer, mut consumer) = HeapRb::<f32>::new(config.sample_rate as usize / 2).split();
+    let glitches = Arc::new(AtomicU64::new(0));
+    let underruns = glitches.clone();
+    let mut primed = false;
+    stream.start(Box::new(move |samples: &mut [f32]| {
+        let mut starved = false;
+        for sample in samples.iter_mut() {
+            *sample = match consumer.try_pop() {
+                Some(s) => {
+                    primed = true;
+                    s
+                }
+                None => {
+                    starved = true;
+                    0.0
+                }
+            };
+        }
+        if starved && primed {
+            underruns.fetch_add(1, Ordering::Relaxed);
+        }
+        wakeup.wake();
+    }))?;
+    let playback =
+        Playback {
+            _stream: stream, device_name: "Звук телефона".into(), config, glitches
+        };
+    Ok((playback, producer))
 }
 
 /// Следит за счётчиком сбоев и сообщает о новых, не чаще раза в несколько секунд.

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Та же иконка для 16 и 24 px: линии толще, без точки (она там — пиксель). -->
+  <rect x="2" y="2" width="96" height="96" rx="20" fill="#7c6cff"/>
+  <g transform="translate(2 2) scale(0.96)">
+    <path d="M30 60 V38 Q30 22 46 22 H54 Q70 22 70 38 V60" fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round"/>
+    <rect x="17" y="50" width="22" height="32" rx="8" fill="#fff"/>
+    <rect x="61" y="50" width="22" height="32" rx="8" fill="#fff"/>
+  </g>
+</svg>

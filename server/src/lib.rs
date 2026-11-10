@@ -5,20 +5,23 @@
 //! и Mumble, и SFU в WebRTC). Поэтому нагрузка на процессор почти нулевая,
 //! а качество звука определяется только клиентами.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use bytes::Bytes;
 use quinn::crypto::rustls::QuicServerConfig;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
-use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
 use tracing::{info, warn};
-use vwf_proto::{ClientMsg, PROTOCOL_VERSION, PeerId, PeerInfo, ServerMsg};
+use vwf_proto::{
+    Announcement, ChatMessage, ClientMsg, PROTOCOL_VERSION, PeerId, PeerInfo, ServerMsg,
+    VideoHeader,
+};
 
 const MAX_NAME_CHARS: usize = 32;
 
@@ -29,21 +32,47 @@ pub struct Config {
     pub echo: bool,
     /// Где хранить сертификат и ключ. `None` — сгенерировать временные (для тестов).
     pub data_dir: Option<PathBuf>,
+    /// Название сервера, которое видят клиенты при поиске в локальной сети.
+    pub name: String,
+    /// Где отвечать на поиск серверов (обычно `0.0.0.0:47778`); `None` — не отвечать.
+    pub discovery: Option<SocketAddr>,
+    /// Секрет, предъявив который при подключении, участник получает права хоста
+    /// (заглушать и выгонять других). `None` — хоста нет.
+    pub admin_token: Option<String>,
 }
 
 pub struct Server {
     endpoint: quinn::Endpoint,
     fingerprint: String,
-    echo: bool,
+    /// Режим эха можно переключать и на работающем сервере (см. `echo_switch`).
+    echo: Arc<AtomicBool>,
+    /// «Никого больше не пускать» (см. `lock_switch`).
+    locked: Arc<AtomicBool>,
+    /// Отвечать ли на поиск в локальной сети (см. `discovery_switch`).
+    discoverable: Arc<AtomicBool>,
+    /// Пароль и лимит участников (см. `access`).
+    access: Arc<Access>,
+    name: String,
+    discovery: Option<std::net::UdpSocket>,
+    admin_token: Option<String>,
 }
 
 impl Server {
     pub fn bind(config: Config) -> anyhow::Result<Self> {
+        Self::bind_with_socket(config, None)
+    }
+
+    /// То же, но поверх готового сокета (`config.bind` тогда не используется).
+    /// Так сервер работает на сокете с пробивкой NAT (см. `vwf-nat`).
+    pub fn bind_with_socket(
+        config: Config,
+        socket: Option<Arc<dyn quinn::AsyncUdpSocket>>,
+    ) -> anyhow::Result<Self> {
         let (cert, key) = match &config.data_dir {
             Some(dir) => load_or_create_cert(dir)?,
             None => generate_cert()?,
         };
-        let fingerprint = fingerprint(&cert);
+        let fingerprint = vwf_proto::cert_fingerprint(&cert);
 
         let mut tls = rustls::ServerConfig::builder_with_provider(Arc::new(
             rustls::crypto::ring::default_provider(),
@@ -57,39 +86,192 @@ impl Server {
             quinn::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(tls)?));
         server_config.transport_config(Arc::new(transport_config()));
 
-        let endpoint = quinn::Endpoint::server(server_config, config.bind)
-            .with_context(|| format!("не удалось открыть UDP-порт {}", config.bind))?;
-        Ok(Self { endpoint, fingerprint, echo: config.echo })
+        let endpoint = match socket {
+            Some(socket) => quinn::Endpoint::new_with_abstract_socket(
+                quinn::EndpointConfig::default(),
+                Some(server_config),
+                socket,
+                Arc::new(quinn::TokioRuntime),
+            )?,
+            None => quinn::Endpoint::server(server_config, config.bind)
+                .with_context(|| format!("не удалось открыть UDP-порт {}", config.bind))?,
+        };
+
+        // Без поиска сервер прекрасно работает, поэтому ошибку здесь не считаем
+        // фатальной: например, на одном компьютере запущены два сервера.
+        let discovery = config.discovery.and_then(|addr| {
+            match std::net::UdpSocket::bind(addr).and_then(|s| s.set_nonblocking(true).map(|_| s)) {
+                Ok(socket) => Some(socket),
+                Err(e) => {
+                    warn!("поиск в локальной сети отключён: не удалось открыть UDP {addr}: {e}");
+                    None
+                }
+            }
+        });
+
+        Ok(Self {
+            endpoint,
+            fingerprint,
+            echo: Arc::new(AtomicBool::new(config.echo)),
+            locked: Arc::new(AtomicBool::new(false)),
+            discoverable: Arc::new(AtomicBool::new(true)),
+            access: Arc::new(Access::default()),
+            name: config.name,
+            discovery,
+            admin_token: config.admin_token.filter(|t| !t.is_empty()),
+        })
+    }
+
+    /// Адрес, на котором сервер отвечает на поиск (если отвечает).
+    pub fn discovery_addr(&self) -> Option<SocketAddr> {
+        self.discovery.as_ref().and_then(|s| s.local_addr().ok())
     }
 
     pub fn local_addr(&self) -> anyhow::Result<SocketAddr> {
         Ok(self.endpoint.local_addr()?)
     }
 
-    /// SHA-256 отпечаток сертификата. Позже клиенты смогут его запоминать
-    /// и замечать подмену сервера.
+    /// SHA-256 отпечаток сертификата. Клиенты запоминают его при первом
+    /// подключении и так замечают подмену сервера.
     pub fn fingerprint(&self) -> &str {
         &self.fingerprint
     }
 
-    /// Принимает подключения, пока endpoint не закроют.
+    /// Принимает подключения, пока endpoint не закроют
+    /// (`server.endpoint().close(...)` — так сервер и останавливают).
     pub async fn run(self) {
-        let room = Arc::new(Mutex::new(Room::default()));
+        let room = Arc::new(Mutex::new(Room::new()));
+
+        let mut discovery_task = None;
+        if let Some(socket) = self.discovery {
+            match tokio::net::UdpSocket::from_std(socket) {
+                Ok(socket) => {
+                    let port = self.endpoint.local_addr().map(|a| a.port()).unwrap_or_default();
+                    let announcement = Announcement {
+                        instance: random_u64(),
+                        name: self.name.clone(),
+                        port,
+                        protocol: PROTOCOL_VERSION,
+                        users: 0,
+                        password: false,
+                    };
+                    discovery_task = Some(tokio::spawn(answer_discovery(
+                        socket,
+                        room.clone(),
+                        announcement,
+                        self.discoverable.clone(),
+                        self.access.clone(),
+                    )));
+                }
+                Err(e) => warn!("поиск в локальной сети отключён: {e}"),
+            }
+        }
+
+        let settings = Arc::new(RoomSettings {
+            echo: self.echo,
+            locked: self.locked,
+            access: self.access,
+            admin_token: self.admin_token,
+        });
         while let Some(incoming) = self.endpoint.accept().await {
             let room = room.clone();
-            let echo = self.echo;
+            let settings = settings.clone();
             tokio::spawn(async move {
                 let remote = incoming.remote_address();
-                if let Err(e) = handle_connection(incoming, room, echo).await {
+                if let Err(e) = handle_connection(incoming, room, settings).await
+                    && !is_probe(&e)
+                {
                     warn!("{remote}: {e:#}");
                 }
             });
         }
+        // Сервер остановили: перестаём отвечать на поиск и дожидаемся, пока
+        // задача завершится и закроет сокет, — тогда порт сразу свободен.
+        if let Some(task) = discovery_task {
+            task.abort();
+            let _ = task.await;
+        }
+    }
+
+    /// Переключатель режима эха; действует и после запуска `run`.
+    pub fn echo_switch(&self) -> Arc<AtomicBool> {
+        self.echo.clone()
+    }
+
+    /// Переключатель «никого больше не пускать»: пока включён, сервер
+    /// отказывает новым участникам. Хост и те, кто только что был в комнате
+    /// (переподключаются после обрыва связи), проходят.
+    pub fn lock_switch(&self) -> Arc<AtomicBool> {
+        self.locked.clone()
+    }
+
+    /// Переключатель видимости в локальной сети: выключен — сервер молчит
+    /// на поиск, и в списке «В локальной сети» его нет.
+    pub fn discovery_switch(&self) -> Arc<AtomicBool> {
+        self.discoverable.clone()
+    }
+
+    /// Пароль комнаты и лимит участников; действуют и после запуска `run`.
+    pub fn access(&self) -> Arc<Access> {
+        self.access.clone()
     }
 
     pub fn endpoint(&self) -> &quinn::Endpoint {
         &self.endpoint
     }
+}
+
+/// Отвечает на поисковые запросы клиентов. Ответ уходит лично спросившему.
+async fn answer_discovery(
+    socket: tokio::net::UdpSocket,
+    room: Arc<Mutex<Room>>,
+    mut announcement: Announcement,
+    discoverable: Arc<AtomicBool>,
+    access: Arc<Access>,
+) {
+    let mut buf = [0u8; 64];
+    loop {
+        let (len, from) = match socket.recv_from(&mut buf).await {
+            Ok(received) => received,
+            // На Windows recv_from на UDP-сокете может вернуть ошибку, если
+            // какой-то из прошлых ответов не дошёл (ICMP «порт недоступен»).
+            // Сокет при этом исправен — просто продолжаем.
+            Err(_) => {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                continue;
+            }
+        };
+        if &buf[..len] != vwf_proto::DISCOVERY_PROBE || !discoverable.load(Ordering::Relaxed) {
+            continue;
+        }
+        announcement.users = room.lock().unwrap().peers.len() as u32;
+        announcement.password = access.has_password();
+        let _ = socket.send_to(&vwf_proto::encode_announcement(&announcement), from).await;
+    }
+}
+
+/// Случайное число без отдельной библиотеки: хэш от времени и номера процесса.
+fn random_u64() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    hasher.write_u128(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos()),
+    );
+    hasher.write_u32(std::process::id());
+    hasher.finish()
+}
+
+/// Название компьютера — название сервера по умолчанию.
+pub fn default_server_name() -> String {
+    std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .ok()
+        .or_else(|| std::fs::read_to_string("/etc/hostname").ok())
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "Поигрулькины".to_string())
 }
 
 /// Общие настройки QUIC: регулярные keep-alive, чтобы NAT-роутеры не забывали
@@ -101,20 +283,252 @@ fn transport_config() -> quinn::TransportConfig {
     t
 }
 
-#[derive(Default)]
 struct Room {
     next_id: PeerId,
     peers: HashMap<PeerId, Peer>,
+    /// Кто и когда недавно ушёл (по имени) — для закрытой комнаты.
+    recently_left: HashMap<String, Instant>,
+    /// Последние сообщения чата (старые — первыми).
+    chat: VecDeque<ChatMessage>,
+    next_message_id: u64,
 }
 
+struct RoomSettings {
+    echo: Arc<AtomicBool>,
+    locked: Arc<AtomicBool>,
+    access: Arc<Access>,
+    admin_token: Option<String>,
+}
+
+/// Кто может войти: пароль комнаты и наибольшее число участников. Меняется
+/// и на работающем сервере (см. [`Server::access`]). Хост (с секретом хоста)
+/// входит всегда.
+#[derive(Default)]
+pub struct Access {
+    password: Mutex<Option<String>>,
+    max_peers: AtomicU32,
+}
+
+impl Access {
+    /// Пароль комнаты; пустой — входят без пароля.
+    pub fn set_password(&self, password: &str) {
+        *self.password.lock().unwrap() = Some(password.to_string()).filter(|p| !p.is_empty());
+    }
+
+    pub fn has_password(&self) -> bool {
+        self.password.lock().unwrap().is_some()
+    }
+
+    /// Сколько человек (вместе с хостом) может быть в комнате; 0 — сколько угодно.
+    pub fn set_max_peers(&self, max: u32) {
+        self.max_peers.store(max, Ordering::Relaxed);
+    }
+
+    /// Подходит ли пароль. Сравнение без раннего выхода: по времени ответа
+    /// пароль не подобрать.
+    fn admits(&self, password: &str) -> bool {
+        match self.password.lock().unwrap().as_deref() {
+            None => true,
+            Some(expected) => {
+                expected.len() == password.len()
+                    && expected.bytes().zip(password.bytes()).fold(0, |acc, (a, b)| acc | (a ^ b))
+                        == 0
+            }
+        }
+    }
+}
+
+/// Отказывает в подключении с понятной причиной и закрывает соединение.
+async fn reject(
+    send: &mut quinn::SendStream,
+    conn: &quinn::Connection,
+    reason: &str,
+) -> anyhow::Result<()> {
+    vwf_proto::write_msg(send, &ServerMsg::Rejected { reason: reason.to_string() }).await?;
+    let _ = send.finish();
+    // Даём сообщению дойти, прежде чем рвать соединение.
+    let _ = tokio::time::timeout(Duration::from_secs(2), conn.closed()).await;
+    Ok(())
+}
+
+/// Кто ушёл из комнаты не дольше этого назад, может вернуться и в закрытую:
+/// так переподключение после обрыва связи не упирается в замок.
+const REJOIN_WINDOW: Duration = Duration::from_secs(180);
+
 struct Peer {
-    name: String,
+    info: PeerInfo,
     conn: quinn::Connection,
     /// Очередь управляющих сообщений этому участнику (пишет отдельная задача).
     control: mpsc::UnboundedSender<ServerMsg>,
+    /// Когда участник отправлял последние сообщения в чат — против флуда.
+    recent_chat: VecDeque<Instant>,
+    /// Чьи экраны он смотрит.
+    watching: HashSet<PeerId>,
+    /// Чьи кадры ему сейчас нельзя слать до опорного: он пропустил кадр,
+    /// и без опорного картинка у него развалится.
+    waiting_keyframe: HashSet<PeerId>,
+    /// Очередь кадров демонстрации ему (пишет отдельная задача).
+    video: mpsc::Sender<Bytes>,
+    /// Когда у него последний раз просили опорный кадр (если он показывает экран).
+    keyframe_asked: Option<Instant>,
+    /// Его выгнал хост: в закрытую комнату он не вернётся.
+    kicked: bool,
+    /// Аватарка (пустая — нет).
+    avatar: Vec<u8>,
 }
 
+/// Сколько кадров демонстрации может ждать отправки одному зрителю. Больше —
+/// значит, его канал не успевает, и лишние кадры пропускаются до опорного.
+const VIDEO_QUEUE: usize = 6;
+
+/// Не чаще этого просить у показывающего опорный кадр (он тяжёлый).
+const KEYFRAME_INTERVAL: Duration = Duration::from_millis(500);
+
+/// Не больше стольких сообщений в чат...
+const CHAT_BURST: usize = 10;
+/// ...за это время от одного участника. Лишние сервер молча отбрасывает.
+const CHAT_WINDOW: Duration = Duration::from_secs(10);
+
 impl Room {
+    fn new() -> Self {
+        Self {
+            next_id: 0,
+            peers: HashMap::new(),
+            recently_left: HashMap::new(),
+            chat: VecDeque::new(),
+            // Номера сообщений начинаются со случайного числа: если сервер
+            // перезапустят, новые сообщения не совпадут по номеру со старыми,
+            // которые остались у клиентов на экране.
+            next_message_id: random_u64() >> 16,
+        }
+    }
+
+    fn send_to(&self, id: PeerId, msg: ServerMsg) {
+        if let Some(peer) = self.peers.get(&id) {
+            let _ = peer.control.send(msg);
+        }
+    }
+
+    /// Просит показывающего `sharer` прислать опорный кадр (не слишком часто).
+    fn ask_keyframe(&mut self, sharer: PeerId) {
+        let Some(peer) = self.peers.get_mut(&sharer) else { return };
+        if peer.keyframe_asked.is_some_and(|t| t.elapsed() < KEYFRAME_INTERVAL) {
+            return;
+        }
+        peer.keyframe_asked = Some(Instant::now());
+        let _ = peer.control.send(ServerMsg::KeyframeNeeded);
+    }
+
+    /// Сообщает показывающему, сколько у него зрителей.
+    fn send_viewer_count(&self, sharer: PeerId) {
+        let count = self.peers.values().filter(|p| p.watching.contains(&sharer)).count();
+        self.send_to(sharer, ServerMsg::Viewers { count: count as u32 });
+    }
+
+    /// `viewer` начинает или перестаёт смотреть экран `sharer`.
+    fn watch(&mut self, viewer: PeerId, sharer: PeerId, watch: bool) {
+        let sharing = self.peers.get(&sharer).is_some_and(|p| p.info.sharing);
+        let Some(peer) = self.peers.get_mut(&viewer) else { return };
+        let changed = if watch && sharing {
+            // Начинать показ можно только с опорного кадра.
+            peer.waiting_keyframe.insert(sharer);
+            peer.watching.insert(sharer)
+        } else {
+            peer.waiting_keyframe.remove(&sharer);
+            peer.watching.remove(&sharer)
+        };
+        if changed {
+            if watch {
+                self.ask_keyframe(sharer);
+            }
+            self.send_viewer_count(sharer);
+        }
+    }
+
+    /// Участник перестал показывать экран (или ушёл): зрители больше не смотрят.
+    fn stop_sharing(&mut self, sharer: PeerId) {
+        for peer in self.peers.values_mut() {
+            peer.watching.remove(&sharer);
+            peer.waiting_keyframe.remove(&sharer);
+        }
+    }
+
+    /// Рассылает кадр демонстрации от `from` его зрителям. `packet` — уже
+    /// готовый поток для зрителя: `[from][заголовок][H.264]`.
+    fn forward_video(&mut self, from: PeerId, keyframe: bool, packet: Bytes) {
+        if !self.peers.get(&from).is_some_and(|p| p.info.sharing) {
+            return;
+        }
+        let mut lagging = false;
+        for peer in self.peers.values_mut() {
+            if !peer.watching.contains(&from) {
+                continue;
+            }
+            if peer.waiting_keyframe.contains(&from) && !keyframe {
+                continue;
+            }
+            match peer.video.try_send(packet.clone()) {
+                Ok(()) => {
+                    peer.waiting_keyframe.remove(&from);
+                }
+                // Зритель не успевает: пропускаем кадры до следующего опорного.
+                Err(_) => {
+                    peer.waiting_keyframe.insert(from);
+                    lagging = true;
+                }
+            }
+        }
+        if lagging {
+            self.ask_keyframe(from);
+        }
+    }
+
+    /// Можно ли `name` войти в закрытую комнату: он только что в ней был
+    /// или всё ещё числится в ней (связь оборвалась, а сервер этого пока не
+    /// заметил, — клиент переподключается).
+    fn may_rejoin(&mut self, name: &str) -> bool {
+        self.recently_left.retain(|_, left| left.elapsed() < REJOIN_WINDOW);
+        self.recently_left.contains_key(name)
+            || self.peers.values().any(|p| !p.kicked && p.info.name == name)
+    }
+
+    /// Принимает сообщение в чат от участника `from` и рассылает всем.
+    fn chat(&mut self, from: PeerId, text: &str) {
+        let Some(peer) = self.peers.get_mut(&from) else { return };
+        let text = sanitize_chat(text);
+        if text.is_empty() {
+            return;
+        }
+        let now = Instant::now();
+        while peer.recent_chat.front().is_some_and(|t| now - *t > CHAT_WINDOW) {
+            peer.recent_chat.pop_front();
+        }
+        if peer.recent_chat.len() >= CHAT_BURST {
+            warn!("id {from}: слишком много сообщений в чат, пропускаю");
+            return;
+        }
+        peer.recent_chat.push_back(now);
+
+        let message = ChatMessage {
+            id: self.next_message_id,
+            from,
+            name: peer.info.name.clone(),
+            text,
+            time_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_millis() as u64),
+        };
+        self.next_message_id += 1;
+        if self.chat.len() == vwf_proto::CHAT_HISTORY {
+            self.chat.pop_front();
+        }
+        self.chat.push_back(message.clone());
+        let msg = ServerMsg::Chat(message);
+        for peer in self.peers.values() {
+            let _ = peer.control.send(msg.clone());
+        }
+    }
+
     fn broadcast(&self, except: PeerId, msg: &ServerMsg) {
         for (id, peer) in &self.peers {
             if *id != except {
@@ -122,12 +536,82 @@ impl Room {
             }
         }
     }
+
+    /// Меняет статус участника и сообщает об этом всем, включая его самого.
+    fn update(&mut self, id: PeerId, change: impl FnOnce(&mut PeerInfo)) {
+        let Some(peer) = self.peers.get_mut(&id) else { return };
+        let before = peer.info.clone();
+        change(&mut peer.info);
+        if peer.info != before {
+            let msg = ServerMsg::PeerUpdated(peer.info.clone());
+            for peer in self.peers.values() {
+                let _ = peer.control.send(msg.clone());
+            }
+        }
+    }
+
+    /// Выполняет управляющую команду участника `from`.
+    fn handle_command(&mut self, from: PeerId, msg: ClientMsg) {
+        let from_admin = self.peers.get(&from).is_some_and(|p| p.info.admin);
+        match msg {
+            ClientMsg::Hello { .. } => {}
+            ClientMsg::SetStatus { muted, deafened } => self.update(from, |p| {
+                p.muted = muted;
+                p.deafened = deafened;
+            }),
+            ClientMsg::SetServerMute { id, muted } if from_admin => {
+                self.update(id, |p| p.server_muted = muted);
+            }
+            ClientMsg::Chat { text } => self.chat(from, &text),
+            ClientMsg::SetSharing { sharing } => {
+                if !sharing {
+                    self.stop_sharing(from);
+                }
+                self.update(from, |p| p.sharing = sharing);
+                if sharing {
+                    self.send_viewer_count(from);
+                }
+            }
+            ClientMsg::Watch { id, watch } => self.watch(from, id, watch),
+            ClientMsg::SetAvatar { data } if data.len() <= vwf_proto::MAX_AVATAR_BYTES => {
+                let Some(peer) = self.peers.get_mut(&from) else { return };
+                if peer.avatar != data {
+                    peer.avatar = data.clone();
+                    self.broadcast(from, &ServerMsg::Avatar { id: from, data });
+                }
+            }
+            ClientMsg::RequestKeyframe { id } => {
+                if self.peers.get(&from).is_some_and(|p| p.watching.contains(&id)) {
+                    self.ask_keyframe(id);
+                }
+            }
+            ClientMsg::Kick { id } if from_admin && id != from => {
+                if let Some(peer) = self.peers.get_mut(&id) {
+                    peer.kicked = true;
+                    info!("хост выгнал {} (id {id})", peer.info.name);
+                    // Остальное (удаление из комнаты, PeerLeft) сделает
+                    // обработчик соединения этого участника, когда оно закроется.
+                    peer.conn.close(1u32.into(), vwf_proto::KICKED_REASON.as_bytes());
+                }
+            }
+            other => warn!("id {from}: нет прав на {other:?}"),
+        }
+    }
+}
+
+/// Клиент только проверил, что сервер запущен, и сразу отключился.
+fn is_probe(e: &anyhow::Error) -> bool {
+    matches!(
+        e.downcast_ref::<quinn::ConnectionError>(),
+        Some(quinn::ConnectionError::ApplicationClosed(close))
+            if close.error_code == vwf_proto::PROBE_CLOSE_CODE.into()
+    )
 }
 
 async fn handle_connection(
     incoming: quinn::Incoming,
     room: Arc<Mutex<Room>>,
-    echo: bool,
+    settings: Arc<RoomSettings>,
 ) -> anyhow::Result<()> {
     let conn = incoming.await?;
     let remote = conn.remote_address();
@@ -140,37 +624,102 @@ async fn handle_connection(
     })
     .await
     .context("клиент не представился вовремя")??;
-    let Some(ClientMsg::Hello { protocol, name }) = hello else {
+    let Some(ClientMsg::Hello { protocol, name, admin_token }) = hello else {
         anyhow::bail!("клиент закрыл поток, не представившись");
     };
 
     if protocol != PROTOCOL_VERSION {
-        let reason = format!(
-            "версия протокола клиента {protocol}, а сервера {PROTOCOL_VERSION}: обновите программу"
-        );
+        // Подсказываем, у кого брать новую программу: у хоста или ему.
+        let advice = if protocol < PROTOCOL_VERSION {
+            "у хоста программа новее — попросите у него новую версию"
+        } else {
+            "у хоста программа старее — отправьте ему новую версию"
+        };
+        let reason =
+            format!("версия протокола клиента {protocol}, а сервера {PROTOCOL_VERSION}: {advice}");
         vwf_proto::write_msg(&mut send, &ServerMsg::Rejected { reason: reason.clone() }).await?;
         let _ = send.finish();
         // Даём сообщению дойти, прежде чем рвать соединение.
         let _ = tokio::time::timeout(Duration::from_secs(2), conn.closed()).await;
         anyhow::bail!(reason);
     }
+    // Сразу за Hello клиент присылает пароль комнаты (пустой, если не знает).
+    let auth = tokio::time::timeout(Duration::from_secs(10), vwf_proto::read_msg(&mut recv))
+        .await
+        .context("клиент не прислал пароль")??;
+    let Some(ClientMsg::Auth { password, app }) = auth else {
+        anyhow::bail!("клиент не прислал пароль");
+    };
+
     let name = sanitize_name(&name);
+    let admin = settings.admin_token.is_some() && admin_token == settings.admin_token;
+    if !admin && !settings.access.admits(&password) {
+        // Пауза против подбора пароля.
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let reason = if password.is_empty() {
+            vwf_proto::PASSWORD_REQUIRED_REASON
+        } else {
+            vwf_proto::WRONG_PASSWORD_REASON
+        };
+        reject(&mut send, &conn, reason).await?;
+        anyhow::bail!("{name}: {reason}");
+    }
+    if !admin && settings.locked.load(Ordering::Relaxed) && !room.lock().unwrap().may_rejoin(&name)
+    {
+        reject(&mut send, &conn, vwf_proto::LOCKED_REASON).await?;
+        anyhow::bail!("{name}: {}", vwf_proto::LOCKED_REASON);
+    }
+    let max = settings.access.max_peers.load(Ordering::Relaxed) as usize;
+    let full = max > 0 && {
+        let room = room.lock().unwrap();
+        // Кто переподключается после обрыва, ещё числится в комнате — его пускаем.
+        let returning = room.peers.values().any(|p| !p.kicked && p.info.name == name);
+        room.peers.len() >= max && !returning
+    };
+    if !admin && full {
+        reject(&mut send, &conn, vwf_proto::ROOM_FULL_REASON).await?;
+        anyhow::bail!("{name}: {}", vwf_proto::ROOM_FULL_REASON);
+    }
 
     let (control_tx, mut control_rx) = mpsc::unbounded_channel();
+    let (video_tx, mut video_rx) = mpsc::channel::<Bytes>(VIDEO_QUEUE);
     let id = {
         let mut room = room.lock().unwrap();
         let id = room.next_id;
         room.next_id += 1;
-        let peers =
-            room.peers.iter().map(|(id, p)| PeerInfo { id: *id, name: p.name.clone() }).collect();
+        let info = PeerInfo { admin, app: sanitize_app(&app), ..PeerInfo::new(id, name.clone()) };
+        let mut peers: Vec<PeerInfo> = room.peers.values().map(|p| p.info.clone()).collect();
+        peers.sort_by_key(|p| p.id);
         // Welcome кладём в очередь до того, как участник попадёт в комнату, —
         // так он гарантированно получит его раньше любых PeerJoined/PeerLeft.
-        let _ = control_tx.send(ServerMsg::Welcome { your_id: id, peers });
-        room.broadcast(id, &ServerMsg::PeerJoined(PeerInfo { id, name: name.clone() }));
-        room.peers.insert(id, Peer { name: name.clone(), conn: conn.clone(), control: control_tx });
+        let chat = room.chat.iter().cloned().collect();
+        let _ = control_tx.send(ServerMsg::Welcome { you: info.clone(), peers, chat });
+        for (&peer_id, peer) in &room.peers {
+            if !peer.avatar.is_empty() {
+                let _ =
+                    control_tx.send(ServerMsg::Avatar { id: peer_id, data: peer.avatar.clone() });
+            }
+        }
+        room.broadcast(id, &ServerMsg::PeerJoined(info.clone()));
+        room.peers.insert(
+            id,
+            Peer {
+                info,
+                conn: conn.clone(),
+                control: control_tx,
+                recent_chat: VecDeque::new(),
+                watching: HashSet::new(),
+                waiting_keyframe: HashSet::new(),
+                video: video_tx,
+                keyframe_asked: None,
+                kicked: false,
+                avatar: Vec::new(),
+            },
+        );
         id
     };
-    info!("+ {name} (id {id}, {remote})");
+    let role = if admin { ", хост" } else { "" };
+    info!("+ {name} (id {id}, {remote}{role})");
 
     // Писатель управляющих сообщений.
     tokio::spawn(async move {
@@ -181,12 +730,41 @@ async fn handle_connection(
         }
     });
 
-    // Читатель управляющих сообщений: пока клиенту нечего сказать после Hello,
-    // но если он закрыл поток — значит, уходит.
-    let reader_conn = conn.clone();
+    // Кадры демонстрации этому участнику: каждый — отдельным потоком, по порядку.
+    let video_conn = conn.clone();
     tokio::spawn(async move {
-        // Повторный Hello и прочее пока игнорируем.
-        while let Ok(Some(_)) = vwf_proto::read_msg::<_, ClientMsg>(&mut recv).await {}
+        while let Some(packet) = video_rx.recv().await {
+            let Ok(mut stream) = video_conn.open_uni().await else { break };
+            if stream.write_all(&packet).await.is_err() {
+                break;
+            }
+            let _ = stream.finish();
+        }
+    });
+
+    // Кадры демонстрации от этого участника. Читаем потоки по одному, чтобы
+    // кадры уходили зрителям в том же порядке, в каком были сняты.
+    let video_conn = conn.clone();
+    let video_room = room.clone();
+    tokio::spawn(async move {
+        while let Ok(mut stream) = video_conn.accept_uni().await {
+            let limit = vwf_proto::MAX_VIDEO_FRAME + VideoHeader::LEN;
+            let Ok(data) = stream.read_to_end(limit).await else { continue };
+            let Some((header, _)) = VideoHeader::decode(&data) else { continue };
+            let mut packet = Vec::with_capacity(4 + data.len());
+            packet.extend_from_slice(&id.to_le_bytes());
+            packet.extend_from_slice(&data);
+            video_room.lock().unwrap().forward_video(id, header.keyframe, Bytes::from(packet));
+        }
+    });
+
+    // Читатель управляющих сообщений. Если клиент закрыл поток — значит, уходит.
+    let reader_conn = conn.clone();
+    let reader_room = room.clone();
+    tokio::spawn(async move {
+        while let Ok(Some(msg)) = vwf_proto::read_msg::<_, ClientMsg>(&mut recv).await {
+            reader_room.lock().unwrap().handle_command(id, msg);
+        }
         reader_conn.close(0u32.into(), b"bye");
     });
 
@@ -202,6 +780,11 @@ async fn handle_connection(
         let packet = Bytes::from(vwf_proto::encode_server_voice(id, &data));
         let targets: Vec<quinn::Connection> = {
             let room = room.lock().unwrap();
+            // Заглушённого хостом не пересылаем никому.
+            if room.peers.get(&id).is_none_or(|p| p.info.server_muted) {
+                continue;
+            }
+            let echo = settings.echo.load(Ordering::Relaxed);
             room.peers
                 .iter()
                 .filter(|(pid, _)| echo || **pid != id)
@@ -217,11 +800,38 @@ async fn handle_connection(
 
     {
         let mut room = room.lock().unwrap();
-        room.peers.remove(&id);
+        if let Some(peer) = room.peers.remove(&id) {
+            if !peer.kicked {
+                room.recently_left.insert(peer.info.name.clone(), Instant::now());
+            }
+            // Ушедший больше никого не смотрит, а его зрители — его.
+            for sharer in peer.watching {
+                room.send_viewer_count(sharer);
+            }
+            room.stop_sharing(id);
+        }
         room.broadcast(id, &ServerMsg::PeerLeft { id });
     }
     info!("- {name} (id {id}): {reason}");
     Ok(())
+}
+
+/// Убирает управляющие символы (кроме переноса строки и табуляции), пустые
+/// строки по краям и обрезает слишком длинное сообщение.
+fn sanitize_chat(text: &str) -> String {
+    text.trim()
+        .chars()
+        .filter(|c| !c.is_control() || matches!(c, '\n' | '\t'))
+        .take(vwf_proto::MAX_CHAT_CHARS)
+        .collect::<String>()
+        .trim_end()
+        .to_string()
+}
+
+/// Версия программы участника: без управляющих символов и не длиннее
+/// [`vwf_proto::MAX_APP_CHARS`].
+fn sanitize_app(app: &str) -> String {
+    app.trim().chars().filter(|c| !c.is_control()).take(vwf_proto::MAX_APP_CHARS).collect()
 }
 
 fn sanitize_name(name: &str) -> String {
@@ -255,10 +865,6 @@ fn load_or_create_cert(dir: &Path) -> anyhow::Result<CertAndKey> {
     std::fs::write(&key_path, certified.signing_key.serialize_der())?;
     info!("создан новый сертификат сервера: {}", cert_path.display());
     load_or_create_cert(dir)
-}
-
-fn fingerprint(cert: &CertificateDer<'_>) -> String {
-    Sha256::digest(cert.as_ref()).iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(":")
 }
 
 /// Адреса этого компьютера, по которым к серверу могут подключиться друзья

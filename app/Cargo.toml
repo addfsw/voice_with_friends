@@ -1,0 +1,56 @@
+[package]
+name = "vwf-app"
+description = "Поигрулькины: графический клиент (Tauri)"
+version.workspace = true
+edition.workspace = true
+# Tauri 2 требует Rust новее, чем остальной проект.
+rust-version = "1.90"
+license.workspace = true
+
+[[bin]]
+name = "poigrulkiny"
+path = "src/main.rs"
+
+# На Android программа — библиотека, которую загружает Android-обёртка.
+[lib]
+name = "vwf_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+vwf-client.workspace = true
+vwf-proto.workspace = true
+vwf-server.workspace = true
+vwf-nat.workspace = true
+anyhow.workspace = true
+quinn.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+base64.workspace = true
+tokio.workspace = true
+# Проверка обновлений: latest.json из последнего релиза на GitHub.
+reqwest.workspace = true
+semver = "1"
+# custom-protocol: интерфейс встраивается в exe, и программа работает
+# после обычного `cargo build`, без отдельного dev-сервера и tauri-cli.
+# tray-icon — значок в трее рядом с часами.
+tauri = { version = "2", features = ["custom-protocol", "tray-icon"] }
+# Ссылки из чата открываются в обычном браузере, а не в окне программы.
+tauri-plugin-opener = "2"
+
+# Только на компьютере: глобальная клавиша рации и одна копия программы.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-global-shortcut = "2"
+# Второй запуск программы не открывает вторую копию, а показывает первую.
+tauri-plugin-single-instance = "2"
+# Обновление из программы: скачивает установщик из релиза, проверяет его
+# подпись и ставит поверх. На Android — своя установка APK (MainActivity.kt).
+tauri-plugin-updater = "2"
+
+# Android: передать Java-машину и Activity звуковой библиотеке (src/android.rs).
+# jni — той же версии, что у wry.
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+ndk-context = "0.1"

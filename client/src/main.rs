@@ -1,20 +1,21 @@
 use std::collections::HashMap;
 use std::io::Write;
-use std::sync::Arc;
-use std::sync::atomic::Ordering;
 use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use clap::{Args, Parser, Subcommand};
 use tokio::sync::mpsc as tokio_mpsc;
-use vwf_client::audio::GlitchCounter;
-use vwf_client::audio::Wakeup;
+use vwf_client::audio::{self, GlitchCounter};
+use vwf_client::call::{AudioEngine, AudioSettings, Call, CallEvent};
 use vwf_client::jitter::Delay;
-use vwf_client::pipeline::{Mixer, MixerOutput, Transmitter, TxSettings, TxState};
-use vwf_client::{audio, net};
-use vwf_proto::{PeerId, ServerMsg};
+use vwf_client::known_servers::{self, KnownServers};
+use vwf_client::net::{CertificateChanged, Trust};
+use vwf_client::pipeline::{Mixer, TxMode, TxSettings, TxState};
+use vwf_client::screen::ShareSettings;
+use vwf_proto::PeerId;
 
-/// Голосовой чат voice_with_friends (консольный клиент).
+/// Поигрулькины: голосовой чат (консольный клиент).
 #[derive(Parser)]
 #[command(version)]
 struct Cli {
@@ -26,6 +27,10 @@ struct Cli {
 enum Command {
     /// Показать микрофоны и устройства вывода.
     Devices,
+    /// Найти серверы в локальной сети.
+    Discover,
+    /// Что можно показать при демонстрации экрана (для `connect --share`).
+    Screens,
     /// Проверка звука без сети: микрофон → Opus → джиттер-буфер → динамики.
     /// Говорите в микрофон (лучше в наушниках) и слушайте себя.
     Loopback {
@@ -45,6 +50,26 @@ enum Command {
         /// Ваше имя, которое увидят остальные.
         #[arg(long, short)]
         name: String,
+        /// Секрет хоста, если сервер запущен с `--admin-token`.
+        #[arg(long)]
+        admin_token: Option<String>,
+        /// Пароль комнаты, если хост его задал.
+        #[arg(long)]
+        password: Option<String>,
+        /// Сертификат сервера изменился, и вы уверены, что это не подмена
+        /// (хост подтвердил новый код): запомнить новый и подключиться.
+        #[arg(long)]
+        trust_new_certificate: bool,
+        /// Показать экран остальным: идентификатор из `screens`
+        /// (без значения — первый экран).
+        #[arg(long, num_args = 0..=1, default_missing_value = "")]
+        share: Option<String>,
+        /// Наибольшая высота кадра демонстрации (0 — как на экране).
+        #[arg(long, default_value_t = 1080)]
+        share_height: u32,
+        /// Кадров в секунду для демонстрации.
+        #[arg(long, default_value_t = 30)]
+        share_fps: u32,
         #[command(flatten)]
         audio: AudioArgs,
     },
@@ -67,62 +92,50 @@ struct AudioArgs {
     /// Передавать всегда, без активации голосом.
     #[arg(long)]
     no_vad: bool,
+    /// Отключить шумоподавление.
+    #[arg(long)]
+    no_denoise: bool,
+    /// Без автоусиления тихого голоса.
+    #[arg(long)]
+    no_agc: bool,
+    /// Без эхоподавления.
+    #[arg(long)]
+    no_aec: bool,
     /// Постоянная задержка джиттер-буфера, мс. По умолчанию подстраивается под сеть
     /// сама: в локальной сети это ~10 мс, в плохом Wi-Fi больше.
     #[arg(long)]
     jitter_ms: Option<u32>,
     /// Сколько звука держать готовым для звуковой карты, мс. Если появляются
     /// сбои вывода (щелчки), увеличьте до 30–40.
-    #[arg(long, default_value_t = 20)]
+    #[arg(long, default_value_t = 30)]
     playback_ms: u32,
+    /// Без звуков событий (кто-то вошёл или вышел).
+    #[arg(long)]
+    no_cues: bool,
 }
 
 impl AudioArgs {
-    fn tx_settings(&self) -> TxSettings {
-        TxSettings {
-            bitrate: self.bitrate.clamp(6, 128) * 1000,
-            vad_threshold_db: (!self.no_vad).then_some(self.vad_db),
+    fn settings(&self) -> AudioSettings {
+        AudioSettings {
+            input: self.input.clone(),
+            output: self.output.clone(),
+            tx: TxSettings { bitrate: self.bitrate.clamp(6, 128) * 1000 },
+            jitter: match self.jitter_ms {
+                Some(ms) => Delay::Fixed(ms as f64),
+                None => Delay::default(),
+            },
+            playback_ms: self.playback_ms,
+            cues: !self.no_cues,
         }
     }
 
-    fn jitter_delay(&self) -> Delay {
-        match self.jitter_ms {
-            Some(ms) => Delay::Fixed(ms as f64),
-            None => Delay::default(),
-        }
-    }
-}
-
-/// Запущенные микрофон, динамики, микшер и кодер.
-struct Audio {
-    capture: audio::Capture,
-    playback: audio::Playback,
-    mixer: Arc<Mixer>,
-    tx: Transmitter,
-    _output: MixerOutput,
-}
-
-impl Audio {
-    fn start(
-        args: &AudioArgs,
-        send: impl FnMut(u32, &[u8]) + Send + 'static,
-    ) -> anyhow::Result<Self> {
-        let mic_wakeup = Arc::new(Wakeup::default());
-        let speaker_wakeup = Arc::new(Wakeup::default());
-        let (capture, mic) = audio::start_capture(args.input.as_deref(), mic_wakeup.clone())?;
-        let (playback, speakers) =
-            audio::start_playback(args.output.as_deref(), speaker_wakeup.clone())?;
-        print_devices(&capture, &playback);
-
-        let mixer = Arc::new(Mixer::new(args.jitter_delay()));
-        let output = mixer.spawn_output(
-            speakers,
-            playback.config.sample_rate,
-            speaker_wakeup,
-            args.playback_ms.clamp(5, 200),
-        )?;
-        let tx = Transmitter::spawn(mic, mic_wakeup, args.tx_settings(), send)?;
-        Ok(Self { capture, playback, mixer, tx, _output: output })
+    fn tx_state(&self) -> Arc<TxState> {
+        let mode = if self.no_vad { TxMode::Always } else { TxMode::Voice };
+        let state = TxState::new(mode, self.vad_db);
+        state.set_noise_suppression(!self.no_denoise);
+        state.set_agc(!self.no_agc);
+        state.set_echo_cancellation(!self.no_aec);
+        Arc::new(state)
     }
 }
 
@@ -137,19 +150,64 @@ async fn main() -> anyhow::Result<()> {
 
     match Cli::parse().command {
         Command::Devices => audio::list_devices(),
+        Command::Discover => discover().await,
+        Command::Screens => {
+            for source in vwf_client::screen::sources()? {
+                println!("{}  —  {}", source.id, source.name);
+            }
+            Ok(())
+        }
         Command::Loopback { audio, sim_loss, sim_jitter_ms } => {
             loopback(audio, sim_loss, sim_jitter_ms).await
         }
-        Command::Connect { server, name, audio } => connect(&server, &name, audio).await,
+        Command::Connect {
+            server,
+            name,
+            admin_token,
+            password,
+            trust_new_certificate,
+            share,
+            share_height,
+            share_fps,
+            audio,
+        } => {
+            let share = share
+                .map(|source| (source, ShareSettings { max_height: share_height, fps: share_fps }));
+            let credentials = vwf_client::net::Credentials {
+                admin_token: admin_token.as_deref(),
+                password: password.as_deref(),
+            };
+            connect(&server, &name, credentials, trust_new_certificate, share, audio).await
+        }
     }
+}
+
+async fn discover() -> anyhow::Result<()> {
+    println!("Ищу серверы в локальной сети...");
+    let servers = vwf_client::discovery::discover(Duration::from_secs(1)).await?;
+    if servers.is_empty() {
+        println!(
+            "Ничего не найдено. Сервер запущен? Брандмауэр пропускает UDP-порт {}?",
+            vwf_proto::DISCOVERY_PORT
+        );
+    }
+    for server in servers {
+        let note =
+            if server.compatible { "" } else { "  (другая версия программы)" };
+        println!("  {}  —  {}  —  участников: {}{note}", server.name, server.address, server.users);
+    }
+    Ok(())
 }
 
 async fn loopback(args: AudioArgs, sim_loss: f32, sim_jitter_ms: u32) -> anyhow::Result<()> {
     // Сеть создаём до звука, а микшер подключаем к ней сразу после запуска.
     let mixer_slot: Arc<std::sync::OnceLock<Arc<Mixer>>> = Arc::default();
     let network = SimulatedNetwork::spawn(mixer_slot.clone(), sim_loss, sim_jitter_ms);
-    let audio = Audio::start(&args, move |seq, opus| network.send(seq, opus))?;
+    let audio = AudioEngine::start(&args.settings(), args.tx_state(), move |seq, opus| {
+        network.send(seq, opus)
+    })?;
     let _ = mixer_slot.set(audio.mixer.clone());
+    print_devices(&audio);
     let names = HashMap::from([(LOOPBACK_ID, "вы".to_string())]);
 
     println!("Говорите — вы должны слышать себя с небольшой задержкой.");
@@ -162,7 +220,7 @@ async fn loopback(args: AudioArgs, sim_loss: f32, sim_jitter_ms: u32) -> anyhow:
     let mut meter = tokio::time::interval(Duration::from_millis(100));
     loop {
         tokio::select! {
-            _ = meter.tick() => print_meter(&audio.tx.state),
+            _ = meter.tick() => print_meter(&audio.tx_state),
             _ = glitch_check.tick() => report_glitches(&mut glitches, true),
             Some(cmd) = commands.recv() => handle_command(&cmd, &audio, &names),
             _ = tokio::signal::ctrl_c() => break,
@@ -172,13 +230,67 @@ async fn loopback(args: AudioArgs, sim_loss: f32, sim_jitter_ms: u32) -> anyhow:
     Ok(())
 }
 
-async fn connect(server: &str, name: &str, args: AudioArgs) -> anyhow::Result<()> {
+async fn connect(
+    server: &str,
+    name: &str,
+    credentials: vwf_client::net::Credentials<'_>,
+    trust_new_certificate: bool,
+    share: Option<(String, ShareSettings)>,
+    args: AudioArgs,
+) -> anyhow::Result<()> {
     println!("Подключаюсь к {server}...");
-    let mut session = net::connect(server, name).await?;
-    println!("Подключено.");
+    let known_path = known_servers::default_path();
+    let known = Mutex::new(KnownServers::load(&known_path));
+    let (events_tx, mut events) = tokio_mpsc::unbounded_channel();
+    let on_event = move |event| {
+        let _ = events_tx.send(event);
+    };
+    let settings = args.settings();
+    let tx_state = args.tx_state();
+    // Новый сертификат принимаем не больше одного раза за запуск.
+    let mut accept_new_certificate = trust_new_certificate;
+    let call = loop {
+        let trust = Trust::Known(&known);
+        let result = Call::start(
+            server,
+            name,
+            credentials,
+            trust,
+            &settings,
+            tx_state.clone(),
+            on_event.clone(),
+        )
+        .await;
+        match result {
+            Ok(call) => break call,
+            Err(e) => match e.downcast_ref::<CertificateChanged>() {
+                Some(changed) if accept_new_certificate => {
+                    accept_new_certificate = false;
+                    println!("Запоминаю новый сертификат сервера {}.", changed.address);
+                    known.lock().unwrap().remember(&changed.address, &changed.presented)?;
+                }
+                Some(_) => {
+                    println!("ВНИМАНИЕ: {e}.");
+                    println!(
+                        "Если хост подтвердил новый код, подключитесь с --trust-new-certificate \
+                         (запомненные сертификаты: {}).",
+                        known_path.display()
+                    );
+                    return Ok(());
+                }
+                None => return Err(e),
+            },
+        }
+    };
+    println!("Подключено. Код сервера: {}", vwf_proto::short_fingerprint(&call.fingerprint));
+    if call.me().admin {
+        println!("Вы хост этой комнаты.");
+    }
+    print_devices(&call.audio);
 
     let mut names: HashMap<PeerId, String> =
-        session.peers.iter().map(|p| (p.id, p.name.clone())).collect();
+        call.peers().into_iter().map(|p| (p.id, p.name)).collect();
+    let mut server_muted = false;
     if names.is_empty() {
         println!("В комнате пока никого нет.");
     } else {
@@ -186,61 +298,85 @@ async fn connect(server: &str, name: &str, args: AudioArgs) -> anyhow::Result<()
         println!("В комнате: {}", list.join(", "));
     }
 
-    let sender = session.voice_sender();
-    let audio = Audio::start(&args, move |seq, opus| sender.send(seq, opus))?;
+    if let Some((source, settings)) = share {
+        let source = if source.is_empty() {
+            let first = vwf_client::screen::sources()?.into_iter().next();
+            first.map(|s| s.id).ok_or_else(|| anyhow::anyhow!("нечего показывать"))?
+        } else {
+            source
+        };
+        call.start_share(&source, settings)?;
+        println!("Показываю экран ({source}). Пока никто не смотрит, экран не снимается.");
+    }
 
-    let receiver = session.voice_receiver();
-    let rx_mixer = audio.mixer.clone();
-    tokio::spawn(async move {
-        while let Some((from, seq, opus)) = receiver.recv().await {
-            rx_mixer.push_packet(from, seq, &opus);
+    let history = call.chat();
+    if !history.is_empty() {
+        println!("Последние сообщения в чате:");
+        for message in history.iter().skip(history.len().saturating_sub(10)) {
+            print_chat(message);
         }
-    });
+    }
 
-    println!("{COMMANDS_HELP}\n");
-    let mut glitches = glitch_counters(&audio);
+    println!("{COMMANDS_HELP}");
+    println!("t текст — написать в чат.\n");
+    let mut glitches = glitch_counters(&call.audio);
     let mut glitch_check = tokio::time::interval(GLITCH_REPORT_INTERVAL);
     let mut commands = spawn_stdin_reader();
     loop {
         tokio::select! {
             _ = glitch_check.tick() => report_glitches(&mut glitches, false),
-            event = session.next_event() => match event {
-                Ok(Some(ServerMsg::PeerJoined(peer))) => {
+            Some(event) = events.recv() => match event {
+                CallEvent::PeerJoined(peer) => {
                     println!("→ {} подключился", peer.name);
                     names.insert(peer.id, peer.name);
                 }
-                Ok(Some(ServerMsg::PeerLeft { id })) => {
+                CallEvent::PeerLeft(id) => {
                     let name = names.remove(&id).unwrap_or_else(|| format!("#{id}"));
                     println!("← {name} отключился");
-                    audio.mixer.remove_speaker(id);
                 }
-                Ok(Some(_)) => {}
-                Ok(None) => {
-                    println!("Сервер закрыл соединение.");
-                    break;
+                CallEvent::PeerUpdated(peer) if peer.id == call.my_id => {
+                    if peer.server_muted != server_muted {
+                        server_muted = peer.server_muted;
+                        println!("{}", if server_muted {
+                            "Хост заглушил вас: остальные вас не слышат."
+                        } else {
+                            "Хост вернул вам голос."
+                        });
+                    }
                 }
-                Err(e) => {
-                    println!("Соединение потеряно: {e:#}");
+                CallEvent::PeerUpdated(_) => {}
+                CallEvent::Chat(message) => print_chat(&message),
+                CallEvent::Viewers(count) => println!("Ваш экран смотрят: {count}"),
+                CallEvent::ShareStopped(reason) => println!("Демонстрация прервалась: {reason}"),
+                CallEvent::ScreenPacket { .. } | CallEvent::Avatar { .. } => {}
+                CallEvent::Ended { reason, .. } => {
+                    println!("Звонок завершён: {reason}.");
                     break;
                 }
             },
-            Some(cmd) = commands.recv() => handle_command(&cmd, &audio, &names),
+            Some(cmd) = commands.recv() => {
+                if let Some(text) = cmd.strip_prefix("t ") {
+                    call.send_chat(text);
+                    continue;
+                }
+                handle_command(&cmd, &call.audio, &names);
+                call.sync_status();
+            }
             _ = tokio::signal::ctrl_c() => break,
         }
     }
 
-    drop(audio);
-    session.close().await;
+    call.hang_up().await;
     Ok(())
 }
 
 /// Как часто сообщать о сбоях звука (чтобы не засорять консоль).
 const GLITCH_REPORT_INTERVAL: Duration = Duration::from_secs(5);
 
-fn glitch_counters(audio: &Audio) -> [GlitchCounter; 2] {
+fn glitch_counters(audio: &AudioEngine) -> [GlitchCounter; 2] {
     [
-        GlitchCounter::new("микрофон", audio.capture.glitches.clone()),
-        GlitchCounter::new("вывод", audio.playback.glitches.clone()),
+        GlitchCounter::new("микрофон", audio.capture().glitches.clone()),
+        GlitchCounter::new("вывод", audio.playback().glitches.clone()),
     ]
 }
 
@@ -256,7 +392,8 @@ fn report_glitches(counters: &mut [GlitchCounter], after_meter: bool) {
     }
 }
 
-fn print_devices(capture: &audio::Capture, playback: &audio::Playback) {
+fn print_devices(audio: &AudioEngine) {
+    let (capture, playback) = (audio.capture(), audio.playback());
     println!(
         "Микрофон: {} ({} Гц, каналов: {})",
         capture.device_name, capture.config.sample_rate, capture.config.channels
@@ -270,9 +407,9 @@ fn print_devices(capture: &audio::Capture, playback: &audio::Playback) {
 fn print_meter(state: &TxState) {
     let db = state.level_db().max(-60.0);
     let filled = ((db + 60.0) / 2.0).round() as usize; // -60..0 dB → 0..30 делений
-    let status = if state.muted.load(Ordering::Relaxed) {
+    let status = if state.muted() {
         "[микрофон выключен]"
-    } else if state.transmitting.load(Ordering::Relaxed) {
+    } else if state.transmitting() {
         "[ПЕРЕДАЧА]"
     } else {
         "[тишина]"
@@ -281,15 +418,19 @@ fn print_meter(state: &TxState) {
     let _ = std::io::stdout().flush();
 }
 
+fn print_chat(message: &vwf_proto::ChatMessage) {
+    println!("💬 {}: {}", message.name, message.text.replace('\n', "\n   "));
+}
+
 const COMMANDS_HELP: &str = "Команды (+ Enter): m — выключить/включить микрофон, \
                              s — задержка джиттер-буфера. Ctrl+C — выход.";
 
-fn handle_command(cmd: &str, audio: &Audio, names: &HashMap<PeerId, String>) {
+fn handle_command(cmd: &str, audio: &AudioEngine, names: &HashMap<PeerId, String>) {
     match cmd.trim().to_lowercase().as_str() {
         "m" => {
-            let state = &audio.tx.state;
-            let muted = !state.muted.load(Ordering::Relaxed);
-            state.muted.store(muted, Ordering::Relaxed);
+            let state = &audio.tx_state;
+            let muted = !state.muted();
+            state.set_muted(muted);
             println!(
                 "{}",
                 if muted {
@@ -336,7 +477,7 @@ struct SimulatedNetwork {
     queue: mpsc::Sender<(Instant, u32, Vec<u8>)>,
     loss: f32,
     jitter_ms: u32,
-    rng: std::cell::Cell<u64>,
+    rng: std::sync::atomic::AtomicU64,
 }
 
 impl SimulatedNetwork {
@@ -370,16 +511,21 @@ impl SimulatedNetwork {
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(1, |d| d.as_nanos() as u64);
-        Self { queue, loss: loss_percent / 100.0, jitter_ms, rng: std::cell::Cell::new(seed | 1) }
+        Self {
+            queue,
+            loss: loss_percent / 100.0,
+            jitter_ms,
+            rng: std::sync::atomic::AtomicU64::new(seed | 1),
+        }
     }
 
     /// Псевдослучайное число от 0 до 1 (xorshift — для имитации хватает).
     fn random(&self) -> f32 {
-        let mut x = self.rng.get();
+        let mut x = self.rng.load(std::sync::atomic::Ordering::Relaxed);
         x ^= x << 13;
         x ^= x >> 7;
         x ^= x << 17;
-        self.rng.set(x);
+        self.rng.store(x, std::sync::atomic::Ordering::Relaxed);
         (x >> 40) as f32 / (1u64 << 24) as f32
     }
 

@@ -1,0 +1,3780 @@
+/* --- Цвета ---
+ * Тема — data-theme на <html>: dark «Ночь» (по умолчанию), light «День»,
+ * black «Уголь», midnight «Полночь», forest «Лес», paper «Бумага», sakura
+ * «Сакура», ocean «Океан», sunset «Закат», neon «Неон», terminal «Терминал»,
+ * яркие: synthwave «Синтвейв», cyber «Киберпанк», berry «Малина», lemonade
+ * «Лимонад», tangerine «Мандарин», aqua «Аква»;
+ * без data-theme — светлая или «Ночь» по системной настройке. Список тем —
+ * THEMES в app.js. Цвет акцента — data-accent, фон комнаты — data-room-bg. */
+
+/* Golos Text (SIL OFL, см. fonts/OFL.txt) — встроен, интернет не нужен. */
+@font-face {
+  font-family: "Golos Text";
+  font-style: normal;
+  font-weight: 400 900;
+  font-display: swap;
+  src: url("fonts/golos-text-cyrillic-wght-normal.woff2") format("woff2");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+
+@font-face {
+  font-family: "Golos Text";
+  font-style: normal;
+  font-weight: 400 900;
+  font-display: swap;
+  src: url("fonts/golos-text-latin-wght-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
+    U+FEFF, U+FFFD;
+}
+
+:root {
+  --bg: #f3f4f7;
+  --surface: #ffffff;
+  --surface-2: #eceef3;
+  --surface-3: #e1e4eb;
+  --border: #e2e5eb;
+  --field: #ffffff;
+  --field-border: #d9dce4;
+  --text: #15171c;
+  --text-2: #5a5f6b;
+  --text-3: #80858f;
+  --shadow: 0 1px 2px rgba(17, 19, 26, 0.05);
+  --shadow-pop: 0 10px 30px rgba(17, 19, 26, 0.16);
+  --backdrop: rgba(17, 19, 26, 0.32);
+  color-scheme: light;
+
+  --speaking: #1fa85a;
+  --danger: #e5484d;
+  --danger-strong: #cd2b31;
+  --warning: #b87400;
+  --radius: 14px;
+  --radius-sm: 10px;
+  --font: "Golos Text", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --mono: "Cascadia Mono", Consolas, ui-monospace, monospace;
+
+  --accent: #6a5af0;
+  --accent-strong: #5a49e0;
+  --accent-soft: color-mix(in srgb, var(--accent) 16%, transparent);
+  --accent-text: color-mix(in srgb, var(--accent) 70%, var(--text));
+  --danger-soft: color-mix(in srgb, var(--danger) 14%, transparent);
+  --segment-active: var(--surface);
+}
+
+/* Тёмная «Ночь»: по системной настройке (тема «Как в системе») и выбором. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --bg: #0f1115;
+    --surface: #161920;
+    --surface-2: #1b1e26;
+    --surface-3: #262a33;
+    --border: #1f232b;
+    --field: #0b0d11;
+    --field-border: #262a33;
+    --text: #e8eaf0;
+    --text-2: #9aa0ad;
+    --text-3: #7d8391;
+    --shadow: none;
+    --shadow-pop: 0 12px 34px rgba(0, 0, 0, 0.55);
+    --backdrop: rgba(0, 0, 0, 0.55);
+    --speaking: #3ddc84;
+    --danger: #ff6b78;
+    --danger-strong: #f04858;
+    --warning: #f0a92e;
+    --accent: #7c6cff;
+    --accent-strong: #6c5bf5;
+    --segment-active: var(--surface-3);
+    color-scheme: dark;
+  }
+}
+
+/* Общее для всех тёмных тем; фон и поверхности — у каждой свои, ниже. */
+:root[data-theme="dark"],
+:root[data-theme="black"],
+:root[data-theme="midnight"],
+:root[data-theme="forest"],
+:root[data-theme="ocean"],
+:root[data-theme="sunset"],
+:root[data-theme="neon"],
+:root[data-theme="terminal"],
+:root[data-theme="synthwave"],
+:root[data-theme="cyber"],
+:root[data-theme="berry"] {
+  --shadow: none;
+  --shadow-pop: 0 12px 34px rgba(0, 0, 0, 0.55);
+  --backdrop: rgba(0, 0, 0, 0.55);
+  --speaking: #3ddc84;
+  --danger: #ff6b78;
+  --danger-strong: #f04858;
+  --warning: #f0a92e;
+  --accent: #7c6cff;
+  --accent-strong: #6c5bf5;
+  --segment-active: var(--surface-3);
+  color-scheme: dark;
+}
+
+/* «Ночь» — графитовая, по умолчанию. */
+:root[data-theme="dark"] {
+  --bg: #0f1115;
+  --surface: #161920;
+  --surface-2: #1b1e26;
+  --surface-3: #262a33;
+  --border: #1f232b;
+  --field: #0b0d11;
+  --field-border: #262a33;
+  --text: #e8eaf0;
+  --text-2: #9aa0ad;
+  --text-3: #7d8391;
+}
+
+/* «Уголь» — чёрный фон: на OLED-экранах телефонов меньше тратит батарею. */
+:root[data-theme="black"] {
+  --bg: #000000;
+  --surface: #0e0e10;
+  --surface-2: #141417;
+  --surface-3: #222226;
+  --border: #1a1a1e;
+  --field: #000000;
+  --field-border: #2a2a2f;
+  --text: #ececef;
+  --text-2: #9b9da6;
+  --text-3: #7c7e88;
+  --shadow-pop: 0 12px 34px rgba(0, 0, 0, 0.8), 0 0 0 1px #2a2a2f;
+  --backdrop: rgba(0, 0, 0, 0.7);
+}
+
+/* «Полночь» — глубокий синий. */
+:root[data-theme="midnight"] {
+  --bg: #0b1222;
+  --surface: #111a2e;
+  --surface-2: #162139;
+  --surface-3: #213050;
+  --border: #1a2640;
+  --field: #080e1b;
+  --field-border: #25365a;
+  --text: #e6ecf7;
+  --text-2: #94a3bf;
+  --text-3: #7687a6;
+}
+
+/* «Лес» — тёмно-зелёный, приглушённый. */
+:root[data-theme="forest"] {
+  --bg: #0d1310;
+  --surface: #131b17;
+  --surface-2: #18221d;
+  --surface-3: #233029;
+  --border: #1b2520;
+  --field: #090e0b;
+  --field-border: #27352d;
+  --text: #e4ebe6;
+  --text-2: #95a59b;
+  --text-3: #79897f;
+}
+
+/* «Бумага» — светлая, тёплая, мягче для глаз, чем белая. */
+:root[data-theme="paper"] {
+  --bg: #f3eee4;
+  --surface: #fbf8f1;
+  --surface-2: #ece5d8;
+  --surface-3: #e1d8c8;
+  --border: #e2d9c9;
+  --field: #fffdf8;
+  --field-border: #d6cab5;
+  --text: #2a251f;
+  --text-2: #6a6155;
+  --text-3: #8b8173;
+  --shadow: 0 1px 2px rgba(60, 45, 20, 0.07);
+  --shadow-pop: 0 10px 30px rgba(60, 45, 20, 0.18);
+  --backdrop: rgba(40, 30, 15, 0.3);
+}
+
+/* «Сакура» — светлая, розоватая. */
+:root[data-theme="sakura"] {
+  --bg: #fbf0f3;
+  --surface: #fffafb;
+  --surface-2: #f6e5eb;
+  --surface-3: #efd6df;
+  --border: #f0dbe3;
+  --field: #ffffff;
+  --field-border: #e6c8d3;
+  --text: #2e1f25;
+  --text-2: #7a5a66;
+  --text-3: #9c7f89;
+  --shadow: 0 1px 2px rgba(120, 40, 70, 0.07);
+  --shadow-pop: 0 10px 30px rgba(120, 40, 70, 0.18);
+  --backdrop: rgba(60, 20, 35, 0.3);
+}
+
+/* «Океан» — глубокий сине-зелёный. */
+:root[data-theme="ocean"] {
+  --bg: #061a1f;
+  --surface: #0b242b;
+  --surface-2: #0f2c34;
+  --surface-3: #173b45;
+  --border: #12313a;
+  --field: #04131a;
+  --field-border: #1d4450;
+  --text: #e2f1f3;
+  --text-2: #8fb0b6;
+  --text-3: #6f9299;
+}
+
+:root[data-theme="ocean"] body {
+  background: linear-gradient(180deg, #072129, #04141a 70%);
+}
+
+/* «Закат» — тёплый сливовый с оранжевым отсветом снизу. */
+:root[data-theme="sunset"] {
+  --bg: #1b1120;
+  --surface: #24172a;
+  --surface-2: #2b1c31;
+  --surface-3: #3a2742;
+  --border: #2f2036;
+  --field: #140c18;
+  --field-border: #43304b;
+  --text: #f6e9ee;
+  --text-2: #c09fb0;
+  --text-3: #9a7f8e;
+}
+
+:root[data-theme="sunset"] body {
+  background:
+    radial-gradient(120% 60% at 50% 120%, rgba(232, 89, 12, 0.28), transparent 70%),
+    linear-gradient(170deg, #1b1120, #24111c 60%, #2a1414);
+}
+
+/* «Неон» — почти чёрный, кнопки и говорящие светятся цветом акцента. */
+:root[data-theme="neon"] {
+  --bg: #07070d;
+  --surface: #0f0f1a;
+  --surface-2: #141424;
+  --surface-3: #20203a;
+  --border: #22223d;
+  --field: #05050a;
+  --field-border: #2e2e55;
+  --text: #f0f0ff;
+  --text-2: #a3a3c8;
+  --text-3: #7d7da6;
+  --speaking: #2bffb0;
+  --shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.8), 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent),
+    0 0 30px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+:root[data-theme="neon"] body {
+  background:
+    radial-gradient(60% 45% at 0% 0%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 70%),
+    radial-gradient(55% 45% at 100% 100%, rgba(0, 220, 255, 0.1), transparent 70%),
+    #07070d;
+}
+
+:root[data-theme="neon"] .card,
+:root[data-theme="neon"] .dock {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+}
+
+:root[data-theme="neon"] .primary:not(:disabled) {
+  box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+:root[data-theme="neon"] .peers.tiles .peer:not(.speaking) {
+  border-color: color-mix(in srgb, var(--tile) 45%, transparent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--tile) 22%, transparent);
+}
+
+:root[data-theme="neon"] .peers.tiles .peer.speaking {
+  box-shadow: 0 0 14px color-mix(in srgb, var(--speaking) 60%, transparent);
+}
+
+:root[data-theme="neon"] .tabs button.active {
+  text-shadow: 0 0 12px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+
+/* «Терминал» — зелёный на чёрном, моноширинный шрифт и прямые углы. */
+:root[data-theme="terminal"] {
+  --bg: #030703;
+  --surface: #08100a;
+  --surface-2: #0c170e;
+  --surface-3: #142616;
+  --border: #133017;
+  --field: #020502;
+  --field-border: #1e4a24;
+  --text: #b8f5be;
+  --text-2: #6fbf78;
+  --text-3: #4e8f56;
+  --speaking: #59ff6e;
+  --radius: 4px;
+  --radius-sm: 3px;
+  --font: var(--mono);
+}
+
+:root[data-theme="terminal"] .sheet,
+:root[data-theme="terminal"] .peer,
+:root[data-theme="terminal"] .peers.tiles .peer,
+:root[data-theme="terminal"] .peers.tiles .tile-name,
+:root[data-theme="terminal"] .menu,
+:root[data-theme="terminal"] .themes button,
+:root[data-theme="terminal"] .backdrops button {
+  border-radius: 4px;
+}
+
+:root[data-theme="terminal"] .avatar {
+  border-radius: 6px;
+}
+
+:root[data-theme="terminal"] body::after {
+  /* Строки старого монитора. */
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  pointer-events: none;
+  background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.18) 0 1px, transparent 1px 3px);
+}
+
+/* --- Яркие темы --- */
+
+/* «Синтвейв» — фиолетовый закат 80-х: розовое небо сверху, сетка снизу. */
+:root[data-theme="synthwave"] {
+  --bg: #1a0b33;
+  --surface: #241046;
+  --surface-2: #2c1454;
+  --surface-3: #3d1e6e;
+  --border: #3a1d66;
+  --field: #140828;
+  --field-border: #4e2a85;
+  --text: #fbeaff;
+  --text-2: #d0a8e8;
+  --text-3: #a582c0;
+  --speaking: #2de2e6;
+}
+
+:root[data-theme="synthwave"] body {
+  background:
+    linear-gradient(transparent 70%, rgba(255, 56, 189, 0.12)),
+    radial-gradient(90% 55% at 50% 0%, rgba(255, 56, 189, 0.35), transparent 70%),
+    radial-gradient(70% 50% at 50% 110%, rgba(45, 226, 230, 0.22), transparent 70%),
+    #1a0b33;
+}
+
+/* «Киберпанк» — чёрный с кислотно-жёлтым и бирюзой. */
+:root[data-theme="cyber"] {
+  --bg: #0b0b10;
+  --surface: #14141c;
+  --surface-2: #1a1a24;
+  --surface-3: #272733;
+  --border: #33331a;
+  --field: #08080c;
+  --field-border: #4a4a20;
+  --text: #fdf7c3;
+  --text-2: #c9c27a;
+  --text-3: #9a9560;
+  --speaking: #00f0ff;
+}
+
+:root[data-theme="cyber"] body {
+  background:
+    radial-gradient(60% 45% at 100% 0%, rgba(252, 238, 10, 0.16), transparent 70%),
+    radial-gradient(55% 45% at 0% 100%, rgba(0, 240, 255, 0.14), transparent 70%),
+    #0b0b10;
+}
+
+:root[data-theme="cyber"] .card,
+:root[data-theme="cyber"] .dock {
+  border-color: rgba(252, 238, 10, 0.35);
+}
+
+:root[data-theme="cyber"] .peers.tiles .peer:not(.speaking) {
+  border-color: rgba(252, 238, 10, 0.25);
+}
+
+/* «Малина» — насыщенный тёмно-розовый. */
+:root[data-theme="berry"] {
+  --bg: #2a0619;
+  --surface: #3a0a24;
+  --surface-2: #450d2b;
+  --surface-3: #5c143b;
+  --border: #561238;
+  --field: #200413;
+  --field-border: #74204d;
+  --text: #ffe6f2;
+  --text-2: #f0a3c8;
+  --text-3: #c47b9e;
+}
+
+:root[data-theme="berry"] body {
+  background:
+    radial-gradient(70% 55% at 0% 0%, rgba(255, 64, 160, 0.3), transparent 70%),
+    radial-gradient(60% 50% at 100% 100%, rgba(255, 140, 60, 0.18), transparent 70%),
+    #2a0619;
+}
+
+/* «Лимонад» — светлая, солнечно-жёлтая с зеленью. */
+:root[data-theme="lemonade"] {
+  --bg: #fff9c9;
+  --surface: #fffde8;
+  --surface-2: #fbf1a8;
+  --surface-3: #f3e47e;
+  --border: #efe08a;
+  --field: #ffffff;
+  --field-border: #e2d06a;
+  --text: #2c2a0a;
+  --text-2: #6b6520;
+  --text-3: #8f8838;
+  --shadow: 0 1px 2px rgba(120, 100, 0, 0.1);
+  --shadow-pop: 0 10px 30px rgba(120, 100, 0, 0.22);
+  --backdrop: rgba(60, 50, 0, 0.3);
+}
+
+:root[data-theme="lemonade"] body {
+  background:
+    radial-gradient(70% 55% at 100% 0%, rgba(160, 230, 60, 0.4), transparent 70%),
+    #fff9c9;
+}
+
+/* «Мандарин» — светлая, сочно-оранжевая. */
+:root[data-theme="tangerine"] {
+  --bg: #ffe7cf;
+  --surface: #fff6ec;
+  --surface-2: #ffdcb8;
+  --surface-3: #ffca94;
+  --border: #fbd2a6;
+  --field: #ffffff;
+  --field-border: #f5b77a;
+  --text: #33190a;
+  --text-2: #8a4a1e;
+  --text-3: #a86a3c;
+  --shadow: 0 1px 2px rgba(150, 70, 0, 0.1);
+  --shadow-pop: 0 10px 30px rgba(150, 70, 0, 0.22);
+  --backdrop: rgba(70, 30, 0, 0.3);
+}
+
+:root[data-theme="tangerine"] body {
+  background:
+    radial-gradient(70% 55% at 0% 100%, rgba(255, 110, 30, 0.35), transparent 70%),
+    radial-gradient(60% 50% at 100% 0%, rgba(255, 200, 40, 0.35), transparent 70%),
+    #ffe7cf;
+}
+
+/* «Аква» — светлая, яркая бирюза. */
+:root[data-theme="aqua"] {
+  --bg: #d6f7f4;
+  --surface: #f0fdfb;
+  --surface-2: #c4efeb;
+  --surface-3: #a6e3de;
+  --border: #b4e8e3;
+  --field: #ffffff;
+  --field-border: #8fd6d0;
+  --text: #06302e;
+  --text-2: #2c6e69;
+  --text-3: #4f8c87;
+  --shadow: 0 1px 2px rgba(0, 90, 90, 0.1);
+  --shadow-pop: 0 10px 30px rgba(0, 90, 90, 0.2);
+  --backdrop: rgba(0, 40, 40, 0.3);
+}
+
+:root[data-theme="aqua"] body {
+  background:
+    radial-gradient(70% 55% at 100% 100%, rgba(0, 190, 210, 0.35), transparent 70%),
+    radial-gradient(60% 50% at 0% 0%, rgba(60, 120, 255, 0.2), transparent 70%),
+    #d6f7f4;
+}
+
+:root[data-accent="violet"] { --accent: #8b5cf6; --accent-strong: #7c3aed; }
+:root[data-accent="sky"] { --accent: #0b8fd8; --accent-strong: #0577b8; }
+:root[data-accent="mint"] { --accent: #12a37f; --accent-strong: #0e8a6b; }
+:root[data-accent="amber"] { --accent: #e08a00; --accent-strong: #c47700; }
+:root[data-accent="rose"] { --accent: #e5486e; --accent-strong: #cc3359; }
+:root[data-accent="blue"] { --accent: #2f6fed; --accent-strong: #1f5ad6; }
+:root[data-accent="teal"] { --accent: #0e9aa7; --accent-strong: #0b8089; }
+:root[data-accent="green"] { --accent: #2f9e44; --accent-strong: #26853a; }
+:root[data-accent="orange"] { --accent: #e8590c; --accent-strong: #c94a08; }
+:root[data-accent="red"] { --accent: #e03131; --accent-strong: #c22626; }
+:root[data-accent="fuchsia"] { --accent: #c026d3; --accent-strong: #a21caf; }
+:root[data-accent="cocoa"] { --accent: #a0703c; --accent-strong: #8a5d2f; }
+:root[data-accent="graphite"] { --accent: #5f6b7a; --accent-strong: #4b5563; }
+
+/* --- Основа --- */
+
+* {
+  box-sizing: border-box;
+}
+
+/* Размер интерфейса — zoom всей страницы (--zoom ставят theme.js и app.js).
+ * Высота делится на него, чтобы окно по-прежнему занимало ровно экран. */
+html {
+  zoom: var(--zoom, 1);
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.45 var(--font);
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.view {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+  padding: 14px 16px 16px;
+  overflow-y: auto;
+  /* Подсказка или меню, вылезшие за край, не должны давать прокрутку вбок. */
+  overflow-x: hidden;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 16px;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.hint {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.hint.center {
+  text-align: center;
+}
+
+.mono,
+code {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  user-select: text;
+}
+
+.error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 13px;
+  user-select: text;
+}
+
+.warning-text {
+  color: var(--warning);
+}
+
+/* --- Иконки --- */
+
+.icon {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+  flex: none;
+}
+
+.icon-cross {
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+}
+
+/* --- Поля ввода --- */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field > span,
+.section-head {
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+input,
+select {
+  font: inherit;
+  color: var(--text);
+  background: var(--field);
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  outline: none;
+  user-select: text;
+  transition: border-color 120ms, box-shadow 120ms, background 120ms;
+}
+
+input::placeholder {
+  color: var(--text-3);
+}
+
+input:hover,
+select:hover {
+  border-color: var(--text-3);
+}
+
+input:focus,
+select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+select {
+  cursor: pointer;
+}
+
+/* Ползунок */
+
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 18px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface-3);
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--surface);
+  box-shadow: 0 0 0 1px var(--accent);
+  transition: transform 100ms;
+}
+
+input[type="range"]:hover::-webkit-slider-thumb {
+  transform: scale(1.15);
+}
+
+input[type="range"]:focus {
+  box-shadow: none;
+}
+
+/* Переключатель */
+
+.switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+}
+
+input.switch {
+  -webkit-appearance: none;
+  appearance: none;
+  position: relative;
+  flex: none;
+  width: 36px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 10px;
+  background: var(--surface-3);
+  cursor: pointer;
+  transition: background 150ms;
+}
+
+input.switch::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform 150ms;
+}
+
+input.switch:checked {
+  background: var(--accent);
+}
+
+input.switch:checked::before {
+  transform: translateX(16px);
+}
+
+input.switch:focus-visible {
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* --- Кнопки --- */
+
+button {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 9px 14px;
+  cursor: pointer;
+  transition: background 120ms, color 120ms, border-color 120ms, box-shadow 120ms;
+}
+
+button:hover {
+  background: var(--surface-3);
+}
+
+button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+button.primary {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+button.primary:hover {
+  background: var(--accent-strong);
+}
+
+button.danger {
+  background: var(--danger);
+  color: #fff;
+}
+
+button.danger:hover {
+  background: var(--danger-strong);
+}
+
+button.link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+button.link:hover {
+  background: none;
+  text-decoration: underline;
+}
+
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  flex: none;
+  border-radius: 8px;
+  color: var(--text-2);
+}
+
+.icon-btn.ghost {
+  background: transparent;
+}
+
+.icon-btn:hover {
+  color: var(--text);
+  background: var(--surface-3);
+}
+
+.icon-btn.off {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+/* --- Экран подключения --- */
+
+#connect-view {
+  max-width: 460px;
+  margin: 0 auto;
+  gap: 22px;
+  padding: 22px 20px 18px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.logo {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  background: var(--accent);
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+
+.logo svg {
+  width: 34px;
+  height: 34px;
+  fill: #fff;
+}
+
+.brand-titles {
+  flex: 1;
+  min-width: 0;
+}
+
+.brand h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+}
+
+.tagline {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.connect-form {
+  gap: 14px;
+  flex: 1;
+}
+
+/* Имя и аватар — как вас увидят в комнате. */
+.who {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  cursor: text;
+  transition: border-color 120ms, box-shadow 120ms;
+}
+
+.who:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* Проверка микрофона под именем: кнопка и шкала громкости. */
+.mic-test {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 4px;
+}
+
+.mic-test-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  padding: 6px 12px 6px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mic-test-btn .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.mic-test.running .mic-test-btn {
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.mic-test-meter {
+  flex: 1;
+  min-width: 40px;
+  opacity: 0.5;
+  transition: opacity 120ms;
+}
+
+.mic-test.running .mic-test-meter {
+  opacity: 1;
+}
+
+.mic-test-hint {
+  margin: -4px 4px 0;
+}
+
+.mic-test-hint.error {
+  color: var(--danger);
+}
+
+.avatar.who-avatar {
+  width: 44px;
+  height: 44px;
+  font-size: 18px;
+}
+
+.who-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.who-text > span {
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.who-text input {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 16px;
+  font-weight: 600;
+  box-shadow: none;
+}
+
+.who-text input:focus {
+  box-shadow: none;
+}
+
+button.big {
+  height: 44px;
+  font-size: 15px;
+}
+
+.footnote {
+  margin-top: auto;
+  padding-top: 4px;
+  color: var(--text-3);
+}
+
+/* Заголовки разделов: «В ЛОКАЛЬНОЙ СЕТИ», «МОИ КОМНАТЫ». */
+.section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.section-head > span:first-child {
+  color: var(--text-2);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+/* Серверы в локальной сети */
+
+.lan {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lan-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Заголовок «Сохранённые»: сворачивает недавние комнаты. */
+.recent-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  background: none;
+  border: none;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.recent-toggle:not(:disabled):hover {
+  background: none;
+  color: var(--text);
+}
+
+.recent-toggle .icon {
+  width: 16px;
+  height: 16px;
+  transition: transform 120ms;
+}
+
+.recent-toggle.collapsed .icon {
+  transform: rotate(-90deg);
+}
+
+.recent-dots {
+  display: flex;
+  gap: 4px;
+  margin-left: 4px;
+}
+
+.recent-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+
+.recent-dot.online {
+  background: var(--speaking);
+}
+
+.recent-dot.offline {
+  background: var(--danger);
+}
+
+.recent-dot.checking {
+  animation: join-dot-pulse 1.2s ease-in-out infinite;
+}
+
+/* Карточка комнаты: нажатие — сразу вход. Длинное название — в две строки. */
+.lan-item {
+  width: 100%;
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  border: 1px solid transparent;
+}
+
+.lan-item:hover {
+  background: var(--surface-3);
+}
+
+.join-ico {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  color: var(--accent-text);
+  background: var(--accent-soft);
+}
+
+.join-ico .icon {
+  width: 20px;
+  height: 20px;
+}
+
+/* Недавняя комната: точка «запущена / не запущена» на значке. */
+.join-ico {
+  position: relative;
+}
+
+.join-dot {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--surface-2);
+  background: var(--text-3);
+}
+
+.join-ico.online .join-dot {
+  background: var(--speaking);
+}
+
+.join-ico.checking .join-dot {
+  animation: join-dot-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes join-dot-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.join-ico.offline {
+  color: var(--text-3);
+  background: var(--surface-3);
+}
+
+.join-ico.offline .join-dot {
+  background: var(--danger);
+}
+
+.join-ico.unknown .join-dot {
+  display: none;
+}
+
+.join-ico.lan {
+  color: var(--speaking);
+  background: color-mix(in srgb, var(--speaking) 16%, transparent);
+}
+
+.lan-item:disabled .join-ico.lan {
+  color: var(--text-3);
+  background: var(--surface-3);
+}
+
+.join-go {
+  display: grid;
+  color: var(--text-3);
+  transition: color 120ms, transform 120ms;
+}
+
+.lan-item:not(:disabled):hover .join-go {
+  color: var(--text);
+  transform: translateX(2px);
+}
+
+.join-spinner {
+  width: 18px;
+  height: 18px;
+  border-color: var(--accent-soft);
+  border-top-color: var(--accent);
+}
+
+.join-item {
+  position: relative;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.join-item .join-card {
+  background: transparent;
+}
+
+.join-item:hover {
+  background: var(--surface-3);
+}
+
+.join-item.busy,
+.join-item.open {
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* «Убрать из недавних»: крестик поверх стрелки, когда навели на карточку. */
+.join-forget {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  opacity: 0;
+  background: var(--surface-3);
+}
+
+.join-item:hover .join-forget,
+.join-forget:focus-visible {
+  opacity: 1;
+}
+
+.android .join-forget {
+  opacity: 1;
+  background: transparent;
+}
+
+.android .join-item.has-forget .join-go {
+  visibility: hidden;
+}
+
+.join-pass {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+
+.join-pass-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.join-pass-actions button:not(.primary) {
+  background: var(--surface-3);
+}
+
+.join-pass-actions .primary {
+  flex: 1;
+}
+
+.join-manual {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  background: transparent;
+  border: 1px dashed var(--surface-3);
+  color: var(--text-2);
+  font-weight: 600;
+  text-align: left;
+}
+
+.join-manual .join-ico {
+  color: var(--text-2);
+  background: var(--surface-2);
+}
+
+.join-manual:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.manual {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+}
+
+.manual-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.manual .hint {
+  margin: 0;
+}
+
+/* Поле пароля с кнопкой «показать» (внутри подписи поля — без её шрифта). */
+.field > .password-row {
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+.password-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.password-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.password-row .icon-btn.active {
+  color: var(--accent-text);
+}
+
+#invite-password-value {
+  flex: 1;
+  font-size: 14px;
+}
+
+.lan-name {
+  font-weight: 600;
+  font-size: 15px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.lan-meta {
+  color: var(--text-2);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.lan-meta.error {
+  color: var(--danger);
+}
+
+.lan-meta .icon {
+  width: 13px;
+  height: 13px;
+  margin-right: 3px;
+  vertical-align: -2px;
+}
+
+/* Свои комнаты */
+
+.my-rooms li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 8px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  transition: background 120ms;
+}
+
+.my-rooms li:hover {
+  background: var(--surface-3);
+}
+
+.my-rooms li:has(.room-edit) {
+  padding: 0;
+  background: none;
+}
+
+.my-rooms .lan-item {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+}
+
+.my-rooms .menu-wrap .icon-btn {
+  background: transparent;
+}
+
+/* Значок комнаты — первая буква названия. */
+.room-badge {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  font-weight: 700;
+  color: var(--accent-text);
+  background: var(--accent-soft);
+}
+
+.lan-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.my-rooms li.busy {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.room-edit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.room-edit input {
+  flex: 1;
+  min-width: 0;
+}
+
+button.add-room {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+button.add-room svg {
+  width: 16px;
+  height: 16px;
+}
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.divider::before,
+.divider::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--border);
+}
+
+/* Предупреждение о смене сертификата */
+
+.cert-warning {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
+}
+
+.cert-title {
+  font-weight: 600;
+  color: var(--danger);
+}
+
+.cert-codes {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  align-items: baseline;
+}
+
+.cert-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+/* --- Комната --- */
+
+.room-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.room-titles {
+  flex: 1;
+  min-width: 0;
+}
+
+.room-title {
+  font-size: 17px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-2);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.room-sub #server-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Плашка «вход открыт / закрыт» не сжимается: уступает код сертификата. */
+.lock-chip {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 8px 0 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.lock-chip .icon {
+  width: 13px;
+  height: 13px;
+}
+
+.lock-chip:hover {
+  color: var(--text);
+  background: var(--surface-3);
+}
+
+.lock-chip[aria-pressed="true"] {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.room-sub #server-code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 2;
+}
+
+.room-sub .mono {
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+/* Кнопки-иконки в шапке комнаты; подсказки у них — снизу. */
+.head-btn {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  color: var(--text-2);
+  background: var(--surface-2);
+}
+
+.head-btn:hover {
+  color: var(--text);
+  background: var(--surface-3);
+}
+
+.room-header [data-tip]:hover::after,
+.brand [data-tip]:hover::after,
+.tabs-row [data-tip]:hover::after {
+  top: calc(100% + 8px);
+  bottom: auto;
+}
+
+/* «Пригласить» — главная кнопка хоста, с подписью. */
+button.invite-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  width: auto;
+  padding: 0 14px 0 11px;
+  color: #fff;
+  background: var(--accent);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+button.invite-btn .icon {
+  width: 18px;
+  height: 18px;
+}
+
+button.invite-btn:hover {
+  color: #fff;
+  background: var(--accent-strong);
+}
+
+/* «Выйти» в нижней панели — красная, как «положить трубку». */
+.dock-btn.leave {
+  width: 44px;
+  margin-left: 4px;
+  border-radius: 10px;
+  color: #fff;
+  background: var(--danger);
+}
+
+.dock-btn.leave:hover {
+  color: #fff;
+  background: var(--danger);
+  filter: brightness(1.1);
+}
+
+/* Плашка «переподключаюсь» */
+
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--warning) 14%, transparent);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--warning) 35%, transparent);
+  border-top-color: var(--warning);
+  animation: spin 800ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Выйти можно и во время переподключения: кнопка выхода остаётся живой. */
+#room-view.reconnecting .peers,
+#room-view.reconnecting .dock > :not(.dock-buttons),
+#room-view.reconnecting .dock-buttons > :not(.leave-wrap) {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* Карточка хоста */
+
+.chevron,
+.pill-chevron {
+  display: grid;
+  margin-left: auto;
+  color: var(--text-3);
+  transition: transform 150ms;
+}
+
+.host-iface {
+  color: var(--text-2);
+  font-size: 12px;
+  width: 92px;
+  flex: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.host-address {
+  flex: 1;
+  font-family: var(--mono);
+  font-size: 13px;
+  user-select: text;
+}
+
+.invite .icon-btn {
+  width: 28px;
+  height: 28px;
+}
+
+.invite .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.internet-info {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: -2px;
+}
+
+.invite {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 6px 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+/* Android: «Поделиться приглашением» под кодом и «Отправить программу». */
+#invite-share,
+#send-app {
+  width: 100%;
+  margin-top: 8px;
+}
+
+#invite-code {
+  flex: 1;
+  word-break: break-all;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* Вкладки «Участники / Чат» и вид списка участников */
+
+.tabs-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tabs {
+  flex: 1;
+  display: flex;
+  gap: 4px;
+}
+
+.tabs button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: -1px;
+  padding: 8px 10px;
+  border-radius: 8px 8px 0 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-2);
+  font-weight: 500;
+}
+
+.tabs button:hover {
+  color: var(--text);
+  background: transparent;
+}
+
+.tabs button.active {
+  color: var(--text);
+  font-weight: 600;
+  border-bottom-color: var(--accent);
+}
+
+.layout-toggle {
+  display: flex;
+  gap: 2px;
+  padding-bottom: 4px;
+}
+
+.layout-toggle .icon-btn {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  background: transparent;
+  color: var(--text-3);
+}
+
+.layout-toggle .icon-btn.active {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.count {
+  color: var(--text-3);
+  font-weight: 500;
+}
+
+.unread {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+
+/* Участники */
+
+.peers {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-height: 60px;
+  overflow-y: auto;
+}
+
+.peer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 10px 10px 12px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  transition: background 120ms;
+}
+
+.peer:hover,
+.peer.me {
+  background: var(--surface);
+}
+
+.avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 650;
+  font-size: 15px;
+  color: #fff;
+  flex: none;
+  box-shadow: 0 0 0 0 transparent;
+  transition: box-shadow 120ms;
+}
+
+.peer.speaking .avatar {
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--speaking);
+}
+
+.peer.me.speaking .avatar,
+.peer.speaking:hover .avatar {
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--speaking);
+}
+
+.peer-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.peer-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.peer-name .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.peer-name .you {
+  color: var(--text-3);
+  font-weight: 400;
+}
+
+.crown {
+  width: 15px;
+  height: 15px;
+  color: #f0a020;
+}
+
+.peer.has-menu {
+  cursor: pointer;
+}
+
+/* Меню человека: громкость и действия. */
+.peer-menu {
+  min-width: 250px;
+  text-align: left;
+  cursor: default;
+}
+
+.peer-menu .menu-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.peer-volume {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px 8px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.menu-note {
+  padding: 0 10px 6px;
+  font-size: 12px;
+  white-space: normal;
+}
+
+.status-icon.quality {
+  position: relative;
+}
+
+.status-icon.quality .icon:not(.signal-back) {
+  position: absolute;
+}
+
+.status-icon.quality .signal-back {
+  opacity: 0.25;
+}
+
+.status-icon.quality.good,
+.quality-note.good {
+  color: var(--speaking);
+}
+
+.status-icon.quality.fair,
+.quality-note.fair {
+  color: var(--warning);
+}
+
+.status-icon.quality.bad,
+.quality-note.bad {
+  color: var(--danger);
+}
+
+.menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}
+
+.peer-volume input {
+  flex: 1;
+  min-width: 0;
+}
+
+.peer-volume output {
+  width: 38px;
+  text-align: right;
+  color: var(--text-3);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.badge {
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.badge.off {
+  color: var(--danger);
+}
+
+.peer-side {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.status-icon {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  color: var(--danger);
+}
+
+.status-icon .icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* Плитками — «сцена»: большие плитки с фоном цвета аватара (--tile),
+ * имя и значки — плашкой внизу, говорящий — в зелёной рамке. Когда людей
+ * мало, плитки растягиваются на всю ширину. */
+.peers.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  align-content: start;
+  gap: 10px;
+  /* Чтобы свечение говорящего не обрезалось краем списка (на фоне комнаты
+   * обрезанное свечение видно прямоугольником). */
+  padding: 12px;
+  margin: -12px;
+}
+
+.peers.tiles .peer {
+  position: relative;
+  display: block;
+  padding: 0;
+  aspect-ratio: 4 / 3;
+  max-height: 340px;
+  border: 2px solid transparent;
+  border-radius: 16px;
+  background:
+    radial-gradient(120% 90% at 50% 40%, color-mix(in srgb, var(--tile) 30%, transparent), transparent 70%),
+    color-mix(in srgb, var(--tile) 12%, var(--surface));
+  transition: border-color 120ms, box-shadow 120ms;
+}
+
+.peers.tiles .peer:hover {
+  background:
+    radial-gradient(120% 90% at 50% 40%, color-mix(in srgb, var(--tile) 36%, transparent), transparent 70%),
+    color-mix(in srgb, var(--tile) 16%, var(--surface));
+}
+
+.peers.tiles .peer.speaking {
+  border-color: var(--speaking);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--speaking) 35%, transparent);
+}
+
+.peers.tiles .tile-center {
+  position: absolute;
+  inset: 0 0 34px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.peers.tiles .avatar {
+  width: 76px;
+  height: 76px;
+  font-size: 30px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+}
+
+.peers.tiles .peer.speaking .avatar {
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+}
+
+.peers.tiles .badge.off {
+  padding: 2px 8px;
+  border-radius: 99px;
+  background: var(--danger-soft);
+  font-size: 11.5px;
+}
+
+.peers.tiles .tile-top {
+  position: absolute;
+  top: 8px;
+  left: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.peers.tiles .tile-bottom {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.peers.tiles .tile-name {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 6px 0 10px;
+  border-radius: 8px;
+  background: rgba(8, 9, 12, 0.55);
+  backdrop-filter: blur(6px);
+  color: #fff;
+}
+
+.peers.tiles .tile-name .peer-name {
+  font-size: 13px;
+}
+
+.peers.tiles .tile-name .you {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.peers.tiles .tile-name .status-icon {
+  width: 20px;
+}
+
+.peers.tiles .tile-name .status-icon .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.peers.tiles .tile-bottom .watch-btn {
+  height: 28px;
+  margin-left: auto;
+}
+
+.peers.tiles .peer > .menu-wrap {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+}
+
+.peers.tiles .peer > .menu-wrap .icon-btn {
+  background: transparent;
+}
+
+.peers.tiles .peer > .menu-wrap .icon-btn:hover {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.peer-side .menu-wrap .icon-btn {
+  background: transparent;
+}
+
+.peer-side .menu-wrap .icon-btn:hover {
+  background: var(--surface-3);
+}
+
+/* Телефон: по две квадратные плитки в ряд. */
+.android .peers.tiles {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.android .peers.tiles .peer {
+  aspect-ratio: 1;
+}
+
+.android .peers.tiles .avatar {
+  width: 64px;
+  height: 64px;
+  font-size: 26px;
+}
+
+.peers.tiles .empty {
+  grid-column: 1 / -1;
+}
+
+.empty {
+  color: var(--text-3);
+  text-align: center;
+  padding: 18px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  font-size: 13px;
+}
+
+/* Чат */
+
+.chat {
+  flex: 1;
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 4px 2px;
+}
+
+.chat-empty {
+  margin: auto;
+  color: var(--text-3);
+  font-size: 13px;
+  text-align: center;
+}
+
+.msg-group {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 6px 4px 2px;
+}
+
+.msg-group .avatar {
+  width: 30px;
+  height: 30px;
+  margin-top: 2px;
+  font-size: 13px;
+}
+
+.msg-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.msg-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.msg-name {
+  font-weight: 650;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.msg-time {
+  color: var(--text-3);
+  font-size: 11px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.msg-text {
+  margin: 1px 0;
+  font-size: 13.5px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.msg-text a {
+  color: var(--accent);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.msg-text a:hover {
+  text-decoration: underline;
+}
+
+.composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 6px 6px 6px 12px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  transition: border-color 120ms, box-shadow 120ms;
+}
+
+.composer:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.composer textarea {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  max-height: 120px;
+  padding: 6px 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13.5px;
+  line-height: 1.4;
+  outline: none;
+  user-select: text;
+}
+
+.composer textarea::placeholder {
+  color: var(--text-3);
+}
+
+.icon-btn.send {
+  color: var(--accent);
+  background: transparent;
+}
+
+.icon-btn.send:hover {
+  color: #fff;
+  background: var(--accent);
+}
+
+#room-view.reconnecting .chat {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* Всплывающие меню */
+
+.menu-wrap {
+  position: relative;
+  min-width: 0;
+}
+
+.menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  min-width: 190px;
+  max-width: min(340px, calc(100vw - 32px));
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-pop);
+}
+
+.menu.up {
+  top: auto;
+  bottom: calc(100% + 6px);
+  left: 0;
+  right: auto;
+}
+
+.menu.up.right {
+  left: auto;
+  right: 0;
+}
+
+.menu-title {
+  padding: 6px 10px 4px;
+  color: var(--text-3);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  background: none;
+  border-radius: 8px;
+  padding: 7px 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.menu button:hover {
+  background: var(--surface-2);
+}
+
+.menu button .label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.menu .check {
+  width: 16px;
+  height: 16px;
+  color: var(--accent);
+  visibility: hidden;
+}
+
+.menu button.current .check {
+  visibility: visible;
+}
+
+.menu button.current {
+  font-weight: 600;
+}
+
+.menu .danger-item {
+  color: var(--danger);
+}
+
+.menu .danger-item.armed {
+  background: var(--danger);
+  color: #fff;
+}
+
+/* Вопрос «Закрыть комнату?» над кнопкой выхода */
+.leave-menu {
+  width: 260px;
+  padding: 12px;
+  gap: 4px;
+}
+
+.leave-title {
+  font-weight: 650;
+}
+
+.leave-text {
+  margin: 0 0 8px;
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.leave-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.menu .leave-actions button {
+  flex: 1;
+  justify-content: center;
+  padding: 8px 12px;
+  background: var(--surface-2);
+}
+
+.menu .leave-actions button:hover {
+  background: var(--surface-3);
+}
+
+.menu .leave-actions button.danger {
+  color: #fff;
+  background: var(--danger);
+}
+
+.menu .leave-actions button.danger:hover {
+  background: var(--danger-strong);
+}
+
+/* Панель управления внизу комнаты */
+
+.dock {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 8px 10px;
+}
+
+/* «Вы говорите, а микрофон выключен» — над панелью, нажатие включает микрофон. */
+.muted-hint {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  z-index: 5;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: max-content;
+  max-width: calc(100% - 16px);
+  padding: 9px 14px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--text);
+  color: var(--bg);
+  font-size: 13px;
+  box-shadow: var(--shadow-pop);
+  animation: rise 180ms ease-out;
+}
+
+.muted-hint b {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  white-space: nowrap;
+}
+
+.muted-hint:hover {
+  filter: brightness(1.1);
+}
+
+.dock-avatar {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  font-size: 14px;
+}
+
+.dock-avatar:hover {
+  filter: brightness(1.12);
+}
+
+/* Подсказка у аватарки внизу слева — прижата к левому краю. */
+[data-tip].tip-left:hover::after {
+  left: 0;
+  transform: none;
+}
+
+/* Аватарка-картинка: буква не нужна. */
+.avatar.has-image {
+  color: transparent;
+}
+
+/* --- Аватарка в настройках --- */
+
+.profile-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.profile-avatar {
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: 0;
+  font-size: 19px;
+}
+
+.profile-avatar:hover {
+  filter: brightness(1.12);
+}
+
+.profile-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.dock.speaking .dock-avatar {
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--speaking);
+}
+
+.me-info {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.me-name {
+  font-weight: 650;
+  font-size: 13.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.me-status {
+  color: var(--text-2);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.me-status.off {
+  color: var(--danger);
+}
+
+.me-status.live {
+  color: var(--accent);
+}
+
+.dock-buttons {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+
+/* Меню панели привязаны к её правому краю (а не к своей кнопке), чтобы
+   не уезжать за левый край узкого окна. */
+.dock .menu-wrap {
+  position: static;
+}
+
+.dock-btn {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-2);
+}
+
+.dock-btn:hover {
+  color: var(--text);
+  background: var(--surface-3);
+}
+
+.dock-btn .icon {
+  width: 20px;
+  height: 20px;
+}
+
+.dock-btn.off {
+  color: var(--danger);
+}
+
+.dock-btn.off:hover {
+  background: var(--danger-soft);
+}
+
+.dock-btn.active {
+  color: #fff;
+  background: var(--accent);
+}
+
+/* Кнопка и стрелка выбора устройства рядом — одна «капсула». */
+.split {
+  display: flex;
+  align-items: center;
+  border-radius: 8px;
+}
+
+.split:hover {
+  background: var(--surface-2);
+}
+
+.split .dock-btn {
+  width: 32px;
+}
+
+.dock-caret {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 34px;
+  padding: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-3);
+}
+
+.dock-caret .icon {
+  width: 16px;
+  height: 16px;
+  transform: rotate(180deg);
+}
+
+.dock-caret:hover {
+  color: var(--text);
+  background: var(--surface-3);
+}
+
+.dock-caret.busy {
+  opacity: 0.5;
+}
+
+/* Подсказки при наведении, как в Discord: тёмная плашка над кнопкой. */
+[data-tip]:hover::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  width: max-content;
+  max-width: 220px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: #111214;
+  color: #f2f3f5;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: normal;
+  text-align: center;
+  pointer-events: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  animation: tip 120ms ease-out 250ms both;
+}
+
+[data-tip].tip-right:hover::after {
+  left: auto;
+  right: 0;
+  transform: none;
+}
+
+/* Пока открыто меню, подсказки не мешают. */
+.menu-wrap:has(.menu:not([hidden])) [data-tip]:hover::after {
+  display: none;
+}
+
+@keyframes tip {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Окно «Голос» над шестерёнкой. */
+.voice-menu {
+  width: 300px;
+  max-width: calc(100vw - 32px);
+  max-height: none;
+  gap: 12px;
+  padding: 12px 14px 14px;
+  overflow: visible;
+}
+
+.voice-menu .menu-title {
+  padding: 0;
+}
+
+.voice-menu .segmented button {
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: transparent;
+  white-space: normal;
+}
+
+.voice-menu .segmented button.active {
+  background: var(--surface);
+}
+
+.voice-menu .switch-row {
+  font-size: 13px;
+}
+
+.meter {
+  position: relative;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 3px;
+  background: var(--text-3);
+  transition: width 60ms linear, background 120ms;
+}
+
+.meter-fill.active {
+  background: var(--speaking);
+}
+
+.meter-mark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
+}
+
+.segmented {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.segmented button {
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.segmented button:hover {
+  color: var(--text);
+  background: transparent;
+}
+
+.segmented button.active {
+  color: var(--text);
+  background: var(--segment-active);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.slider-row > span {
+  width: 60px;
+  flex: none;
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+.slider-row > input {
+  flex: 1;
+  min-width: 0;
+}
+
+#vad-value {
+  width: 56px;
+  text-align: right;
+  color: var(--text-2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+button.key {
+  flex: 1;
+  padding: 6px 10px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+
+button.key.listening {
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.diag {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12.5px;
+}
+
+.diag li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.diag li.stacked {
+  flex-direction: column;
+  gap: 1px;
+}
+
+.diag li.stacked .nums {
+  white-space: normal;
+}
+
+.diag .who {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diag .nums {
+  color: var(--text-2);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.diag .bad {
+  color: var(--danger);
+}
+
+/* Демонстрация экрана */
+
+.share-sources {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.share-sources .section {
+  padding: 6px 2px 2px;
+  color: var(--text-3);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.source {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  text-align: left;
+  background: transparent;
+  border: 1px solid var(--border);
+}
+
+.source .icon {
+  color: var(--text-2);
+}
+
+.source .label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source.selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.watch-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+}
+
+.watch-btn .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.watch-btn:hover {
+  background: var(--accent-strong);
+}
+
+.badge.live {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 6px;
+  color: var(--danger);
+  background: var(--danger-soft);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* --- Настройки --- */
+
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: var(--backdrop);
+  animation: fade 160ms ease-out;
+}
+
+.sheet {
+  width: 100%;
+  max-width: 460px;
+  max-height: 88%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 14px 18px 20px;
+  background: var(--surface);
+  border-radius: 18px 18px 0 0;
+  box-shadow: var(--shadow-pop);
+  animation: rise 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sheet-head h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.group-title {
+  color: var(--text-3);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.group .segmented button {
+  font-size: 12.5px;
+}
+
+/* Выбор темы: компактные кнопки — кружок в цветах темы и название. */
+.themes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 6px;
+}
+
+.themes button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  height: 34px;
+  padding: 0 8px 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.themes button > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.themes button:hover {
+  color: var(--text);
+  background: var(--surface-3);
+}
+
+.themes button.active {
+  color: var(--text);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+/* Кружок: фон темы, полоска «карточки» и точка акцента. */
+.theme-preview {
+  position: relative;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--p-bg);
+  box-shadow: inset 0 0 0 1px rgba(127, 127, 127, 0.3);
+  overflow: hidden;
+}
+
+.theme-preview i:first-child {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  top: 9px;
+  height: 7px;
+  border-radius: 3px;
+  background: var(--p-surface);
+}
+
+.theme-preview i:first-child::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 1.5px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.theme-preview i:last-child {
+  display: none;
+}
+
+.themes [data-value="light"] { --p-bg: #f3f4f7; --p-surface: #ffffff; --p-text: #15171c; }
+.themes [data-value="dark"] { --p-bg: #0f1115; --p-surface: #1b1e26; --p-text: #e8eaf0; }
+.themes [data-value="black"] { --p-bg: #000000; --p-surface: #141417; --p-text: #ececef; }
+.themes [data-value="midnight"] { --p-bg: #0b1222; --p-surface: #162139; --p-text: #e6ecf7; }
+.themes [data-value="forest"] { --p-bg: #0d1310; --p-surface: #18221d; --p-text: #e4ebe6; }
+.themes [data-value="paper"] { --p-bg: #f3eee4; --p-surface: #fbf8f1; --p-text: #2a251f; }
+.themes [data-value="sakura"] { --p-bg: #fbf0f3; --p-surface: #fffafb; --p-text: #2e1f25; }
+.themes [data-value="ocean"] { --p-bg: linear-gradient(180deg, #072129, #04141a); --p-surface: #0f2c34; --p-text: #e2f1f3; }
+.themes [data-value="sunset"] {
+  --p-bg: radial-gradient(120% 70% at 50% 130%, rgba(232, 89, 12, 0.5), transparent 70%), #1b1120;
+  --p-surface: #2b1c31;
+  --p-text: #f6e9ee;
+}
+.themes [data-value="neon"] {
+  --p-bg: radial-gradient(80% 80% at 0% 0%, color-mix(in srgb, var(--accent) 35%, transparent), transparent 70%),
+    radial-gradient(70% 70% at 100% 100%, rgba(0, 220, 255, 0.25), transparent 70%), #07070d;
+  --p-surface: #141424;
+  --p-text: #f0f0ff;
+}
+.themes [data-value="neon"] .theme-preview i:first-child {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 60%, transparent), 0 0 8px color-mix(in srgb, var(--accent) 50%, transparent);
+}
+.themes [data-value="terminal"] { --p-bg: #030703; --p-surface: #0c170e; --p-text: #59ff6e; }
+.themes [data-value="synthwave"] { --p-bg: linear-gradient(180deg, #ff38bd, #1a0b33 75%); --p-surface: #2c1454; --p-text: #fbeaff; }
+.themes [data-value="cyber"] { --p-bg: linear-gradient(135deg, #fcee0a 0 30%, #0b0b10 30%); --p-surface: #1a1a24; --p-text: #fdf7c3; }
+.themes [data-value="berry"] { --p-bg: radial-gradient(90% 90% at 0% 0%, #ff40a0, #2a0619 75%); --p-surface: #450d2b; --p-text: #ffe6f2; }
+.themes [data-value="lemonade"] { --p-bg: radial-gradient(90% 90% at 100% 0%, #a0e63c, #fff9c9 70%); --p-surface: #fffde8; --p-text: #2c2a0a; }
+.themes [data-value="tangerine"] { --p-bg: radial-gradient(100% 100% at 0% 100%, #ff6e1e, #ffe7cf 75%); --p-surface: #fff6ec; --p-text: #33190a; }
+.themes [data-value="aqua"] { --p-bg: radial-gradient(100% 100% at 100% 100%, #00bed2, #d6f7f4 75%); --p-surface: #f0fdfb; --p-text: #06302e; }
+.themes [data-value="terminal"] .theme-preview,
+.themes [data-value="terminal"] .theme-preview i:first-child,
+.themes [data-value="terminal"] .theme-preview i:first-child::before {
+  border-radius: 2px;
+}
+.themes [data-value="terminal"] > span:last-child {
+  font-family: var(--mono);
+}
+.themes [data-value="system"] {
+  --p-bg: linear-gradient(115deg, #f3f4f7 50%, #0f1115 50%);
+  --p-surface: linear-gradient(115deg, #ffffff 50%, #1b1e26 50%);
+  --p-text: #80858f;
+}
+
+.swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 2px;
+}
+
+.swatches button {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 50%;
+  border: none;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+
+.swatches button[data-value="indigo"] { background: #5b5bd6; }
+.swatches button[data-value="violet"] { background: #8b5cf6; }
+.swatches button[data-value="sky"] { background: #0b8fd8; }
+.swatches button[data-value="mint"] { background: #12a37f; }
+.swatches button[data-value="amber"] { background: #e08a00; }
+.swatches button[data-value="rose"] { background: #e5486e; }
+.swatches button[data-value="blue"] { background: #2f6fed; }
+.swatches button[data-value="teal"] { background: #0e9aa7; }
+.swatches button[data-value="green"] { background: #2f9e44; }
+.swatches button[data-value="orange"] { background: #e8590c; }
+.swatches button[data-value="red"] { background: #e03131; }
+.swatches button[data-value="fuchsia"] { background: #c026d3; }
+.swatches button[data-value="cocoa"] { background: #a0703c; }
+.swatches button[data-value="graphite"] { background: #5f6b7a; }
+
+.swatches button:hover {
+  transform: scale(1.08);
+}
+
+.swatches button.active {
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent);
+}
+
+/* Страницы настроек: главная и «Оформление». */
+.sheet-page {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.sheet-head #settings-back {
+  margin: 0 -4px 0 -8px;
+}
+
+.sheet-head #settings-back:not([hidden]) + h2 {
+  margin-right: auto;
+}
+
+/* «Оформление» — невысокая панель снизу без затемнения: комната над ней
+ * видна, и выбранная тема или фон сразу видны на ней. */
+.sheet-backdrop.see-through {
+  background: transparent;
+  animation: none;
+}
+
+.sheet-backdrop.see-through .sheet {
+  /* Во всю ширину окна: кнопки тем раскладываются в больше колонок,
+   * а панель получается ниже и закрывает меньше комнаты. */
+  max-width: none;
+  max-height: min(46%, 420px);
+  gap: 14px;
+  padding-top: 10px;
+  box-shadow: var(--shadow-pop), 0 0 0 1px var(--border);
+}
+
+/* Самый низ настроек: версия и (на телефоне) «Отправить программу другу». */
+.app-row {
+  display: flex;
+  flex-wrap: wrap;
+  white-space: nowrap;
+  align-items: center;
+  gap: 6px 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.app-row .link {
+  padding: 0;
+}
+
+.app-row .link:disabled {
+  color: var(--text-2);
+  cursor: default;
+  text-decoration: none;
+}
+
+/* «Отправить программу другу» — справа, рядом с версией — обновление. */
+.app-row #send-app {
+  margin-left: auto;
+}
+
+/* Строка-ссылка на страницу настроек: значок, название, что выбрано, стрелка. */
+.nav-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 10px 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  font-weight: 500;
+  text-align: left;
+}
+
+.nav-row:hover {
+  background: var(--surface-3);
+}
+
+.nav-row-icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.nav-row-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.nav-row-text .hint {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-row-chevron {
+  color: var(--text-3);
+}
+
+/* Фон комнаты: такие же компактные кнопки, как у тем. */
+.backdrops {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 6px;
+}
+
+.backdrops button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 8px 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.backdrops button:hover {
+  color: var(--text);
+  background: var(--surface-3);
+}
+
+.backdrops button.active {
+  color: var(--text);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.bg-preview {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--room-bg, none) center / cover, var(--bg);
+  box-shadow: inset 0 0 0 1px rgba(127, 127, 127, 0.3);
+}
+
+.backdrops [data-value="image"] .bg-preview {
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+}
+
+.backdrops [data-value="image"]:not(.has-image) .bg-preview {
+  background: var(--surface-3);
+}
+
+/* Фоны (и для превью, и для комнаты). Мягкие пятна цвета поверх фона темы,
+ * чтобы текст читался в любой теме. */
+.backdrops [data-value="aurora"],
+:root[data-room-bg="aurora"] #room-view {
+  /* Северное сияние: зелёные и бирюзовые ленты наискосок по верху. */
+  --room-bg: linear-gradient(162deg, transparent 6%, rgba(52, 211, 153, 0.30) 20%, transparent 36%),
+    linear-gradient(172deg, transparent 18%, rgba(45, 212, 191, 0.22) 32%, transparent 48%),
+    radial-gradient(45% 35% at 85% 0%, rgba(167, 139, 250, 0.22), transparent 70%);
+}
+
+.backdrops [data-value="dusk"],
+:root[data-room-bg="dusk"] #room-view {
+  /* Закат: тёплый горизонт снизу, солнце по центру. */
+  --room-bg: radial-gradient(40% 30% at 50% 100%, rgba(251, 191, 36, 0.34), transparent 75%),
+    linear-gradient(0deg, rgba(249, 115, 22, 0.30) 0%, rgba(236, 72, 153, 0.16) 38%, transparent 70%);
+}
+
+.backdrops [data-value="lagoon"],
+:root[data-room-bg="lagoon"] #room-view {
+  /* Лагуна: всё в бирюзе, светлый блик сверху, глубина снизу. */
+  --room-bg: radial-gradient(50% 40% at 15% 0%, rgba(165, 243, 252, 0.22), transparent 70%),
+    linear-gradient(180deg, rgba(6, 182, 212, 0.12), rgba(8, 145, 178, 0.32));
+}
+
+/* Звёзды: точки на двух сетках разного шага, чтобы узор не повторялся явно.
+ * Размер плитки внутри самой переменной, иначе shorthand background его сбрасывает. */
+.backdrops [data-value="stars"] {
+  --star-a: 22px;
+  --star-b: 31px;
+}
+
+.backdrops [data-value="stars"],
+:root[data-room-bg="stars"] #room-view {
+  --star: color-mix(in srgb, var(--text) 70%, transparent);
+  --room-bg: radial-gradient(circle 1.4px at 12% 18%, var(--star) 90%, transparent) 0 0 / var(--star-a, 170px) var(--star-a, 170px),
+    radial-gradient(circle 1px at 38% 66%, var(--star) 90%, transparent) 0 0 / var(--star-a, 170px) var(--star-a, 170px),
+    radial-gradient(circle 1.8px at 70% 34%, var(--star) 90%, transparent) 0 0 / var(--star-a, 170px) var(--star-a, 170px),
+    radial-gradient(circle 1px at 86% 84%, var(--star) 90%, transparent) 0 0 / var(--star-a, 170px) var(--star-a, 170px),
+    radial-gradient(circle 1.2px at 24% 52%, var(--star) 90%, transparent) 0 0 / var(--star-b, 243px) var(--star-b, 243px),
+    radial-gradient(circle 1px at 58% 8%, var(--star) 90%, transparent) 0 0 / var(--star-b, 243px) var(--star-b, 243px),
+    radial-gradient(circle 1.5px at 92% 58%, var(--star) 90%, transparent) 0 0 / var(--star-b, 243px) var(--star-b, 243px),
+    radial-gradient(70% 60% at 50% 0%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 70%);
+}
+
+.backdrops [data-value="grid"],
+:root[data-room-bg="grid"] #room-view {
+  --line: color-mix(in srgb, var(--text) 7%, transparent);
+  --room-bg: linear-gradient(var(--line) 1px, transparent 1px) 0 0 / 26px 26px,
+    linear-gradient(90deg, var(--line) 1px, transparent 1px) 0 0 / 26px 26px,
+    radial-gradient(80% 60% at 50% 0%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 70%);
+}
+
+.backdrops [data-value="stars"] .bg-preview,
+.backdrops [data-value="grid"] .bg-preview {
+  background: var(--room-bg), var(--bg);
+}
+
+/* Своя картинка: приглушена цветом фона темы, чтобы плитки и текст читались. */
+.backdrops [data-value="image"].has-image .bg-preview,
+:root[data-room-bg="image"] #room-view {
+  --room-bg: linear-gradient(color-mix(in srgb, var(--bg) 76%, transparent), color-mix(in srgb, var(--bg) 76%, transparent)),
+    var(--room-image) center / cover no-repeat;
+}
+
+:root[data-room-bg] #room-view {
+  background: var(--room-bg, none), var(--bg);
+}
+
+:root[data-room-bg="grid"] #room-view,
+:root[data-room-bg="image"] #room-view {
+  background: var(--room-bg), var(--bg);
+}
+
+/* Плитки участников компактные; режим «списком» обычного размера. */
+:root .peers.tiles {
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+}
+
+:root .peers.tiles .peer {
+  gap: 10px;
+  aspect-ratio: 1;
+  max-height: 200px;
+  padding: 0;
+}
+
+:root .peers.tiles .avatar {
+  width: 54px;
+  height: 54px;
+  font-size: 22px;
+}
+
+:root.android .peers.tiles {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+:root.android .peers.tiles .watch-label {
+  /* В узкой плитке телефона — только значок, чтобы не закрывать имя. */
+  display: none;
+}
+
+:root.android .peers.tiles .watch-btn {
+  flex: none;
+  padding: 0 8px;
+}
+
+:root.android .peers.tiles .avatar {
+  width: 44px;
+  height: 44px;
+  font-size: 18px;
+}
+
+:root .peers.tiles .tile-name {
+  height: 24px;
+  padding: 0 4px 0 7px;
+}
+
+:root .peers.tiles .tile-name .peer-name {
+  font-size: 12px;
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Окна, выпадающие из шапки комнаты: «Пригласить друзей», «Закрыть комнату?». */
+.sheet-backdrop.pop {
+  align-items: flex-start;
+  padding: 56px 12px 12px;
+}
+
+.sheet-backdrop.pop .sheet {
+  max-height: 100%;
+  gap: 16px;
+  padding: 14px 16px 16px;
+  border-radius: var(--radius);
+  animation: drop 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes drop {
+  from {
+    transform: translateY(-8px);
+    opacity: 0;
+  }
+}
+
+/* Адрес для друзей: один, выбранный из всех сетевых интерфейсов. */
+.address-pick {
+  position: relative;
+  padding: 4px 6px 4px 4px;
+}
+
+.address-pick .menu-wrap {
+  flex: 1;
+  position: static;
+}
+
+.address-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+}
+
+.address-btn:hover {
+  background: var(--surface-3);
+}
+
+.address-btn .pill-chevron {
+  margin-left: auto;
+}
+
+.address-btn[aria-expanded="true"] .pill-chevron {
+  transform: rotate(180deg);
+}
+
+.address-menu {
+  left: 0;
+  right: 0;
+  max-width: none;
+}
+
+.address-menu button .host-address {
+  font-size: 13px;
+}
+
+@keyframes rise {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+}
+
+/* --- Уведомление --- */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  z-index: 30;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100% - 32px);
+  padding: 10px 16px;
+  border-radius: 12px;
+  background: var(--text);
+  color: var(--bg);
+  font-size: 13px;
+  box-shadow: var(--shadow-pop);
+  animation: rise 180ms ease-out;
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* --- Android --- */
+
+/* Чего на телефоне нет: трей, рация по клавише, показ своего экрана и
+ * просмотр чужого (пока), свои комнаты. */
+html:not(.android) .android-only {
+  display: none !important;
+}
+
+.android .desktop-only {
+  display: none !important;
+}
+
+/* Подсказки по наведению на сенсорном экране залипают после касания. */
+.android [data-tip]:hover::after {
+  display: none;
+}
+
+/* Крупнее зоны нажатия для пальца. */
+.android .dock-btn,
+.android .head-btn {
+  width: 40px;
+  height: 40px;
+}
+
+.android .dock-btn.leave {
+  width: 48px;
+}
+
+.android button.invite-btn {
+  width: auto;
+}
+
+.android .view {
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
+/* --- Чужой экран на телефоне --- */
+
+.screen-view {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: #000;
+  color: #ececef;
+  touch-action: none;
+  user-select: none;
+}
+
+.sv-stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.sv-content {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 50%;
+}
+
+.sv-content canvas,
+.sv-content img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.sv-waiting {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: #a2a5ad;
+  font-size: 14px;
+}
+
+.sv-waiting .spinner {
+  width: 18px;
+  height: 18px;
+  border-color: rgba(255, 255, 255, 0.15);
+  border-top-color: #a2a5ad;
+}
+
+.sv-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: linear-gradient(rgba(0, 0, 0, 0.75), transparent);
+  transition: opacity 200ms;
+}
+
+.sv-bar.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sv-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sv-btn {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  color: #ececef;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.sv-btn:hover,
+.sv-btn.active {
+  background: rgba(255, 255, 255, 0.26);
+}
+
+.sv-btn .icon {
+  width: 22px;
+  height: 22px;
+}
+
+/* --- Справка «Как это работает» --- */
+
+.help-lead {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.help-steps,
+.help-keys,
+.help-tips {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+/* Шаги — с номером в кружке цвета оформления. */
+.help-steps {
+  counter-reset: step;
+}
+
+.help-steps li {
+  position: relative;
+  padding-left: 32px;
+  counter-increment: step;
+}
+
+.help-steps li::before {
+  content: counter(step);
+  position: absolute;
+  left: 0;
+  top: -1px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.help-steps code {
+  font-size: 12.5px;
+}
+
+/* Кнопки комнаты — с теми же значками, что в нижней панели. */
+.help-keys li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.help-keys li > [data-icon] {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  color: var(--text-2);
+  background: var(--surface-2);
+}
+
+.help-keys li > [data-icon] .icon {
+  width: 18px;
+  height: 18px;
+}
+
+.help-keys li > span:last-child {
+  padding-top: 5px;
+}
+
+.help-tips li {
+  position: relative;
+  padding-left: 16px;
+}
+
+.help-tips li::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 0.6em;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+
+/* Полоса прокрутки в цвет темы: прозрачная дорожка, ползунок из акцента.
+ * ::-webkit-scrollbar работает в WebView2, WebKitGTK и Android WebView;
+ * scrollbar-color только как запасной вариант, иначе в новом Chromium
+ * он отключает -webkit- стили. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 45%, var(--surface-3)) padding-box;
+  min-height: 32px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--accent) 75%, var(--surface-3)) padding-box;
+}
+
+::-webkit-scrollbar-thumb:active {
+  background: var(--accent) padding-box;
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-color: color-mix(in srgb, var(--accent) 45%, var(--surface-3)) transparent;
+    scrollbar-width: thin;
+  }
+}
