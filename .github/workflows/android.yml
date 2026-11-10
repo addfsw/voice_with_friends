@@ -289,7 +289,9 @@ jobs:
           base="https://github.com/$GITHUB_REPOSITORY/releases/download/$tag"
           notes="$NOTES_INPUT"
           if [ -z "$notes" ]; then
-            notes="$(printf '%s' "$COMMIT_MESSAGE" | sed 's/\[release\]//g; s/[[:space:]]*$//')"
+            # Только первая строка коммита: дальше бывают служебные строки
+            # (Co-Authored-By и т.п.), а описание видно в программе.
+            notes="$(printf '%s\n' "$COMMIT_MESSAGE" | head -n 1 | sed 's/\[release\]//g; s/[[:space:]]*$//')"
           fi
           ls -la files
           jq -n \
