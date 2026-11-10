@@ -1,24 +1,48 @@
 //! Обновление программы из последнего релиза на GitHub.
 //!
 //! Релиз собирает GitHub Actions (`.github/workflows/android.yml`): в нём
-//! установщик для Windows, APK и `latest.json` — номер версии, описание и
-//! ссылки на файлы. Проверка — один запрос за `latest.json`.
+//! `Poigrulkiny.exe` с подписью, установщик для Windows, APK и `latest.json`
+//! — номер версии, описание и ссылки на файлы. Проверка — один запрос за
+//! `latest.json`.
 //!
-//! - **Компьютер:** скачивает и ставит `tauri-plugin-updater`. Он проверяет
-//!   подпись установщика открытым ключом из `tauri.conf.json`, так что
-//!   подменённый файл не установится. Установщик NSIS ставит программу
-//!   поверх и запускает её снова.
+//! - **Windows:** обновляется сама запущенная программа, где бы она ни лежала
+//!   ([`crate::selfupdate`]): скачиваем новый exe, проверяем подпись,
+//!   подменяем им свой файл и перезапускаемся. Ничего не ставится в другую
+//!   папку, ярлыки и привычный способ запуска не меняются.
 //! - **Android:** APK скачивает и открывает системный установщик
 //!   `MainActivity.kt`. Подпись проверяет сам Android: поверх установленной
 //!   программы встанет только APK, подписанный тем же ключом.
 
-use serde::Serialize;
+use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
 /// `latest.json` последнего релиза. GitHub отдаёт его без входа в аккаунт,
-/// только пока репозиторий открытый.
+/// только пока репозиторий открытый. `VWF_UPDATE_URL` — другой адрес (для
+/// проверки обновления на своём сервере).
 const LATEST_JSON: &str =
     "https://github.com/addfsw/voice_with_friends/releases/latest/download/latest.json";
+
+fn latest_url() -> String {
+    std::env::var("VWF_UPDATE_URL")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| LATEST_JSON.to_string())
+}
+
+/// Под каким именем в `latest.json` лежит файл для этой системы. Старые
+/// версии (0.1.63–0.1.66) на Windows берут `windows-x86_64` — установщик;
+/// новые — `windows-x86_64-exe`, саму программу.
+fn platform_key() -> Option<&'static str> {
+    if cfg!(target_os = "android") {
+        Some("android-aarch64")
+    } else if cfg!(windows) {
+        Some("windows-x86_64-exe")
+    } else {
+        None
+    }
+}
 
 /// Найденное обновление — для окна.
 #[derive(Serialize, Clone)]
@@ -30,15 +54,24 @@ pub struct UpdateInfo {
     apk: Option<String>,
 }
 
-/// Найденное, но ещё не установленное обновление (на компьютере).
+/// Версия новее установленной: что показать и откуда скачать.
+#[derive(Debug, Clone, PartialEq)]
+struct Release {
+    version: String,
+    notes: String,
+    url: String,
+    signature: String,
+}
+
+/// Найденное, но ещё не установленное обновление.
 #[derive(Default)]
 pub struct Updates {
-    #[cfg(desktop)]
-    pending: tokio::sync::Mutex<Option<tauri_plugin_updater::Update>>,
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pending: std::sync::Mutex<Option<Release>>,
 }
 
 /// Ход скачивания для окна: сколько байт скачано и сколько всего.
-#[cfg(desktop)]
+#[cfg(windows)]
 #[derive(Serialize, Clone)]
 struct Progress {
     downloaded: u64,
@@ -51,110 +84,43 @@ pub async fn check_update(
     app: AppHandle,
     updates: tauri::State<'_, Updates>,
 ) -> Result<Option<UpdateInfo>, String> {
-    #[cfg(desktop)]
-    {
-        use tauri_plugin_updater::UpdaterExt;
-        let url = LATEST_JSON.parse().expect("адрес latest.json");
-        let updater = app
-            .updater_builder()
-            .endpoints(vec![url])
-            .and_then(|builder| builder.build())
-            .map_err(|e| format!("не удалось проверить обновления: {e}"))?;
-        let update = updater.check().await.map_err(describe)?;
-        let info = update.as_ref().map(|update| UpdateInfo {
-            version: update.version.clone(),
-            notes: update.body.clone().unwrap_or_default(),
-            apk: None,
-        });
-        *updates.pending.lock().await = update;
-        Ok(info)
-    }
-    #[cfg(mobile)]
-    {
-        let _ = updates;
-        android_check(&app).await.map_err(|e| format!("не удалось проверить обновления: {e:#}"))
-    }
-}
-
-/// Скачивает и ставит найденное обновление. Перед установкой кладёт трубку
-/// и закрывает свою комнату: установщик закроет программу и откроет снова.
-#[cfg(desktop)]
-#[tauri::command]
-pub async fn install_update(
-    app: AppHandle,
-    updates: tauri::State<'_, Updates>,
-) -> Result<(), String> {
-    use tauri::Emitter;
-    let Some(update) = updates.pending.lock().await.clone() else {
-        return Err("сначала проверьте обновления".into());
-    };
-    let mut downloaded = 0u64;
-    let progress_app = app.clone();
-    let bytes = update
-        .download(
-            move |chunk, total| {
-                downloaded += chunk as u64;
-                let _ = progress_app.emit("update-progress", Progress { downloaded, total });
-            },
-            || {},
-        )
+    let release = fetch(&app.package_info().version.to_string())
         .await
-        .map_err(|e| format!("не удалось скачать обновление: {e}"))?;
-    crate::shutdown(&app).await;
-    // На Windows install запускает установщик и сразу завершает программу.
-    update.install(bytes).map_err(|e| format!("не удалось установить обновление: {e}"))?;
-    app.restart()
+        .map_err(|e| format!("{e:#}"))?;
+    let info = release.as_ref().map(|r| UpdateInfo {
+        version: r.version.clone(),
+        notes: r.notes.clone(),
+        apk: cfg!(target_os = "android").then(|| r.url.clone()),
+    });
+    *updates.pending.lock().unwrap() = release;
+    Ok(info)
 }
 
-/// На Android APK ставит MainActivity.kt (`installUpdate` из окна).
-#[cfg(mobile)]
-#[tauri::command]
-pub async fn install_update() -> Result<(), String> {
-    Err("на Android обновление ставит системный установщик".into())
-}
-
-/// Ошибка проверки понятными словами.
-#[cfg(desktop)]
-fn describe(e: tauri_plugin_updater::Error) -> String {
-    use tauri_plugin_updater::Error;
-    match e {
-        // 404: релизов ещё нет или репозиторий закрыт.
-        Error::ReleaseNotFound => "на GitHub пока нет опубликованных обновлений".into(),
-        Error::TargetNotFound(_) | Error::TargetsNotFound(_) => {
-            "в последнем релизе нет версии для этой системы".into()
-        }
-        e => format!("не удалось проверить обновления: {e}"),
-    }
-}
-
-#[cfg(mobile)]
-async fn android_check(app: &AppHandle) -> anyhow::Result<Option<UpdateInfo>> {
-    use std::time::Duration;
-
+async fn fetch(current: &str) -> anyhow::Result<Option<Release>> {
     use anyhow::{Context, bail};
 
+    let Some(key) = platform_key() else {
+        bail!("обновление из программы есть только на Windows и Android");
+    };
     let response = vwf_nat::http_client()?
-        .get(LATEST_JSON)
-        .timeout(Duration::from_secs(20))
+        .get(latest_url())
+        .timeout(std::time::Duration::from_secs(20))
         .send()
         .await
-        .context("нет связи с GitHub")?;
+        .context("не удалось проверить обновления: нет связи с GitHub")?;
     if response.status() == reqwest::StatusCode::NOT_FOUND {
         bail!("на GitHub пока нет опубликованных обновлений");
     }
     let text = response.error_for_status()?.text().await?;
-    android_update(&text, &app.package_info().version.to_string())
+    find_release(&text, key, current)
 }
 
 /// Разбирает `latest.json` (его пишет workflow, задача `release`): есть ли
-/// APK новее версии `current`.
-#[cfg_attr(desktop, allow(dead_code))]
-fn android_update(latest_json: &str, current: &str) -> anyhow::Result<Option<UpdateInfo>> {
-    use std::collections::HashMap;
-
+/// версия новее `current` для системы `key`.
+fn find_release(latest_json: &str, key: &str, current: &str) -> anyhow::Result<Option<Release>> {
     use anyhow::{Context, bail};
 
-    #[derive(serde::Deserialize)]
+    #[derive(Deserialize)]
     struct Latest {
         version: String,
         #[serde(default)]
@@ -162,9 +128,11 @@ fn android_update(latest_json: &str, current: &str) -> anyhow::Result<Option<Upd
         #[serde(default)]
         platforms: HashMap<String, Platform>,
     }
-    #[derive(serde::Deserialize)]
+    #[derive(Deserialize)]
     struct Platform {
         url: String,
+        #[serde(default)]
+        signature: String,
     }
 
     let latest: Latest = serde_json::from_str(latest_json).context("непонятный ответ GitHub")?;
@@ -173,60 +141,118 @@ fn android_update(latest_json: &str, current: &str) -> anyhow::Result<Option<Upd
     if version <= semver::Version::parse(current)? {
         return Ok(None);
     }
-    let Some(apk) = latest.platforms.get("android-aarch64") else {
-        bail!("в последнем релизе нет версии для Android");
+    let Some(file) = latest.platforms.get(key) else {
+        bail!("в последнем релизе нет версии для этой системы");
     };
-    Ok(Some(UpdateInfo { version: version.to_string(), notes: latest.notes, apk: Some(apk.url.clone()) }))
+    Ok(Some(Release {
+        version: version.to_string(),
+        notes: latest.notes,
+        url: file.url.clone(),
+        signature: file.signature.clone(),
+    }))
+}
+
+/// Скачивает новую программу, проверяет подпись, кладёт трубку и закрывает
+/// свою комнату, подменяет запущенный exe и перезапускается.
+#[cfg(windows)]
+#[tauri::command]
+pub async fn install_update(
+    app: AppHandle,
+    updates: tauri::State<'_, Updates>,
+) -> Result<(), String> {
+    use tauri::Emitter;
+
+    let Some(release) = updates.pending.lock().unwrap().clone() else {
+        return Err("сначала проверьте обновления".into());
+    };
+    let pubkey = app
+        .config()
+        .plugins
+        .0
+        .get("updater")
+        .and_then(|u| u.get("pubkey"))
+        .and_then(|k| k.as_str())
+        .ok_or("в программе нет ключа для проверки обновлений")?
+        .to_string();
+    let progress_app = app.clone();
+    let data = crate::selfupdate::download(&release.url, move |downloaded, total| {
+        let _ = progress_app.emit("update-progress", Progress { downloaded, total });
+    })
+    .await
+    .map_err(|e| format!("не удалось скачать обновление: {e:#}"))?;
+    crate::selfupdate::verify(&data, &release.signature, &pubkey).map_err(|e| format!("{e:#}"))?;
+    crate::shutdown(&app).await;
+    crate::selfupdate::replace_self(&data).map_err(|e| format!("{e:#}"))?;
+    crate::selfupdate::restart()
+}
+
+/// Android: APK ставит MainActivity.kt (`installUpdate` из окна). Linux:
+/// обновления из программы нет.
+#[cfg(not(windows))]
+#[tauri::command]
+pub async fn install_update() -> Result<(), String> {
+    Err("здесь обновление ставится не из программы".into())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::android_update;
+    use super::find_release;
 
     /// Так latest.json пишет workflow (.github/workflows/android.yml).
     const LATEST: &str = r#"{
-      "version": "0.1.57",
-      "notes": "Обновление из программы",
-      "pub_date": "2026-11-10T12:00:00Z",
+      "version": "0.1.67",
+      "notes": "Камера",
+      "pub_date": "2026-11-11T12:00:00Z",
       "platforms": {
         "windows-x86_64": {
-          "url": "https://github.com/addfsw/voice_with_friends/releases/download/v0.1.57/Poigrulkiny-setup.exe",
-          "signature": "dW50cnVzdGVk"
+          "url": "https://github.com/addfsw/voice_with_friends/releases/download/v0.1.67/Poigrulkiny-setup.exe",
+          "signature": "c2V0dXA="
+        },
+        "windows-x86_64-exe": {
+          "url": "https://github.com/addfsw/voice_with_friends/releases/download/v0.1.67/Poigrulkiny.exe",
+          "signature": "ZXhl"
         },
         "android-aarch64": {
-          "url": "https://github.com/addfsw/voice_with_friends/releases/download/v0.1.57/Poigrulkiny.apk",
+          "url": "https://github.com/addfsw/voice_with_friends/releases/download/v0.1.67/Poigrulkiny.apk",
           "signature": ""
         }
       }
     }"#;
 
     #[test]
-    fn newer_apk() {
-        let update = android_update(LATEST, "0.1.9").unwrap().expect("0.1.57 новее 0.1.9");
-        assert_eq!(update.version, "0.1.57");
-        assert_eq!(update.notes, "Обновление из программы");
-        assert!(update.apk.unwrap().ends_with("/v0.1.57/Poigrulkiny.apk"));
+    fn windows_takes_the_program_itself() {
+        let release = find_release(LATEST, "windows-x86_64-exe", "0.1.66").unwrap().unwrap();
+        assert_eq!(release.version, "0.1.67");
+        assert!(release.url.ends_with("/v0.1.67/Poigrulkiny.exe"));
+        assert_eq!(release.signature, "ZXhl");
+    }
+
+    #[test]
+    fn android_takes_apk() {
+        let release = find_release(LATEST, "android-aarch64", "0.1.9").unwrap().unwrap();
+        assert_eq!(release.notes, "Камера");
+        assert!(release.url.ends_with("/v0.1.67/Poigrulkiny.apk"));
     }
 
     #[test]
     fn same_or_older() {
-        assert!(android_update(LATEST, "0.1.57").unwrap().is_none());
-        assert!(android_update(LATEST, "0.2.0").unwrap().is_none());
+        assert!(find_release(LATEST, "windows-x86_64-exe", "0.1.67").unwrap().is_none());
+        assert!(find_release(LATEST, "android-aarch64", "0.2.0").unwrap().is_none());
     }
 
     #[test]
-    fn no_android_in_release() {
-        let latest = r#"{"version": "0.1.60", "platforms": {}}"#;
-        assert!(android_update(latest, "0.1.57").is_err());
+    fn no_file_for_this_system() {
+        let latest = r#"{"version": "0.1.70", "platforms": {}}"#;
+        assert!(find_release(latest, "windows-x86_64-exe", "0.1.67").is_err());
     }
 
-    /// Windows-часть того же файла понимает tauri-plugin-updater.
-    #[cfg(desktop)]
+    /// Установщик для старых версий (0.1.63–0.1.66) по-прежнему понимает
+    /// tauri-plugin-updater: ключ `windows-x86_64` с url и подписью.
     #[test]
-    fn updater_reads_manifest() {
-        let release: tauri_plugin_updater::RemoteRelease = serde_json::from_str(LATEST).unwrap();
-        assert_eq!(release.version.to_string(), "0.1.57");
-        assert!(release.download_url("windows-x86_64").unwrap().as_str().ends_with("Poigrulkiny-setup.exe"));
-        assert_eq!(release.signature("windows-x86_64").unwrap(), "dW50cnVzdGVk");
+    fn old_versions_still_find_the_installer() {
+        let json: serde_json::Value = serde_json::from_str(LATEST).unwrap();
+        let old = &json["platforms"]["windows-x86_64"];
+        assert!(old["url"].as_str().unwrap().ends_with("Poigrulkiny-setup.exe"));
+        assert!(!old["signature"].as_str().unwrap().is_empty());
     }
 }
